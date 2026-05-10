@@ -2,17 +2,20 @@
 
 Bandeja humana para tomar handoffs de WhatsApp y atender conversaciones derivadas.
 
-## Incluye
+## Qué hace
 - login
-- lista de sesiones
-- detalle de conversación
-- flujo de mano humana
+- lista de conversaciones / sesiones
+- detalle del hilo
+- acciones humanas para seguir o cerrar una conversación
+- manejo de adjuntos y media
 
-## Punto de entrada
-- `public/index.html`
+## Estructura
+- `public/` → frontend estático
+- `data/` → sesiones locales
+- backend en `src/advisorInboxServer.mjs`
 
-## Ejecutar
-Servir como web estática con el backend asociado al proyecto.
+## Uso
+Se sirve como web app interna, conectada a los servicios compartidos del monorepo.
 
 ## Nota
-Esta app vive separada para no mezclar la atención humana con el chatbot principal.
+Está aislada del chatbot para no mezclar atención humana con el flujo automático.

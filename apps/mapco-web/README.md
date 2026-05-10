@@ -2,23 +2,19 @@
 
 Mapa web para detectar hosts potenciales para cargadores EV.
 
-## MVP incluido
+## Qué hace
 - mapa interactivo
-- filtro por ciudad
-- filtro por código territorial (`ubigeo`)
-- filtro por categoría
-- búsqueda por operador/sede
-- filtro de parking probable
-- ranking por operador / grupo
+- filtros por ciudad, zona y categoría
+- búsqueda por operador / sede
+- ranking de operadores
+- estados del dato y parking probable
 
-## Nota Colombia
-En Colombia el equivalente funcional es DIVIPOLA. Aquí se conserva el nombre `ubigeo` por compatibilidad de negocio.
+## Estructura
+- `public/` → frontend estático
+- `public/data/` → dataset y salidas generadas
 
-## Dataset actual
-- `public/data/places.json`
+## Nota de negocio
+Se usa `ubigeo` como nombre funcional del campo territorial, aunque en Colombia el equivalente sea DIVIPOLA.
 
-## Ejecutar
-Publicación estática en el hosting del subdominio.
-
-## Siguiente paso
-Cargar dataset real de Bogotá y luego replicar Medellín / Cali.
+## Siguiente fase
+Cargar el dataset real por ciudad y seguir refinando el scoring.

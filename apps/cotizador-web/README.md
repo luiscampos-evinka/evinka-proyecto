@@ -2,19 +2,27 @@
 
 Cotizador web principal de EVINKA.
 
-## Incluye
-- login por roles
-- flujo guiado de cotización
+## Qué hace
+- login técnico/admin
+- cotización guiada
+- selección de perfil comercial
 - selección de cargador y cable
-- PDF descargable
-- panel admin de parámetros
+- cálculo subtotal / IGV / total
+- generación de PDF
+- persistencia local en JSON
+- panel admin de configuración
+
+## Estructura
+- `public/` → frontend
+- `server.mjs` → backend HTTP
+- `data/` → estado y registros
+- `storage/quotes/` → PDFs generados
 
 ## Ejecutar
-Desde la raíz del monorepo:
+Desde la raíz:
 ```bash
 node apps/cotizador-web/server.mjs
 ```
 
-## Datos
-- `apps/cotizador-web/data`
-- PDFs en `apps/cotizador-web/storage/quotes`
+## Nota
+La app vive separada para poder desplegarla y auditarla sin tocar la app Flutter principal.

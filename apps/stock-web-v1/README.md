@@ -1,14 +1,18 @@
 # EVINKA Stock Web v1
 
-MVP estático para control de stock disponible, stock comprometido y alertas de reorden.
+MVP estático para control de stock y alertas de reorden.
 
-## Incluye
+## Qué hace
 - dashboard responsive
 - KPIs principales
-- alertas críticas
+- alertas por stock crítico / riesgo
 - tabla maestra con punto de reorden
 - modo demo
-- soporte para Google Sheets vía CSV público
+- soporte para Google Sheets vía CSV
+
+## Estructura
+- `public/` → frontend estático
+- `public/config.js` → configuración de fuentes CSV
 
 ## Publicación
 Copiar `public/` al hosting estático del subdominio.
