@@ -28,3 +28,4 @@ JAVA_HOME=/usr/lib/jvm/java-17-openjdk-amd64 /opt/flutter/bin/flutter build apk 
 
 ## Archivo de integración
 - `README_INTEGRACION.md` → describe el flujo integrado con el cotizador
+- `../../docs/OFFLINE_ONLINE_FLOW.md` → flujo offline/online recomendado
