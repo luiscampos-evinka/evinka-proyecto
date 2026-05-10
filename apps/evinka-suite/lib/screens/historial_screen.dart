@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:printing/printing.dart';
+
 import '../services/historial_service.dart';
 
 class HistorialScreen extends StatefulWidget {
@@ -191,14 +192,36 @@ class _HistorialScreenState extends State<HistorialScreen> {
     );
   }
 
+  Future<void> _sincronizarTodo() async {
+    try {
+      await HistorialService.retryPendingSyncs();
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(HistorialService.syncQueueStatus.value.message)),
+      );
+      _cargar();
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('No pude sincronizar todo: $e')),
+      );
+    }
+  }
+
   Widget _lista() {
     return RefreshIndicator(
       onRefresh: _cargar,
       color: _accent,
-      child: ListView.builder(
+      child: ListView(
         padding: const EdgeInsets.all(16),
-        itemCount: _historial.length,
-        itemBuilder: (_, i) => _tarjeta(_historial[i], i),
+        children: [
+          _syncBanner(),
+          const SizedBox(height: 12),
+          ..._historial
+              .asMap()
+              .entries
+              .map((entry) => _tarjeta(entry.value, entry.key)),
+        ],
       ),
     );
   }
@@ -241,6 +264,61 @@ class _HistorialScreenState extends State<HistorialScreen> {
           ),
         ),
       ),
+    );
+  }
+
+  Widget _syncBanner() {
+    return ValueListenableBuilder<SyncQueueStatus>(
+      valueListenable: HistorialService.syncQueueStatus,
+      builder: (context, status, _) {
+        final bg =
+            status.running ? const Color(0x1A9C6A33) : const Color(0x101565C0);
+        final border =
+            status.running ? const Color(0x339C6A33) : const Color(0x221565C0);
+        final icon = status.running ? Icons.sync : Icons.check_circle_outline;
+        final buttonLabel =
+            status.running ? 'Sincronizando...' : 'Sincronizar todo';
+        return Card(
+          color: bg,
+          shape:
+              RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
+          child: Container(
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(18),
+              border: Border.all(color: border),
+            ),
+            padding: const EdgeInsets.all(14),
+            child: Row(
+              children: [
+                Icon(icon, color: _accent),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        status.message,
+                        style: const TextStyle(fontWeight: FontWeight.w700),
+                      ),
+                      const SizedBox(height: 4),
+                      Text(
+                        status.running
+                            ? 'Procesando ${status.synced}/${status.total}'
+                            : 'Puedes forzar la sincronización cuando tengas internet.',
+                        style: TextStyle(color: _mutedText, fontSize: 12),
+                      ),
+                    ],
+                  ),
+                ),
+                FilledButton.tonal(
+                  onPressed: status.running ? null : _sincronizarTodo,
+                  child: Text(buttonLabel),
+                ),
+              ],
+            ),
+          ),
+        );
+      },
     );
   }
 

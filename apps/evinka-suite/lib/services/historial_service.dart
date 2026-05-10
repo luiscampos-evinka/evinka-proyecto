@@ -1,6 +1,6 @@
 import 'dart:convert';
 import 'dart:io';
-import 'dart:typed_data';
+import 'package:flutter/foundation.dart';
 
 import 'package:path_provider/path_provider.dart';
 
@@ -78,18 +78,46 @@ class HistorialSyncReport {
   final int total;
   final int synced;
   final int failed;
+  final bool running;
 
   const HistorialSyncReport({
     required this.total,
     required this.synced,
     required this.failed,
+    this.running = false,
   });
 
   bool get hasChanges => total > 0;
 }
 
+class SyncQueueStatus {
+  final bool running;
+  final int total;
+  final int synced;
+  final int failed;
+  final String message;
+
+  const SyncQueueStatus({
+    required this.running,
+    required this.total,
+    required this.synced,
+    required this.failed,
+    required this.message,
+  });
+
+  factory SyncQueueStatus.idle() => const SyncQueueStatus(
+        running: false,
+        total: 0,
+        synced: 0,
+        failed: 0,
+        message: 'Sincronización en reposo',
+      );
+}
+
 class HistorialService {
   static bool _syncingAll = false;
+  static final ValueNotifier<SyncQueueStatus> syncQueueStatus =
+      ValueNotifier<SyncQueueStatus>(SyncQueueStatus.idle());
   static Future<Directory> get _protocolosDir async {
     final base = await getApplicationDocumentsDirectory();
     final dir = Directory('${base.path}/protocolos');
@@ -253,11 +281,27 @@ class HistorialService {
       return const HistorialSyncReport(total: 0, synced: 0, failed: 0);
     }
     _syncingAll = true;
+    final items = await cargarPendientesSync();
+    syncQueueStatus.value = SyncQueueStatus(
+      running: true,
+      total: items.length,
+      synced: 0,
+      failed: 0,
+      message: items.isEmpty
+          ? 'No hay pendientes para sincronizar.'
+          : 'Sincronizando ${items.length} documentos...',
+    );
     try {
-      final items = await cargarPendientesSync();
       var synced = 0;
       var failed = 0;
       for (final entry in items) {
+        syncQueueStatus.value = SyncQueueStatus(
+          running: true,
+          total: items.length,
+          synced: synced,
+          failed: failed,
+          message: 'Sincronizando ${entry.cliente}...',
+        );
         try {
           await retrySync(entry);
           synced += 1;
@@ -270,6 +314,17 @@ class HistorialService {
           );
         }
       }
+      syncQueueStatus.value = SyncQueueStatus(
+        running: false,
+        total: items.length,
+        synced: synced,
+        failed: failed,
+        message: items.isEmpty
+            ? 'No había pendientes.'
+            : failed > 0
+                ? 'Sync automática completada con fallos.'
+                : 'Sync automática completada correctamente.',
+      );
       return HistorialSyncReport(
         total: items.length,
         synced: synced,
@@ -277,6 +332,9 @@ class HistorialService {
       );
     } finally {
       _syncingAll = false;
+      if (syncQueueStatus.value.running) {
+        syncQueueStatus.value = SyncQueueStatus.idle();
+      }
     }
   }
 
