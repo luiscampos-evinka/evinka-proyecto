@@ -82,11 +82,17 @@ Y una cola tipo:
 - botón reintentar
 
 ## Qué faltaría implementar
-- detector de conectividad real
-- cola persistente de sincronización
-- reintento automático en background
-- pantalla de pendientes
+- sincronización automática en background
 - resolución de conflictos si el registro ya existe en servidor
+- reintentos con backoff
+- alertas push cuando una sync quedó pendiente mucho tiempo
+
+## Ya implementado en esta fase
+- banner de conectividad en el dashboard
+- módulo de sincronización visible como pantalla separada
+- marca de documento local / pendiente / sincronizado / error
+- reintento manual desde el historial
+- payload local guardado para reintentar la subida luego
 
 ## Decisión de producto
 La dirección correcta es **offline-first parcial**:

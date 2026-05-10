@@ -1,4 +1,6 @@
 import 'dart:async';
+import 'dart:convert';
+
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
@@ -316,6 +318,11 @@ class _FormScreenState extends State<FormScreen> {
         installationOrderId: _data.installationOrderId,
         quoteId: _data.quoteId,
         clientEmail: _data.clientEmail,
+        documentType: 'conformity',
+        syncPayload: jsonEncode({
+          'documentType': 'conformity',
+          'protocolo': _data.toJson(),
+        }),
         syncStatus:
             (_data.installationOrderId.isNotEmpty && _data.quoteId.isNotEmpty)
                 ? 'pending'
@@ -443,6 +450,13 @@ class _FormScreenState extends State<FormScreen> {
         installationOrderId: _data.installationOrderId,
         quoteId: _data.quoteId,
         clientEmail: _data.clientEmail,
+        documentType: 'warranty',
+        syncPayload: jsonEncode({
+          'documentType': 'warranty',
+          'warrantyCode': warrantyCode,
+          'validUntil': validUntil,
+          'protocolo': _data.toJson(),
+        }),
         syncStatus:
             (_data.installationOrderId.isNotEmpty && _data.quoteId.isNotEmpty)
                 ? 'pending'

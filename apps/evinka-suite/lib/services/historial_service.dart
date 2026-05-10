@@ -1,7 +1,12 @@
 import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
+
 import 'package:path_provider/path_provider.dart';
+
+import '../models/protocolo_model.dart';
+import 'cotizador_service.dart';
+import 'firebase_service.dart';
 
 class HistorialEntry {
   final String id;
@@ -13,6 +18,8 @@ class HistorialEntry {
   final String installationOrderId;
   final String quoteId;
   final String clientEmail;
+  final String documentType;
+  final String syncPayload;
   final String syncStatus;
   final String syncMessage;
 
@@ -26,6 +33,8 @@ class HistorialEntry {
     this.installationOrderId = '',
     this.quoteId = '',
     this.clientEmail = '',
+    this.documentType = 'conformity',
+    this.syncPayload = '',
     this.syncStatus = 'local',
     this.syncMessage = '',
   });
@@ -42,6 +51,8 @@ class HistorialEntry {
         'installationOrderId': installationOrderId,
         'quoteId': quoteId,
         'clientEmail': clientEmail,
+        'documentType': documentType,
+        'syncPayload': syncPayload,
         'syncStatus': syncStatus,
         'syncMessage': syncMessage,
       };
@@ -56,6 +67,8 @@ class HistorialEntry {
         installationOrderId: json['installationOrderId'] as String? ?? '',
         quoteId: json['quoteId'] as String? ?? '',
         clientEmail: json['clientEmail'] as String? ?? '',
+        documentType: json['documentType'] as String? ?? 'conformity',
+        syncPayload: json['syncPayload'] as String? ?? '',
         syncStatus: json['syncStatus'] as String? ?? 'local',
         syncMessage: json['syncMessage'] as String? ?? '',
       );
@@ -141,6 +154,83 @@ class HistorialService {
     lista.removeWhere((e) => e.id == id);
     final file = await _indexFile;
     await file.writeAsString(jsonEncode(lista.map((e) => e.toJson()).toList()));
+  }
+
+  static Future<void> retrySync(HistorialEntry entry) async {
+    final payloadRaw = entry.syncPayload.trim();
+    if (payloadRaw.isEmpty) {
+      throw Exception(
+          'No hay payload local para reintentar esta sincronización.');
+    }
+    final payload = jsonDecode(payloadRaw) as Map<String, dynamic>;
+    final data = ProtocoloModel.fromJson(
+      Map<String, dynamic>.from(payload['protocolo'] as Map? ?? {}),
+    );
+    final pdfBytes = await leerPdf(entry.archivo);
+    if (pdfBytes == null) {
+      throw Exception('No se encontró el PDF local para reintentar.');
+    }
+
+    final documentType =
+        (payload['documentType']?.toString() ?? entry.documentType)
+            .trim()
+            .toLowerCase();
+
+    if (documentType == 'warranty') {
+      final warrantyCode = payload['warrantyCode']?.toString().trim() ?? '';
+      final validUntil = payload['validUntil']?.toString().trim() ?? '';
+      if (warrantyCode.isEmpty || validUntil.isEmpty) {
+        throw Exception('Faltan datos de garantía para reintentar la sync.');
+      }
+      FirebaseUploadResult? upload;
+      try {
+        upload = await FirebaseService.subirGarantia(
+          id: entry.id,
+          data: data,
+          pdfBytes: pdfBytes,
+          warrantyCode: warrantyCode,
+          validUntil: validUntil,
+        );
+      } catch (_) {
+        upload = null;
+      }
+      await CotizadorService.sincronizarGarantia(
+        data: data,
+        upload: upload,
+        id: entry.id,
+        warrantyCode: warrantyCode,
+        validUntil: validUntil,
+        pdfBytes: pdfBytes,
+      );
+      await actualizarEstadoSync(
+        entry.id,
+        syncStatus: 'synced',
+        syncMessage: 'Garantía sincronizada correctamente.',
+      );
+      return;
+    }
+
+    FirebaseUploadResult? upload;
+    try {
+      upload = await FirebaseService.subirProtocolo(
+        id: entry.id,
+        data: data,
+        pdfBytes: pdfBytes,
+      );
+    } catch (_) {
+      upload = null;
+    }
+    await CotizadorService.sincronizarConformidad(
+      data: data,
+      upload: upload,
+      id: entry.id,
+      pdfBytes: pdfBytes,
+    );
+    await actualizarEstadoSync(
+      entry.id,
+      syncStatus: 'synced',
+      syncMessage: 'Conformidad sincronizada correctamente.',
+    );
   }
 
   static Future<Uint8List?> leerPdf(String archivo) async {

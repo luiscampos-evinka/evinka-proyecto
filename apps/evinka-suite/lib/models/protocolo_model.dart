@@ -52,4 +52,69 @@ class ProtocoloModel {
     this.foto1,
     this.foto2,
   });
+
+  factory ProtocoloModel.fromJson(Map<String, dynamic> json) {
+    List<int>? bytesOf(dynamic value) {
+      if (value is List) {
+        return value.map((e) => (e as num).toInt()).toList();
+      }
+      return null;
+    }
+
+    return ProtocoloModel(
+      fecha: json['fecha']?.toString() ?? '',
+      quoteId: json['quoteId']?.toString() ?? '',
+      installationOrderId: json['installationOrderId']?.toString() ?? '',
+      commercialProfileName: json['commercialProfileName']?.toString() ?? '',
+      cliente: json['cliente']?.toString() ?? '',
+      clientEmail: json['clientEmail']?.toString() ?? '',
+      ruc: json['ruc']?.toString() ?? '',
+      direccion: json['direccion']?.toString() ?? '',
+      observaciones: json['observaciones']?.toString() ?? '',
+      marca: json['marca']?.toString() ?? '',
+      numeroSerie: json['numeroSerie']?.toString() ?? '',
+      voltaje: json['voltaje']?.toString() ?? '',
+      amperaje: json['amperaje']?.toString() ?? '',
+      otro: json['otro']?.toString() ?? '',
+      potenciaKw: json['potenciaKw']?.toString() ?? '',
+      cajaCargador: json['cajaCargador'] == true,
+      cargadorEvinka: json['cargadorEvinka'] == true,
+      manualCargador: json['manualCargador'] == true,
+      tarjetasCargador: json['tarjetasCargador'] == true,
+      adicional: json['adicional'] == true,
+      adicionalDesc: json['adicionalDesc']?.toString() ?? '',
+      firmaInstalador: bytesOf(json['firmaInstalador']),
+      firmaCliente: bytesOf(json['firmaCliente']),
+      foto1: bytesOf(json['foto1']),
+      foto2: bytesOf(json['foto2']),
+    );
+  }
+
+  Map<String, dynamic> toJson() => {
+        'fecha': fecha,
+        'quoteId': quoteId,
+        'installationOrderId': installationOrderId,
+        'commercialProfileName': commercialProfileName,
+        'cliente': cliente,
+        'clientEmail': clientEmail,
+        'ruc': ruc,
+        'direccion': direccion,
+        'observaciones': observaciones,
+        'marca': marca,
+        'numeroSerie': numeroSerie,
+        'voltaje': voltaje,
+        'amperaje': amperaje,
+        'otro': otro,
+        'potenciaKw': potenciaKw,
+        'cajaCargador': cajaCargador,
+        'cargadorEvinka': cargadorEvinka,
+        'manualCargador': manualCargador,
+        'tarjetasCargador': tarjetasCargador,
+        'adicional': adicional,
+        'adicionalDesc': adicionalDesc,
+        if (firmaInstalador != null) 'firmaInstalador': firmaInstalador,
+        if (firmaCliente != null) 'firmaCliente': firmaCliente,
+        if (foto1 != null) 'foto1': foto1,
+        if (foto2 != null) 'foto2': foto2,
+      };
 }

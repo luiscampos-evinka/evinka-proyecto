@@ -60,7 +60,8 @@ class _HistorialScreenState extends State<HistorialScreen> {
       }
       await Printing.sharePdf(bytes: bytes, filename: entry.archivo).timeout(
         const Duration(seconds: 20),
-        onTimeout: () => throw TimeoutException('Tiempo agotado al abrir el PDF compartido.'),
+        onTimeout: () => throw TimeoutException(
+            'Tiempo agotado al abrir el PDF compartido.'),
       );
     } catch (e) {
       if (!mounted) return;
@@ -70,13 +71,30 @@ class _HistorialScreenState extends State<HistorialScreen> {
     }
   }
 
+  Future<void> _reintentar(HistorialEntry entry) async {
+    try {
+      await HistorialService.retrySync(entry);
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+            content: Text('Sincronización reintentada para ${entry.cliente}.')),
+      );
+      _cargar();
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('No pude reintentar la sync: $e')),
+      );
+    }
+  }
+
   Future<void> _confirmarEliminar(HistorialEntry entry) async {
     final confirmar = await showDialog<bool>(
       context: context,
       builder: (_) => AlertDialog(
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-        title: const Text('¿Eliminar conformidad?'),
-        content: Text('Se eliminará la conformidad de "${entry.cliente}".'),
+        title: const Text('¿Eliminar documento?'),
+        content: Text('Se eliminará el documento de "${entry.cliente}".'),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context, false),
@@ -113,12 +131,12 @@ class _HistorialScreenState extends State<HistorialScreen> {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             const Text(
-              'Conformidades generadas',
+              'Documentos y sincronización',
               style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
             ),
             if (!_cargando)
               Text(
-                '${_historial.length} conformidad${_historial.length != 1 ? 'es' : ''}',
+                '${_historial.length} documento${_historial.length != 1 ? 's' : ''}',
                 style: const TextStyle(
                     fontSize: 12, fontWeight: FontWeight.normal),
               ),
@@ -156,7 +174,7 @@ class _HistorialScreenState extends State<HistorialScreen> {
           ),
           const SizedBox(height: 20),
           Text(
-            'Sin conformidades aún',
+            'Sin documentos aún',
             style: TextStyle(
               fontSize: 18,
               fontWeight: FontWeight.bold,
@@ -165,7 +183,7 @@ class _HistorialScreenState extends State<HistorialScreen> {
           ),
           const SizedBox(height: 8),
           Text(
-            'Las conformidades generadas aparecerán aquí',
+            'Los documentos generados aparecerán aquí',
             style: TextStyle(fontSize: 14, color: _faintText),
           ),
         ],
@@ -270,6 +288,22 @@ class _HistorialScreenState extends State<HistorialScreen> {
               ),
             ),
           ),
+        if (entry.syncStatus == 'pending' || entry.syncStatus == 'error')
+          Padding(
+            padding: const EdgeInsets.only(bottom: 2),
+            child: Text(
+              'Pendiente de sincronización',
+              style: TextStyle(fontSize: 12, color: Colors.orange[700]),
+            ),
+          ),
+        if (entry.syncStatus == 'synced')
+          Padding(
+            padding: const EdgeInsets.only(bottom: 2),
+            child: Text(
+              'Sincronizado',
+              style: TextStyle(fontSize: 12, color: Colors.green[700]),
+            ),
+          ),
         _fila(Icons.event, 'Instalación: ${entry.fecha}', _mutedText),
         const SizedBox(height: 2),
         _fila(
@@ -292,6 +326,15 @@ class _HistorialScreenState extends State<HistorialScreen> {
     return Column(
       mainAxisSize: MainAxisSize.min,
       children: [
+        if (entry.needsSync)
+          IconButton(
+            icon: const Icon(Icons.sync, color: Color(0xFF9C6A33), size: 22),
+            onPressed: () => _reintentar(entry),
+            tooltip: 'Reintentar sync',
+            padding: const EdgeInsets.all(6),
+            constraints: const BoxConstraints(),
+          ),
+        if (entry.needsSync) const SizedBox(height: 4),
         IconButton(
           icon: const Icon(Icons.share, color: Color(0xFF1565C0), size: 22),
           onPressed: () => _abrirPdf(entry),

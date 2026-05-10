@@ -7,6 +7,7 @@ import 'screens/login_screen.dart';
 import 'screens/suite_dashboard_screen.dart';
 import 'services/app_settings_service.dart';
 import 'services/evinka_api_service.dart';
+import 'services/network_status_service.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -21,6 +22,7 @@ Future<void> main() async {
     // La app igual puede operar en módulo cotizador aunque Firebase no esté disponible.
   }
   await EvinkaApiService.instance.init();
+  await NetworkStatusService.instance.init();
   await AppSettingsService.instance.init();
   runApp(const EvinkaSuiteApp());
 }

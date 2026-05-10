@@ -4,8 +4,10 @@ import '../models/evinka_app_models.dart';
 import '../services/app_settings_service.dart';
 import '../services/evinka_api_service.dart';
 import '../services/historial_service.dart';
+import '../services/network_status_service.dart';
 import 'admin_panel_screen.dart';
 import 'conformidad_module_screen.dart';
+import 'historial_screen.dart';
 import 'tech_visits_screen.dart';
 import 'quotes_module_screen.dart';
 import 'visits_module_screen.dart';
@@ -154,6 +156,8 @@ class _SuiteDashboardScreenState extends State<SuiteDashboardScreen> {
                 children: [
                   _hero(user: widget.user),
                   const SizedBox(height: 18),
+                  _connectivityBanner(),
+                  const SizedBox(height: 18),
                   if (widget.user.isTech) ...[
                     _actionNowCard(),
                     const SizedBox(height: 18),
@@ -240,6 +244,12 @@ class _SuiteDashboardScreenState extends State<SuiteDashboardScreen> {
         icon: Icons.fact_check_outlined,
         builder: (_) => const ConformidadModuleScreen(),
       ),
+      _ModuleCardData(
+        title: 'Sincronización',
+        subtitle: 'Revisa documentos locales, pendientes y reintentos de sync.',
+        icon: Icons.sync_outlined,
+        builder: (_) => const HistorialScreen(),
+      ),
     ];
   }
 
@@ -271,6 +281,12 @@ class _SuiteDashboardScreenState extends State<SuiteDashboardScreen> {
         icon: Icons.admin_panel_settings_outlined,
         builder: (_) => AdminPanelScreen(user: widget.user),
       ),
+      _ModuleCardData(
+        title: 'Sincronización',
+        subtitle: 'Revisa documentos locales, pendientes y reintentos de sync.',
+        icon: Icons.sync_outlined,
+        builder: (_) => const HistorialScreen(),
+      ),
     ];
   }
 
@@ -295,6 +311,12 @@ class _SuiteDashboardScreenState extends State<SuiteDashboardScreen> {
         icon: Icons.admin_panel_settings_outlined,
         builder: (_) => AdminPanelScreen(user: widget.user),
       ),
+      _ModuleCardData(
+        title: 'Sincronización',
+        subtitle: 'Revisa documentos locales, pendientes y reintentos de sync.',
+        icon: Icons.sync_outlined,
+        builder: (_) => const HistorialScreen(),
+      ),
     ];
   }
 
@@ -313,7 +335,63 @@ class _SuiteDashboardScreenState extends State<SuiteDashboardScreen> {
         icon: Icons.fact_check_outlined,
         builder: (_) => const ConformidadModuleScreen(),
       ),
+      _ModuleCardData(
+        title: 'Sincronización',
+        subtitle: 'Revisa documentos locales, pendientes y reintentos de sync.',
+        icon: Icons.sync_outlined,
+        builder: (_) => const HistorialScreen(),
+      ),
     ];
+  }
+
+  Widget _connectivityBanner() {
+    return ValueListenableBuilder<NetworkState>(
+      valueListenable: NetworkStatusService.instance.state,
+      builder: (context, state, _) {
+        final isOnline = state == NetworkState.online;
+        final bg = isOnline ? const Color(0x1F2E7D32) : const Color(0x22F9A825);
+        final border =
+            isOnline ? const Color(0x332E7D32) : const Color(0x33F9A825);
+        final icon = isOnline ? Icons.cloud_done : Icons.cloud_off;
+        final title = isOnline ? 'Conectado' : 'Sin internet';
+        final text = isOnline
+            ? 'La app puede sincronizar pendientes ahora.'
+            : 'Puedes seguir trabajando local y sincronizar después.';
+        return Card(
+          shape:
+              RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
+          color: bg,
+          child: Container(
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(24),
+              border: Border.all(color: border),
+            ),
+            padding: const EdgeInsets.all(16),
+            child: Row(
+              children: [
+                Icon(icon, color: _mutedText),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(title,
+                          style: const TextStyle(fontWeight: FontWeight.w800)),
+                      const SizedBox(height: 4),
+                      Text(text),
+                    ],
+                  ),
+                ),
+                TextButton(
+                  onPressed: () => NetworkStatusService.instance.checkNow(),
+                  child: const Text('Revisar'),
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
   }
 
   Widget _actionNowCard() {
@@ -439,7 +517,7 @@ class _SuiteDashboardScreenState extends State<SuiteDashboardScreen> {
           label: 'Sync pendiente',
           value: _pendingSync.toString(),
           icon: Icons.sync_problem_outlined,
-          builder: (_) => const ConformidadModuleScreen(initialIndex: 1)),
+          builder: (_) => const HistorialScreen()),
     ];
     return LayoutBuilder(
       builder: (context, constraints) {
