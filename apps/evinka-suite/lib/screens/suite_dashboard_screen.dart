@@ -380,7 +380,9 @@ class _SuiteDashboardScreenState extends State<SuiteDashboardScreen> {
                     ? 'Conectado'
                     : 'Sin internet';
             final text = syncState.running
-                ? syncState.message
+                ? syncState.due > 0
+                    ? '${syncState.message} (${syncState.due} por vencer)'
+                    : syncState.message
                 : isOnline
                     ? 'La app puede sincronizar pendientes ahora.'
                     : 'Puedes seguir trabajando local y sincronizar después.';

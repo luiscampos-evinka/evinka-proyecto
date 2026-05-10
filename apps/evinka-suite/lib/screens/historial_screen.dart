@@ -303,7 +303,7 @@ class _HistorialScreenState extends State<HistorialScreen> {
                       const SizedBox(height: 4),
                       Text(
                         status.running
-                            ? 'Procesando ${status.synced}/${status.total}'
+                            ? 'Procesando ${status.synced}/${status.total} · ${status.due} vencidos'
                             : 'Puedes forzar la sincronización cuando tengas internet.',
                         style: TextStyle(color: _mutedText, fontSize: 12),
                       ),
@@ -370,8 +370,28 @@ class _HistorialScreenState extends State<HistorialScreen> {
           Padding(
             padding: const EdgeInsets.only(bottom: 2),
             child: Text(
-              'Pendiente de sincronización',
+              entry.syncNextAttemptAt.isNotEmpty
+                  ? 'Pendiente · próximo intento: ${entry.syncNextAttemptAt}'
+                  : 'Pendiente de sincronización',
               style: TextStyle(fontSize: 12, color: Colors.orange[700]),
+            ),
+          ),
+        if (entry.syncRetryCount > 0)
+          Padding(
+            padding: const EdgeInsets.only(bottom: 2),
+            child: Text(
+              'Intentos: ${entry.syncRetryCount}',
+              style: TextStyle(fontSize: 12, color: _faintText),
+            ),
+          ),
+        if (entry.syncLastError.isNotEmpty)
+          Padding(
+            padding: const EdgeInsets.only(bottom: 2),
+            child: Text(
+              entry.syncLastError,
+              style: TextStyle(fontSize: 11, color: Colors.orange[700]),
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
             ),
           ),
         if (entry.syncStatus == 'synced')

@@ -24,6 +24,7 @@ Future<void> main() async {
   }
   await EvinkaApiService.instance.init();
   await NetworkStatusService.instance.init();
+  await HistorialService.startAutoQueueRunner();
   await AppSettingsService.instance.init();
   runApp(const EvinkaSuiteApp());
 }
@@ -215,10 +216,7 @@ class _BootstrapScreenState extends State<_BootstrapScreen> {
       return;
     _syncingPending = true;
     try {
-      final report = await HistorialService.retryPendingSyncs();
-      if (!mounted || !report.hasChanges) return;
-      // El dashboard se refresca solo cuando el usuario vuelve a entrar o pulsa refresh,
-      // pero este intento deja los pendientes listos para sync.
+      await HistorialService.runAutomaticQueue();
     } finally {
       _syncingPending = false;
     }
