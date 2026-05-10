@@ -1,0 +1,129 @@
+<!doctype html>
+<html lang="es">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="theme-color" content="#0b0d12" />
+    <title>EVINKA Stock Center</title>
+    <link rel="icon" type="image/png" href="./assets/favicon.png" />
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <div class="app-shell">
+      <aside class="sidebar card">
+        <div>
+          <div class="brand-lockup">
+            <img src="./assets/logo-white.svg" alt="EVINKA" class="brand-logo" />
+            <div>
+              <div class="brand-title">EVINKA</div>
+              <div class="brand-subtitle">Stock Center</div>
+            </div>
+          </div>
+          <p class="sidebar-copy">Visibilidad rápida de stock disponible, por llegar y riesgo de quiebre.</p>
+        </div>
+        <div class="sidebar-box">
+          <div class="eyebrow">Modo de datos</div>
+          <div id="dataModeBadge" class="pill">Demo</div>
+          <p class="muted small">Cuando me pases el enlace de Google Sheets, solo se cambia el archivo <code>config.js</code>.</p>
+        </div>
+      </aside>
+
+      <main class="content">
+        <section class="hero card">
+          <div>
+            <span class="eyebrow">CONTROL OPERATIVO</span>
+            <h1>Stock disponible y por llegar</h1>
+            <p class="muted" id="headerSummary">Dashboard inicial para inventario, demanda y reorden.</p>
+          </div>
+          <div class="toolbar">
+            <input id="searchInput" type="search" placeholder="Buscar SKU o producto" />
+            <select id="statusFilter">
+              <option value="all">Todos</option>
+              <option value="critical">Crítico</option>
+              <option value="warning">En riesgo</option>
+              <option value="healthy">Saludable</option>
+            </select>
+          </div>
+        </section>
+
+        <section class="metrics-grid" id="metricsGrid"></section>
+
+        <section class="grid-2">
+          <article class="card panel">
+            <div class="panel-head">
+              <h2>Alertas prioritarias</h2>
+              <span class="pill warn" id="alertsCount">0</span>
+            </div>
+            <div id="alertsList" class="stack"></div>
+          </article>
+
+          <article class="card panel">
+            <div class="panel-head">
+              <h2>Próximos ingresos</h2>
+              <span class="pill info" id="incomingCount">0</span>
+            </div>
+            <div id="incomingList" class="stack"></div>
+          </article>
+        </section>
+
+        <section class="card panel">
+          <div class="panel-head panel-head-wrap">
+            <div>
+              <h2>Inventario maestro</h2>
+              <p class="muted">Disponible = stock actual - comprometido. Reorden = demanda diaria × lead time + stock de seguridad.</p>
+            </div>
+            <div class="legend">
+              <span><i class="dot critical"></i> Crítico</span>
+              <span><i class="dot warning"></i> Riesgo</span>
+              <span><i class="dot healthy"></i> Saludable</span>
+            </div>
+          </div>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>SKU</th>
+                  <th>Producto</th>
+                  <th>Disponible</th>
+                  <th>Seguridad</th>
+                  <th>Demanda/mes</th>
+                  <th>Lead time</th>
+                  <th>Punto reorden</th>
+                  <th>Días cobertura</th>
+                  <th>Estado</th>
+                </tr>
+              </thead>
+              <tbody id="inventoryTable"></tbody>
+            </table>
+          </div>
+        </section>
+
+        <section class="card panel">
+          <div class="panel-head panel-head-wrap">
+            <div>
+              <h2>Cómo conectarlo a Google Sheets</h2>
+              <p class="muted">Este MVP ya está preparado para trabajar con una hoja publicada o con un Apps Script.</p>
+            </div>
+          </div>
+          <div class="steps-grid">
+            <div class="step-box">
+              <strong>1. Hoja inventario</strong>
+              <p>Columnas esperadas: <code>sku, producto, categoria, stock_actual, stock_comprometido, stock_seguridad, demanda_mensual, lead_time_dias</code>.</p>
+            </div>
+            <div class="step-box">
+              <strong>2. Hoja ingresos</strong>
+              <p>Columnas esperadas: <code>sku, producto, cantidad, fecha_estimada, estado, proveedor</code>.</p>
+            </div>
+            <div class="step-box">
+              <strong>3. Configuración</strong>
+              <p>Pegar las URLs CSV públicas en <code>public/config.js</code> y cambiar <code>useDemoData</code> a <code>false</code>.</p>
+            </div>
+          </div>
+        </section>
+      </main>
+    </div>
+
+    <script src="./config.js"></script>
+    <script src="./app.js"></script>
+  </body>
+</html>

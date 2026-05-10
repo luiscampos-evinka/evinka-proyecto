@@ -1,0 +1,444 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="theme-color" content="#0f8f6d" />
+  <meta name="description" content="BioPlástico Educa: plataforma educativa sobre bioplásticos, aprendizaje interactivo y seguimiento de progreso." />
+  <title>BioPlástico Educa</title>
+  <link rel="manifest" href="./manifest.webmanifest" />
+  <link rel="icon" href="./assets/icon-bio.svg" type="image/svg+xml" />
+  <link rel="stylesheet" href="./styles.css?v=20260508o" />
+</head>
+<body>
+  <div class="bg-orb orb-a"></div>
+  <div class="bg-orb orb-b"></div>
+  <div class="bg-grid"></div>
+
+  <div id="authOverlay" class="auth-overlay visible">
+    <div class="auth-card premium-card">
+      <div class="auth-topline">BioPlástico Educa</div>
+      <h1>Aprende sobre bioplásticos de forma interactiva</h1>
+      <p class="auth-copy">Explora contenidos, avanza por secciones cortas y refuerza lo aprendido con actividades y preguntas dinámicas.</p>
+
+      <div class="auth-switch">
+        <button class="auth-switch-btn active" data-auth-mode="login" type="button">Ingresar</button>
+        <button class="auth-switch-btn" data-auth-mode="register" type="button">Crear cuenta</button>
+      </div>
+
+      <form id="loginForm" class="auth-form auth-mode active-auth-mode">
+        <label>
+          Correo
+          <input id="loginEmail" type="email" placeholder="correo@dominio.com" autocomplete="email" required />
+        </label>
+        <label>
+          Contraseña
+          <input id="loginPassword" type="password" placeholder="Tu contraseña segura" autocomplete="current-password" required />
+        </label>
+        <button id="loginBtn" class="primary-btn full-btn" type="submit">Entrar</button>
+      </form>
+
+      <form id="registerForm" class="auth-form auth-mode hidden">
+        <label>
+          Nombre
+          <input id="registerName" type="text" placeholder="Ej. Ana Torres" autocomplete="name" required />
+        </label>
+        <label>
+          Correo
+          <input id="registerEmail" type="email" placeholder="correo@dominio.com" autocomplete="email" required />
+        </label>
+        <label>
+          Contraseña
+          <input id="registerPassword" type="password" placeholder="Crea una contraseña segura" autocomplete="new-password" required />
+        </label>
+        <label>
+          Confirmar contraseña
+          <input id="registerPasswordConfirm" type="password" placeholder="Repite la contraseña" autocomplete="new-password" required />
+        </label>
+        <button id="registerBtn" class="primary-btn full-btn" type="submit">Crear cuenta</button>
+      </form>
+
+      <div class="auth-tips-grid">
+        <div class="tip-card"><strong>Login estable</strong><span>Correo y contraseña para entrar directo.</span></div>
+        <div class="tip-card"><strong>Admin real</strong><span>Usuarios, contenido y preguntas desde la misma plataforma.</span></div>
+        <div class="tip-card"><strong>UX mejorada</strong><span>Scrolls, botones y paneles más fluidos.</span></div>
+      </div>
+
+      <div id="authMessage" class="inline-message hidden"></div>
+    </div>
+  </div>
+
+  <div class="page-shell">
+    <aside class="brand-panel">
+      <div class="brand-chip">Educación en sostenibilidad</div>
+      <h1>BioPlástico Educa</h1>
+      <p class="brand-copy">Una plataforma educativa para comprender qué son los bioplásticos, cómo se usan y qué impacto pueden tener en el entorno.</p>
+
+      <div class="brand-stat-grid">
+        <article class="brand-stat-card"><span>🧠</span><div><strong>Aprendizaje guiado</strong><p>El contenido y las preguntas acompañan tu proceso de avance.</p></div></article>
+        <article class="brand-stat-card"><span>🌿</span><div><strong>Impacto ambiental</strong><p>Aprende materiales, usos responsables y conceptos clave de sostenibilidad.</p></div></article>
+        <article class="brand-stat-card"><span>📚</span><div><strong>Progreso continuo</strong><p>Revisa contenidos, responde actividades y fortalece lo aprendido.</p></div></article>
+      </div>
+
+      <div class="brand-story-card">
+        <div class="mini-kicker inverse">BioPlástico Educa</div>
+        <p id="heroMessage">Una experiencia de aprendizaje guiado para descubrir, practicar y reforzar conocimientos sobre bioplásticos.</p>
+      </div>
+    </aside>
+
+    <main class="app-panel">
+      <header class="app-header glass-card premium-card">
+        <div>
+          <div class="mini-kicker">BioPlástico Educa</div>
+          <div class="app-title">Experiencia educativa interactiva</div>
+        </div>
+        <div class="header-actions">
+          <button id="installBtn" class="ghost-btn" type="button" hidden>Instalar</button>
+        </div>
+      </header>
+
+      <section class="overview-grid">
+        <article class="overview-card glass-card premium-card user-card">
+          <div class="mini-kicker">Sesión activa</div>
+          <div class="user-line">
+            <div id="userInitials" class="user-avatar">--</div>
+            <div>
+              <strong id="sessionName">Invitado</strong>
+              <p id="sessionEmail">Sin sesión</p>
+            </div>
+          </div>
+          <div class="role-row">
+            <span id="sessionRole" class="role-pill role-user">Usuario</span>
+            <span id="sessionStatus" class="status-pill">Esperando ingreso</span>
+          </div>
+        </article>
+
+        <article class="overview-card glass-card premium-card stat-card">
+          <div class="mini-kicker">Ruta sugerida</div>
+          <strong id="learningRecommendation">Ingresa para activar tu avance y repaso dinámico.</strong>
+          <p id="dailyMission">Tu siguiente paso aparecerá aquí automáticamente.</p>
+        </article>
+
+        <article class="overview-card glass-card premium-card stat-card">
+          <div class="mini-kicker">Resultado más reciente</div>
+          <strong id="latestScore">Aún sin quiz</strong>
+          <p id="latestWeakTopics">Cuando respondas, aquí aparecerá tu resumen.</p>
+        </article>
+
+        <article class="overview-card glass-card premium-card accent-card stat-card">
+          <div class="mini-kicker">Enfoque</div>
+          <strong id="appModeLabel">Aprendizaje guiado</strong>
+          <p id="impactSummary">Contenidos, práctica y repaso organizados en una sola experiencia.</p>
+        </article>
+      </section>
+
+      <nav class="tabs-bar glass-card premium-card">
+        <button class="tab-btn active" data-go="inicio" type="button">Inicio</button>
+        <button class="tab-btn" data-go="que-es" type="button">¿Qué es?</button>
+        <button class="tab-btn" data-go="beneficios" type="button">Beneficios</button>
+        <button class="tab-btn" data-go="tipos" type="button">Tipos</button>
+        <button class="tab-btn" data-go="aprende" type="button">Aprende</button>
+        <button class="tab-btn" data-go="quiz" type="button">Quiz</button>
+        <button class="tab-btn" data-go="cuenta" type="button">Cuenta</button>
+        <button class="tab-btn hidden" id="adminTabBtn" data-go="admin" type="button">Admin</button>
+      </nav>
+
+      <section class="screen active-screen" data-screen="inicio">
+        <div class="hero-surface glass-card premium-card hero-premium">
+          <div>
+            <div class="mini-kicker">Aprendizaje interactivo</div>
+            <h2>Conoce los bioplásticos con una experiencia clara, visual y fácil de seguir</h2>
+            <p>Avanza por bloques cortos, descubre conceptos clave y refuerza lo aprendido con preguntas dinámicas.</p>
+          </div>
+          <div class="hero-badges">
+            <span class="hero-badge">Ruta guiada</span>
+            <span class="hero-badge">Progreso visible</span>
+            <span class="hero-badge">Quiz adaptativo</span>
+          </div>
+          <div class="hero-mini-grid two-col">
+            <article class="micro-card"><strong>Contenido por secciones</strong><span>Explora conceptos, beneficios, tipos de bioplástico y actividades prácticas.</span></article>
+            <article class="micro-card"><strong>Refuerzo activo</strong><span>Responde preguntas y vuelve sobre los temas que necesiten más atención.</span></article>
+          </div>
+        </div>
+
+        <div class="dashboard-band">
+          <article class="metric-tile glass-card premium-card">
+            <small>Ruta actual</small>
+            <strong id="smartModeValue">Exploración guiada</strong>
+            <span>Continúa aprendiendo según tu progreso.</span>
+          </article>
+          <article class="metric-tile glass-card premium-card">
+            <small>Progreso actual</small>
+            <strong id="progressValue">Aún sin medición</strong>
+            <span>Tu puntaje más reciente aparecerá aquí.</span>
+          </article>
+          <article class="metric-tile glass-card premium-card">
+            <small>Siguiente paso</small>
+            <strong id="nextStepValue">Empieza por la base</strong>
+            <span>Revisa una sección y luego responde el quiz.</span>
+          </article>
+        </div>
+
+        <article class="journey-card glass-card premium-card">
+          <div class="card-head compact-head"><strong>Ruta de aprendizaje</strong><span>Sigue un recorrido simple para entender, practicar y reforzar.</span></div>
+          <div class="journey-list">
+            <div class="journey-step"><span>01</span><div><strong>Entiende el material</strong><p>Qué es, por qué importa y cómo se diferencia del plástico tradicional.</p></div></div>
+            <div class="journey-step"><span>02</span><div><strong>Conecta con beneficios reales</strong><p>Impacto ambiental, uso responsable y valor educativo.</p></div></div>
+            <div class="journey-step"><span>03</span><div><strong>Valida con quiz adaptativo</strong><p>La plataforma refuerza lo que todavía no dominas.</p></div></div>
+          </div>
+        </article>
+
+        <div class="module-grid premium-modules">
+          <button class="module-card glass-card premium-card" data-go="que-es" type="button"><span>📘</span><strong>Fundamentos</strong><small>Definición, diferencia y lógica ambiental.</small></button>
+          <button class="module-card glass-card premium-card" data-go="beneficios" type="button"><span>🌱</span><strong>Beneficios</strong><small>Ventajas ambientales y pedagógicas.</small></button>
+          <button class="module-card glass-card premium-card" data-go="tipos" type="button"><span>🧪</span><strong>Tipos</strong><small>PLA, PHA y base de almidón.</small></button>
+          <button class="module-card glass-card premium-card" data-go="aprende" type="button"><span>🏡</span><strong>Laboratorio</strong><small>Experimento guiado y cuidados prácticos.</small></button>
+          <button class="module-card glass-card premium-card emphasis" data-go="quiz" type="button"><span>🧠</span><strong>Quiz dinámico</strong><small>Preguntas variables según tu avance.</small></button>
+          <button class="module-card glass-card premium-card hidden" id="adminModuleCard" data-go="admin" type="button"><span>🛠️</span><strong>Panel admin</strong><small>Gestiona contenido, preguntas y cuentas.</small></button>
+        </div>
+      </section>
+
+      <section class="screen" data-screen="que-es">
+        <div class="screen-header glass-card premium-card">
+          <div class="screen-icon">📘</div>
+          <div>
+            <div class="mini-kicker">Sección 1</div>
+            <h2 id="queEsTitle">¿Qué es el plástico biodegradable?</h2>
+            <p id="queEsDescription">Es un tipo de plástico diseñado para descomponerse más rápido que el plástico tradicional.</p>
+          </div>
+        </div>
+        <div id="queEsCore" class="content-grid two"></div>
+        <div class="visual-row glass-card premium-card">
+          <span class="visual-chip">🌽 Materia prima</span>
+          <span class="visual-arrow">→</span>
+          <span class="visual-chip">🧴 Producto</span>
+          <span class="visual-arrow">→</span>
+          <span class="visual-chip success">🍃 Menor impacto</span>
+        </div>
+        <div id="queEsExtra" class="content-grid"></div>
+      </section>
+
+      <section class="screen" data-screen="beneficios">
+        <div class="screen-header glass-card premium-card">
+          <div class="screen-icon">🌱</div>
+          <div>
+            <div class="mini-kicker">Sección 2</div>
+            <h2>Beneficios</h2>
+            <p>Razones por las que este material puede aportar valor ambiental si se usa bien.</p>
+          </div>
+        </div>
+        <div id="benefitsList" class="benefits-grid"></div>
+        <div id="beneficiosExtra" class="content-grid"></div>
+      </section>
+
+      <section class="screen" data-screen="tipos">
+        <div class="screen-header glass-card premium-card">
+          <div class="screen-icon">🧪</div>
+          <div>
+            <div class="mini-kicker">Sección 3</div>
+            <h2>Tipos de bioplástico</h2>
+            <p>Conoce las familias principales y cómo se usan.</p>
+          </div>
+        </div>
+        <div id="typesGrid" class="content-grid three"></div>
+        <div id="tiposExtra" class="content-grid"></div>
+      </section>
+
+      <section class="screen" data-screen="aprende">
+        <div class="screen-header glass-card premium-card">
+          <div class="screen-icon">🏡</div>
+          <div>
+            <div class="mini-kicker">Sección 4</div>
+            <h2>Aprende en casa</h2>
+            <p>Práctica guiada para convertir el aprendizaje en experiencia.</p>
+          </div>
+        </div>
+        <div class="recipe-layout">
+          <article class="glass-card premium-card recipe-card">
+            <strong id="learnTitle">Bioplástico casero básico</strong>
+            <div class="recipe-block">
+              <h3>Materiales</h3>
+              <ul id="recipeMaterials"></ul>
+            </div>
+          </article>
+          <article class="glass-card premium-card recipe-card">
+            <div class="recipe-block">
+              <h3>Pasos</h3>
+              <ol id="recipeSteps"></ol>
+            </div>
+          </article>
+        </div>
+        <div id="aprendeExtra" class="content-grid"></div>
+      </section>
+
+      <section class="screen" data-screen="quiz">
+        <div class="screen-header glass-card premium-card">
+          <div class="screen-icon">🧠</div>
+          <div>
+            <div class="mini-kicker">Sección 5</div>
+            <h2>Quiz adaptativo</h2>
+            <p>Las preguntas mezclan contenido base, refuerzo y nuevas preguntas del admin.</p>
+          </div>
+        </div>
+        <div class="quiz-layout">
+          <article class="glass-card premium-card quiz-summary-card">
+            <div class="mini-kicker">Modo activo</div>
+            <strong id="quizModeDescription">Primero aprendes y luego refuerzas.</strong>
+            <div class="progress-wrap">
+              <div class="progress-bar"><div id="quizProgress"></div></div>
+              <small id="quizStepLabel">Pregunta 1 de 7</small>
+            </div>
+            <div class="chip-row">
+              <span id="quizSourceChip" class="mini-chip">Base</span>
+              <span id="quizTopicChip" class="mini-chip neutral">Tema</span>
+            </div>
+          </article>
+          <article class="glass-card premium-card quiz-card">
+            <h3 id="quizQuestion">Pregunta</h3>
+            <div id="quizAnswers" class="answers-grid"></div>
+            <div class="action-row between">
+              <button id="quizRestartBtn" class="ghost-btn" type="button">Reiniciar</button>
+              <button id="quizNextBtn" class="primary-btn" type="button" disabled>Siguiente</button>
+            </div>
+          </article>
+        </div>
+      </section>
+
+      <section class="screen" data-screen="resultado">
+        <article class="glass-card premium-card result-card">
+          <div class="result-emoji">🏆</div>
+          <div class="mini-kicker">Resultado final</div>
+          <h2 id="resultTitle">¡Buen trabajo!</h2>
+          <p id="resultScore">Obtuviste 0/7</p>
+          <p id="resultMessage">Sigue aprendiendo y vuelve a intentarlo.</p>
+          <div class="insight-box">
+            <strong>Recomendación personalizada</strong>
+            <p id="resultInsight">Después del quiz verás aquí tu siguiente paso.</p>
+          </div>
+          <div class="action-row center">
+            <button id="retryQuizBtn" class="primary-btn" type="button">Repetir quiz</button>
+            <button class="ghost-btn" data-go="inicio" type="button">Volver al inicio</button>
+          </div>
+        </article>
+      </section>
+
+      <section class="screen" data-screen="cuenta">
+        <div class="screen-header glass-card premium-card">
+          <div class="screen-icon">👤</div>
+          <div>
+            <div class="mini-kicker">Tu cuenta</div>
+            <h2>Perfil y seguridad</h2>
+            <p>Aquí puedes ver tus datos, cambiar tu contraseña y cerrar sesión sin apretar el header.</p>
+          </div>
+        </div>
+
+        <article class="glass-card premium-card account-card">
+          <div class="account-top-row">
+            <div class="user-line">
+              <div id="accountInitials" class="user-avatar">--</div>
+              <div>
+                <strong id="accountName">Invitado</strong>
+                <p id="accountEmail">Sin sesión</p>
+              </div>
+            </div>
+            <span id="accountRole" class="role-pill role-user">Usuario</span>
+          </div>
+          <div class="account-meta-grid">
+            <div class="mini-info-box">
+              <small>Estado</small>
+              <strong id="accountStatus">Sin sesión</strong>
+            </div>
+            <div class="mini-info-box">
+              <small>Último acceso</small>
+              <strong id="accountLastLogin">—</strong>
+            </div>
+          </div>
+        </article>
+
+        <article class="glass-card premium-card account-card">
+          <div class="card-head"><strong>Cambiar contraseña</strong><span>Seguridad de tu cuenta</span></div>
+          <form id="accountPasswordForm" class="admin-form">
+            <label>Contraseña actual<input id="accountCurrentPassword" type="password" placeholder="Tu contraseña actual" required /></label>
+            <label>Nueva contraseña<input id="accountNewPassword" type="password" placeholder="Nueva contraseña segura" required /></label>
+            <label>Confirmar nueva contraseña<input id="accountConfirmPassword" type="password" placeholder="Repite la nueva contraseña" required /></label>
+            <button class="primary-btn full-btn" type="submit">Actualizar contraseña</button>
+          </form>
+          <div id="accountMessage" class="inline-message hidden"></div>
+        </article>
+
+        <article class="glass-card premium-card account-card">
+          <div class="card-head"><strong>Acciones</strong><span>Control rápido</span></div>
+          <div class="action-row">
+            <button id="logoutBtn" class="ghost-btn" type="button">Cerrar sesión</button>
+          </div>
+        </article>
+      </section>
+
+      <section class="screen" data-screen="admin">
+        <div class="screen-header glass-card premium-card">
+          <div class="screen-icon">🛠️</div>
+          <div>
+            <div class="mini-kicker">Workspace admin</div>
+            <h2>Gestiona contenido, preguntas y cuentas</h2>
+            <p>Todo en paneles más ordenados, con scroll propio y sin que se buguee el layout.</p>
+          </div>
+        </div>
+
+        <div class="admin-workspace three-col">
+          <article class="glass-card premium-card admin-card scroll-panel">
+            <div class="card-head"><strong>Nueva tarjeta</strong><span>Contenido complementario</span></div>
+            <form id="adminContentForm" class="admin-form">
+              <label>Sección<select id="adminSection"><option value="que-es">¿Qué es?</option><option value="beneficios">Beneficios</option><option value="tipos">Tipos</option><option value="aprende">Aprende en casa</option></select></label>
+              <label>Título<input id="adminContentTitle" type="text" placeholder="Ej. Mitos y verdades" required /></label>
+              <label>Texto<textarea id="adminContentText" rows="5" placeholder="Escribe el contenido adicional" required></textarea></label>
+              <button class="primary-btn full-btn" type="submit">Guardar tarjeta</button>
+            </form>
+          </article>
+
+          <article class="glass-card premium-card admin-card scroll-panel">
+            <div class="card-head"><strong>Nueva pregunta</strong><span>Más dinamismo en el quiz</span></div>
+            <form id="adminQuestionForm" class="admin-form">
+              <label>Tema<select id="adminQuestionTopic"><option value="que-es">¿Qué es?</option><option value="beneficios">Beneficios</option><option value="tipos">Tipos</option><option value="aprende">Aprende en casa</option></select></label>
+              <label>Pregunta<input id="adminQuestionText" type="text" placeholder="Escribe la pregunta" required /></label>
+              <label>Respuestas (usa | )<input id="adminQuestionAnswers" type="text" placeholder="Opción 1 | Opción 2 | Opción 3 | Opción 4" required /></label>
+              <label>Índice correcto<input id="adminQuestionCorrect" type="number" min="0" max="3" value="0" required /></label>
+              <button class="primary-btn full-btn" type="submit">Guardar pregunta</button>
+            </form>
+          </article>
+
+          <article class="glass-card premium-card admin-card scroll-panel">
+            <div class="card-head"><strong>Crear cuenta</strong><span>Usuario o admin</span></div>
+            <form id="adminUserForm" class="admin-form">
+              <label>Nombre<input id="adminUserName" type="text" placeholder="Ej. Carla Ríos" required /></label>
+              <label>Correo<input id="adminUserEmail" type="email" placeholder="correo@dominio.com" required /></label>
+              <label>Rol<select id="adminUserRole"><option value="user">Usuario</option><option value="admin">Admin</option></select></label>
+              <label>Contraseña<div class="inline-input-row"><input id="adminUserPassword" type="text" placeholder="Contraseña segura" required /><button id="generateAdminPasswordBtn" class="ghost-btn compact-btn" type="button">Generar</button></div></label>
+              <button class="primary-btn full-btn" type="submit">Crear cuenta</button>
+            </form>
+          </article>
+        </div>
+
+        <div id="adminMessage" class="inline-message hidden"></div>
+
+        <div class="admin-lists-grid two-col">
+          <article class="glass-card premium-card admin-list-card">
+            <div class="card-head"><strong>Contenido agregado</strong><span>Scroll dinámico</span></div>
+            <div id="adminContentList" class="stack-list dynamic-scroll"></div>
+          </article>
+          <article class="glass-card premium-card admin-list-card">
+            <div class="card-head"><strong>Preguntas creadas</strong><span>Disponibles para el quiz</span></div>
+            <div id="adminQuestionList" class="stack-list dynamic-scroll"></div>
+          </article>
+        </div>
+
+        <article class="glass-card premium-card admin-list-card">
+          <div class="card-head"><strong>Cuentas creadas</strong><span>Gestión simple y clara</span></div>
+          <div id="adminUsersList" class="stack-list dynamic-scroll large-scroll"></div>
+        </article>
+      </section>
+    </main>
+  </div>
+
+  <script src="./app.js?v=20260508o"></script>
+</body>
+</html>

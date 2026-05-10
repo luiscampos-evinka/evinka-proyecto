@@ -1,0 +1,387 @@
+import ExcelJS from 'exceljs';
+import fs from 'node:fs/promises';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { loadEnv, requiredEnv } from '../src/config.mjs';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+const ROOT = path.resolve(__dirname, '..');
+loadEnv(path.join(ROOT, '.env'));
+
+const OUTPUT_NAME = 'Cotizador_EVINKA_validacion_v3.xlsx';
+const OUTPUT_PATH = path.join(ROOT, OUTPUT_NAME);
+const STORAGE_BUCKET = 'EVINKA';
+const STORAGE_OBJECT = `cotizaciones/${OUTPUT_NAME}`;
+
+const C = {
+  black: '0F0F10',
+  black2: '1A1A1D',
+  gold: 'C7A06A',
+  goldText: '0F0F10',
+  title: 'EAD1A9',
+  subtitle: 'B8AB95',
+  line: 'D9D2C7',
+  note: 'F5F1EA',
+  label: 'F5E8D4',
+  input: 'FFF7EA',
+  white: 'FFFFFF',
+  total: 'F3E2B8',
+};
+
+function borderAll() {
+  return {
+    top: { style: 'thin', color: { argb: C.line } },
+    left: { style: 'thin', color: { argb: C.line } },
+    right: { style: 'thin', color: { argb: C.line } },
+    bottom: { style: 'thin', color: { argb: C.line } },
+  };
+}
+
+function money(cell) { cell.numFmt = '"S/" #,##0.00'; }
+function qty(cell) { cell.numFmt = '#,##0.00'; }
+function pct(cell) { cell.numFmt = '0.00%'; }
+
+function setPage(ws, landscape = true) {
+  ws.pageSetup = {
+    paperSize: 9,
+    orientation: landscape ? 'landscape' : 'portrait',
+    fitToPage: true,
+    fitToWidth: 1,
+    fitToHeight: 0,
+    margins: { left: 0.3, right: 0.3, top: 0.4, bottom: 0.4, header: 0.2, footer: 0.2 },
+  };
+  ws.views = [{ state: 'frozen', xSplit: 0, ySplit: 4 }];
+}
+
+function titleBlock(ws, title, subtitle, widthEnd = 'H') {
+  ws.mergeCells(`A1:${widthEnd}1`);
+  ws.mergeCells(`A2:${widthEnd}2`);
+  ws.getCell('A1').value = title;
+  ws.getCell('A2').value = subtitle;
+  for (const a of ['A1', 'A2']) {
+    const c = ws.getCell(a);
+    c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: C.black } };
+    c.alignment = { horizontal: 'left', vertical: 'middle' };
+  }
+  ws.getCell('A1').font = { bold: true, size: 18, color: { argb: C.title } };
+  ws.getCell('A2').font = { size: 10, color: { argb: C.subtitle } };
+  ws.getRow(1).height = 28;
+  ws.getRow(2).height = 22;
+}
+
+function sectionBand(ws, row, text, widthEnd = 'H') {
+  ws.mergeCells(`A${row}:${widthEnd}${row}`);
+  const c = ws.getCell(`A${row}`);
+  c.value = text;
+  c.font = { bold: true, size: 11, color: { argb: C.goldText } };
+  c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: C.gold } };
+  c.alignment = { horizontal: 'left', vertical: 'middle' };
+  ws.getRow(row).height = 24;
+}
+
+function noteBand(ws, row, text, widthEnd = 'H') {
+  ws.mergeCells(`A${row}:${widthEnd}${row}`);
+  const c = ws.getCell(`A${row}`);
+  c.value = text;
+  c.font = { italic: true, size: 10, color: { argb: '6A5E51' } };
+  c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: C.note } };
+  c.alignment = { horizontal: 'left', vertical: 'middle', wrapText: true };
+  c.border = borderAll();
+  ws.getRow(row).height = 22;
+}
+
+function tableHeader(ws, row, labels) {
+  ws.getRow(row).values = labels;
+  ws.getRow(row).eachCell((cell) => {
+    cell.font = { bold: true, color: { argb: 'F4EFE7' } };
+    cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: C.black2 } };
+    cell.alignment = { horizontal: 'center', vertical: 'middle', wrapText: true };
+    cell.border = borderAll();
+  });
+  ws.getRow(row).height = 24;
+}
+
+function dataCell(cell, kind = 'plain') {
+  cell.border = borderAll();
+  cell.alignment = { horizontal: 'left', vertical: 'middle', wrapText: true };
+  if (kind === 'label') {
+    cell.font = { bold: true, color: { argb: '4A4036' } };
+    cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: C.label } };
+  } else if (kind === 'input') {
+    cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: C.input } };
+  } else if (kind === 'dark-total') {
+    cell.font = { bold: true, color: { argb: 'F4EFE7' }, size: 11 };
+    cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: C.black2 } };
+  } else if (kind === 'gold-total') {
+    cell.font = { bold: true, color: { argb: C.goldText }, size: 11 };
+    cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: C.total } };
+  }
+}
+
+function zebra(ws, fromRow, toRow, fromCol, toCol) {
+  for (let r = fromRow; r <= toRow; r += 1) {
+    for (let c = fromCol; c <= toCol; c += 1) {
+      const cell = ws.getRow(r).getCell(c);
+      if (!cell.fill || cell.fill.pattern === 'none') {
+        cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: r % 2 === 0 ? 'FCFBF8' : C.white } };
+      }
+      if (!cell.border || !cell.border.top) cell.border = borderAll();
+      if (!cell.alignment) cell.alignment = { horizontal: 'left', vertical: 'middle', wrapText: true };
+    }
+    ws.getRow(r).height = Math.max(ws.getRow(r).height || 0, 24);
+  }
+}
+
+async function buildWorkbook() {
+  const wb = new ExcelJS.Workbook();
+  wb.creator = 'OpenClaw';
+  wb.lastModifiedBy = 'OpenClaw';
+  wb.created = new Date();
+  wb.modified = new Date();
+  wb.calcProperties.fullCalcOnLoad = true;
+
+  // 00_RESUMEN
+  const rs = wb.addWorksheet('00_RESUMEN');
+  rs.columns = [
+    { width: 22 }, { width: 22 }, { width: 22 }, { width: 22 }, { width: 22 }, { width: 22 }, { width: 22 }, { width: 22 },
+  ];
+  setPage(rs);
+  titleBlock(rs, 'EVINKA · Cotizador de validación v3', 'Versión con el diseño base inspirado en Cotizador_EVINKA_Peru_v5.xlsx.');
+  sectionBand(rs, 4, 'OBJETIVO');
+  rs.mergeCells('A5:H6');
+  rs.getCell('A5').value = 'Validar la lógica comercial del cotizador antes de llevarla a código. Esta versión prioriza orden visual, espaciado correcto y lectura limpia.';
+  rs.getCell('A5').alignment = { wrapText: true, vertical: 'middle' };
+  rs.getRow(5).height = 26; rs.getRow(6).height = 26;
+  sectionBand(rs, 8, 'REGLAS CONFIRMADAS');
+  ['0–25m = precio base; 25–40m = x1.4; 40–50m = x2; 50m+ = x3 para mano de obra y transporte.',
+   'Cable 6mm = distancia × 1.1 × 2.',
+   'Cable 4mm = distancia × 1.1.',
+   'Subtotal = total mano de obra + total materiales.',
+   'Total comercial final = subtotal / 0.75.',
+   'Los condicionales solo se activan si el técnico los marca.']
+    .forEach((t, i) => { rs.mergeCells(`A${9+i}:H${9+i}`); rs.getCell(`A${9+i}`).value = `${i+1}. ${t}`; rs.getCell(`A${9+i}`).alignment = { wrapText: true }; rs.getRow(9+i).height = 22; });
+  sectionBand(rs, 16, 'QUÉ REVISAR');
+  tableHeader(rs, 17, ['Campo', 'Validación esperada', '', '', '', '', '', '']);
+  [['Obligatorios', 'Todo lo que esté etiquetado como obligatorio debe salir siempre.'], ['Condicionales', 'Solo deben sumar si se activan en la hoja de visita.'], ['Diseño', 'El texto no debe sobreponerse ni quedar apretado.'], ['Totales', 'El total comercial debe salir desde subtotal / 0.75.']].forEach((row, i) => {
+    rs.mergeCells(`B${18+i}:H${18+i}`);
+    rs.getCell(`A${18+i}`).value = row[0];
+    rs.getCell(`B${18+i}`).value = row[1];
+    dataCell(rs.getCell(`A${18+i}`));
+    dataCell(rs.getCell(`B${18+i}`));
+  });
+  zebra(rs, 18, 21, 1, 8);
+
+  // 01_FORM_VISITA
+  const fv = wb.addWorksheet('01_FORM_VISITA');
+  fv.columns = [
+    { width: 44 }, { width: 34 }, { width: 16 }, { width: 14 }, { width: 14 }, { width: 16 }, { width: 34 }, { width: 20 },
+  ];
+  setPage(fv);
+  titleBlock(fv, 'Input de Visita Técnica', 'Hoja editable para alimentar datos base y activar condicionales.');
+  sectionBand(fv, 5, 'DATOS DEL CLIENTE');
+  const clientFields = [
+    ['Cliente demo'], ['Lima'], [new Date('2026-04-29')], ['Monofásico'], ['B2C'], [35], ['EMT'], [220], [32], ['NO'], ['NO'], [0.75], ['Completar con observación técnica validada.']
+  ];
+  const labels = ['Cliente', 'Ciudad', 'Fecha visita', 'Tipo instalación', 'Tipo cliente', 'Distancia instalación (m)', 'Tipo tubería', 'Voltaje (V)', 'Corriente (A)', 'Puesta a tierra real (SI/NO)', 'Fuera de la ciudad (SI/NO)', 'Factor comercial', 'Observación técnica'];
+  let r = 6;
+  for (let i = 0; i < labels.length; i += 1) {
+    fv.getCell(`A${r}`).value = labels[i]; dataCell(fv.getCell(`A${r}`), 'label');
+    if (i < 12) {
+      fv.mergeCells(`B${r}:C${r}`);
+      fv.getCell(`B${r}`).value = clientFields[i][0];
+      dataCell(fv.getCell(`B${r}`), 'input');
+      dataCell(fv.getCell(`C${r}`), 'input');
+    } else {
+      fv.mergeCells(`B${r}:H${r}`);
+      fv.getCell(`B${r}`).value = clientFields[i][0];
+      dataCell(fv.getCell(`B${r}`), 'input');
+    }
+    fv.getRow(r).height = i === 12 ? 36 : 24;
+    r += 1;
+  }
+  fv.getCell('B8').numFmt = 'yyyy-mm-dd';
+  pct(fv.getCell('B17'));
+  sectionBand(fv, 20, 'CONDICIONALES ACTIVADOS POR TÉCNICO');
+  noteBand(fv, 21, 'Usa 1 para activar y coloca cantidad solo cuando aplique. Si no aplica, deja 0.');
+  tableHeader(fv, 22, ['Código', 'Sección', 'Descripción', 'Activar', 'Cantidad', 'Precio base', 'Observación', '']);
+  const conds = [
+    ['0070001', 'MANO_OBRA', 'Fuera de la ciudad', { formula: 'IF(B16="SI",1,0)', result: 0 }, { formula: 'IF(D23=1,1,0)', result: 0 }, 200, 'Automático por ciudad'],
+    ['0070002', 'MANO_OBRA', 'Pedestal interior', 0, 0, 550, 'Manual'],
+    ['0070003', 'MANO_OBRA', 'Pedestal exterior', 0, 0, 1350, 'Manual'],
+    ['0070004', 'MANO_OBRA', 'Platina pared protección', 0, 0, 0.1, 'Pendiente validar precio'],
+    ['0070005', 'MANO_OBRA', 'Caja de paso', 0, 0, 30, 'Manual'],
+    ['0070006', 'MANO_OBRA', 'Caja de protección metálica con chapa', 0, 0, 100, 'Manual'],
+    ['0070007', 'MANO_OBRA', 'Obra civil básica interior regata resane pintura', 0, 0, 170, 'Manual'],
+    ['0070008', 'MANO_OBRA', 'Obra civil intermedia interior regata resane pintura', 0, 0, 340, 'Manual'],
+    ['0070009', 'MANO_OBRA', 'Obra civil exterior excavación pasto metro lineal', 0, 0, 200, 'Manual'],
+    ['0070010', 'MANO_OBRA', 'Obra civil exterior excavación adoquín', 0, 0, 400, 'Manual'],
+    ['0070011', 'MANO_OBRA', 'Pase placa (perforado de pared)', 0, 0, 50, 'Manual'],
+    ['0070012', 'MANO_OBRA', 'SSOMA', 0, 0, 350, 'Manual'],
+    ['0070013', 'MATERIAL', 'Contómetro - Medidor de Energía Eléctrica', 0, 0, 74, 'Manual'],
+    ['0070014', 'MATERIAL', 'Breaker engrapable 3x50A', 0, 0, 186.7, 'Manual'],
+    ['0070015', 'MATERIAL', 'Breaker atornillable 3x50A', 0, 0, 30, 'Manual'],
+    ['0070016', 'MATERIAL', 'Breaker de riel din 3x63A', 0, 0, 260, 'Manual'],
+    ['0070017', 'MATERIAL', 'Breaker engrapable 1x50A', 0, 0, 160, 'Manual'],
+    ['0070018', 'MATERIAL', 'Breaker de riel din 1x63A', 0, 0, 260, 'Manual'],
+  ];
+  let rr = 23;
+  for (const row of conds) {
+    fv.getCell(`A${rr}`).value = row[0];
+    fv.getCell(`B${rr}`).value = row[1];
+    fv.getCell(`C${rr}`).value = row[2];
+    fv.getCell(`D${rr}`).value = row[3];
+    fv.getCell(`E${rr}`).value = row[4];
+    fv.getCell(`F${rr}`).value = row[5];
+    fv.mergeCells(`G${rr}:H${rr}`); fv.getCell(`G${rr}`).value = row[6];
+    for (const a of [`A${rr}`,`B${rr}`,`C${rr}`,`D${rr}`,`E${rr}`,`F${rr}`,`G${rr}`,`H${rr}`]) dataCell(fv.getCell(a));
+    money(fv.getCell(`F${rr}`)); qty(fv.getCell(`E${rr}`));
+    fv.getRow(rr).height = 26;
+    rr += 1;
+  }
+  zebra(fv, 23, rr - 1, 1, 8);
+
+  // 02_CATALOGO
+  const cat = wb.addWorksheet('02_CATALOGO');
+  cat.columns = [
+    { width: 14 }, { width: 20 }, { width: 20 }, { width: 12 }, { width: 10 }, { width: 44 }, { width: 16 }, { width: 48 },
+  ];
+  setPage(cat);
+  titleBlock(cat, 'CATÁLOGO · Base para validar obligatorios y condicionales', 'Diseño ordenado con espacio suficiente para reglas y descripciones.');
+  tableHeader(cat, 4, ['Código', 'Sección', 'Naturaleza', 'Etiqueta', 'Unidad', 'Descripción', 'Precio base', 'Regla']);
+  const catalogRows = [
+    ['0060001','MANO_OBRA','OBLIGATORIO','Sí','ZZ','Servicio de instalación estándar',525,'Factor distancia: base / x1.4 / x2 / x3'],
+    ['0060002','MANO_OBRA','OBLIGATORIO','Sí','ZZ','Visita técnica e ingeniería',110,'Siempre 1'],
+    ['0060003','MANO_OBRA','OBLIGATORIO','Sí','ZZ','Transporte y herramientas',120,'Factor distancia: base / x1.4 / x2 / x3'],
+    ['0060101','MATERIAL','OBLIGATORIO','Sí','UND','Tablero eléctrico 6p',164,'Siempre 1'],
+    ['0060102','MATERIAL','OBLIGATORIO','Sí','M','Cable 6mm',7.9,'Cantidad = distancia × 1.1 × 2'],
+    ['0060103','MATERIAL','OBLIGATORIO','Sí','M','Cable 4mm',5.6,'Cantidad = distancia × 1.1'],
+    ['0060104','MATERIAL','OBLIGATORIO_REGLA','Sí','UND','Tubería PVC',24.7,'Si tipo tubería = PVC; cantidad = redondeo distancia/3'],
+    ['0060105','MATERIAL','OBLIGATORIO_REGLA','Sí','UND','Tubería EMT 3m 3/4',17.5,'Si tipo tubería = EMT; cantidad = redondeo distancia/3'],
+    ['0060106','MATERIAL','OBLIGATORIO','Sí','UND','Interruptor termomagnético',26.7,'Depende de instalación y cliente'],
+    ['0060107','MATERIAL','OBLIGATORIO','Sí','UND','Interruptor diferencial',105.4,'Depende de tipo cliente'],
+    ['0060108','MATERIAL','OBLIGATORIO_REGLA','Sí','UND','Accesorios EMT Conduit',3.5,'Solo si tubería = EMT; cantidad = tubos EMT'],
+    ['0060109','MATERIAL','CONDICIONAL_REGLA','No','GL','Materiales obra civil',0,'40% de la mano de obra civil activa'],
+    ['0070001','MANO_OBRA','CONDICIONAL','No','ZZ','Fuera de la ciudad',200,'Según técnico'],
+    ['0070002','MANO_OBRA','CONDICIONAL','No','ZZ','Pedestal interior',550,'Según técnico'],
+    ['0070003','MANO_OBRA','CONDICIONAL','No','ZZ','Pedestal exterior',1350,'Según técnico'],
+    ['0070004','MANO_OBRA','CONDICIONAL','No','ZZ','Platina pared protección',0.1,'Según técnico'],
+    ['0070005','MANO_OBRA','CONDICIONAL','No','ZZ','Caja de paso',30,'Según técnico'],
+    ['0070006','MANO_OBRA','CONDICIONAL','No','ZZ','Caja de protección metálica con chapa',100,'Según técnico'],
+    ['0070007','MANO_OBRA','CONDICIONAL','No','ZZ','Obra civil básica interior regata resane pintura',170,'Según técnico'],
+    ['0070008','MANO_OBRA','CONDICIONAL','No','ZZ','Obra civil intermedia interior regata resane pintura',340,'Según técnico'],
+    ['0070009','MANO_OBRA','CONDICIONAL','No','ML','Obra civil exterior excavación pasto metro lineal',200,'Según técnico'],
+    ['0070010','MANO_OBRA','CONDICIONAL','No','ML','Obra civil exterior excavación adoquín',400,'Según técnico'],
+    ['0070011','MANO_OBRA','CONDICIONAL','No','ZZ','Pase placa (perforado de pared)',50,'Según técnico'],
+    ['0070012','MANO_OBRA','CONDICIONAL','No','ZZ','SSOMA',350,'Según técnico'],
+    ['0070013','MATERIAL','CONDICIONAL','No','UND','Contómetro - Medidor de Energía Eléctrica',74,'Según técnico'],
+    ['0070014','MATERIAL','CONDICIONAL','No','UND','Breaker engrapable 3x50A',186.7,'Según técnico'],
+    ['0070015','MATERIAL','CONDICIONAL','No','UND','Breaker atornillable 3x50A',30,'Según técnico'],
+    ['0070016','MATERIAL','CONDICIONAL','No','UND','Breaker de riel din 3x63A',260,'Según técnico'],
+    ['0070017','MATERIAL','CONDICIONAL','No','UND','Breaker engrapable 1x50A',160,'Según técnico'],
+    ['0070018','MATERIAL','CONDICIONAL','No','UND','Breaker de riel din 1x63A',260,'Según técnico'],
+  ];
+  let cr = 5;
+  for (const row of catalogRows) {
+    row.forEach((v, i) => { cat.getCell(cr, i + 1).value = v; dataCell(cat.getCell(cr, i + 1)); });
+    money(cat.getCell(`G${cr}`));
+    cat.getRow(cr).height = 32;
+    cr += 1;
+  }
+  zebra(cat, 5, cr - 1, 1, 8);
+
+  // 03_COTIZADOR
+  const cot = wb.addWorksheet('03_COTIZADOR');
+  cot.columns = [
+    { width: 16 }, { width: 18 }, { width: 10 }, { width: 12 }, { width: 10 }, { width: 12 }, { width: 42 }, { width: 16 }, { width: 16 }, { width: 28 },
+  ];
+  setPage(cot);
+  titleBlock(cot, 'Cálculo de Cotización', 'Salida ordenada para validar subtotales, reglas y total comercial.', 'J');
+  noteBand(cot, 4, 'Aquí revisas el resultado final. El total comercial usa la regla confirmada: subtotal / 0.75.', 'J');
+  cot.getCell('A5').value = 'Cliente'; dataCell(cot.getCell('A5'),'label'); cot.mergeCells('B5:C5'); cot.getCell('B5').value = { formula: `'01_FORM_VISITA'!B6`, result: 'Cliente demo' }; dataCell(cot.getCell('B5'),'input');
+  cot.getCell('D5').value = 'Fecha'; dataCell(cot.getCell('D5'),'label'); cot.mergeCells('E5:F5'); cot.getCell('E5').value = { formula: `'01_FORM_VISITA'!B8`, result: new Date('2026-04-29') }; dataCell(cot.getCell('E5'),'input'); cot.getCell('E5').numFmt = 'yyyy-mm-dd';
+  cot.getCell('G5').value = 'Tipo instalación'; dataCell(cot.getCell('G5'),'label'); cot.mergeCells('H5:J5'); cot.getCell('H5').value = { formula: `'01_FORM_VISITA'!B9`, result: 'Monofásico' }; dataCell(cot.getCell('H5'),'input');
+  cot.getCell('A6').value = 'Tipo cliente'; dataCell(cot.getCell('A6'),'label'); cot.mergeCells('B6:C6'); cot.getCell('B6').value = { formula: `'01_FORM_VISITA'!B10`, result: 'B2C' }; dataCell(cot.getCell('B6'),'input');
+  cot.getCell('D6').value = 'Distancia'; dataCell(cot.getCell('D6'),'label'); cot.mergeCells('E6:F6'); cot.getCell('E6').value = { formula: `'01_FORM_VISITA'!B11`, result: 35 }; dataCell(cot.getCell('E6'),'input');
+  cot.getCell('G6').value = 'Tipo tubería'; dataCell(cot.getCell('G6'),'label'); cot.mergeCells('H6:J6'); cot.getCell('H6').value = { formula: `'01_FORM_VISITA'!B12`, result: 'EMT' }; dataCell(cot.getCell('H6'),'input');
+
+  tableHeader(cot, 8, ['Sección','Naturaleza','Activo','Cantidad','Unidad','Código','Descripción','P. Unitario','Total','Regla']);
+  const base = [
+    ['MANO_OBRA','OBLIGATORIO',1,1,'ZZ','0060001','Servicio de instalación estándar',{formula:"IF('01_FORM_VISITA'!B11<25,525,IF('01_FORM_VISITA'!B11<40,525*1.4,IF('01_FORM_VISITA'!B11<50,525*2,525*3)))",result:735},'Factor por distancia'],
+    ['MANO_OBRA','OBLIGATORIO',1,1,'ZZ','0060002','Visita técnica e ingeniería',110,'Siempre incluida'],
+    ['MANO_OBRA','OBLIGATORIO',1,1,'ZZ','0060003','Transporte y herramientas',{formula:"IF('01_FORM_VISITA'!B11<25,120,IF('01_FORM_VISITA'!B11<40,120*1.4,IF('01_FORM_VISITA'!B11<50,120*2,120*3)))",result:168},'Factor por distancia'],
+    ['MATERIAL','OBLIGATORIO',1,1,'UND','0060101','Tablero eléctrico 6p',164,'Siempre incluido'],
+    ['MATERIAL','OBLIGATORIO',1,{formula:"'01_FORM_VISITA'!B11*1.1*2",result:77},'M','0060102','Cable 6mm',7.9,'Distancia × 1.1 × 2'],
+    ['MATERIAL','OBLIGATORIO',1,{formula:"'01_FORM_VISITA'!B11*1.1",result:38.5},'M','0060103','Cable 4mm',5.6,'Distancia × 1.1'],
+    ['MATERIAL','OBLIGATORIO_REGLA',{formula:"IF('01_FORM_VISITA'!B12=\"PVC\",1,0)",result:0},{formula:'IF(C15=1,ROUNDUP(E6/3,0),0)',result:0},'UND','0060104','Tubería PVC',24.7,'Solo si tubería = PVC'],
+    ['MATERIAL','OBLIGATORIO_REGLA',{formula:"IF('01_FORM_VISITA'!B12=\"EMT\",1,0)",result:1},{formula:'IF(C16=1,ROUNDUP(E6/3,0),0)',result:12},'UND','0060105','Tubería EMT 3m 3/4',17.5,'Solo si tubería = EMT'],
+    ['MATERIAL','OBLIGATORIO',1,1,'UND','0060106','Interruptor termomagnético',{formula:"IF('01_FORM_VISITA'!B9=\"Monofásico\",IF('01_FORM_VISITA'!B10=\"B2C\",26.7,58.7),IF('01_FORM_VISITA'!B10=\"B2C\",46.7,109.4))",result:26.7},'Depende de instalación/cliente'],
+    ['MATERIAL','OBLIGATORIO',1,1,'UND','0060107','Interruptor diferencial',{formula:"IF('01_FORM_VISITA'!B10=\"B2C\",105.4,424)",result:105.4},'Depende de tipo cliente'],
+    ['MATERIAL','OBLIGATORIO_REGLA',{formula:"IF('01_FORM_VISITA'!B12=\"EMT\",1,0)",result:1},{formula:'IF(C19=1,ROUNDUP(E6/3,0),0)',result:12},'UND','0060108','Accesorios EMT Conduit',3.5,'Solo si tubería = EMT'],
+  ];
+  let dr = 9;
+  for (const row of base) {
+    row.forEach((v, i) => { cot.getCell(dr, i + 1).value = v; dataCell(cot.getCell(dr, i + 1)); });
+    cot.getCell(`I${dr}`).value = { formula: `C${dr}*D${dr}*H${dr}`, result: 0 };
+    qty(cot.getCell(`D${dr}`)); money(cot.getCell(`H${dr}`)); money(cot.getCell(`I${dr}`));
+    cot.getRow(dr).height = 28;
+    dr += 1;
+  }
+  const map = [23,24,25,26,27,28,29,30,31,32,33,34,35,36,37,38,39,40];
+  for (let i = 0; i < map.length; i += 1) {
+    const fr = map[i];
+    const tr = 20 + i;
+    cot.getCell(`A${tr}`).value = i < 12 ? 'MANO_OBRA' : 'MATERIAL';
+    cot.getCell(`B${tr}`).value = 'CONDICIONAL';
+    cot.getCell(`C${tr}`).value = { formula: `'01_FORM_VISITA'!D${fr}`, result: 0 };
+    cot.getCell(`D${tr}`).value = { formula: `IF(C${tr}=1,'01_FORM_VISITA'!E${fr},0)`, result: 0 };
+    cot.getCell(`E${tr}`).value = i < 8 ? 'ZZ' : (i < 10 ? 'ML' : (i < 12 ? 'ZZ' : 'UND'));
+    cot.getCell(`F${tr}`).value = { formula: `'01_FORM_VISITA'!A${fr}`, result: '' };
+    cot.getCell(`G${tr}`).value = { formula: `'01_FORM_VISITA'!C${fr}`, result: '' };
+    cot.getCell(`H${tr}`).value = { formula: `'01_FORM_VISITA'!F${fr}`, result: 0 };
+    cot.getCell(`I${tr}`).value = { formula: `C${tr}*D${tr}*H${tr}`, result: 0 };
+    cot.getCell(`J${tr}`).value = 'Solo suma si técnico lo activa';
+    for (const a of [`A${tr}`,`B${tr}`,`C${tr}`,`D${tr}`,`E${tr}`,`F${tr}`,`G${tr}`,`H${tr}`,`I${tr}`,`J${tr}`]) dataCell(cot.getCell(a));
+    qty(cot.getCell(`D${tr}`)); money(cot.getCell(`H${tr}`)); money(cot.getCell(`I${tr}`));
+    cot.getRow(tr).height = 28;
+  }
+  cot.getCell('A38').value = 'MATERIAL'; dataCell(cot.getCell('A38')); cot.getCell('B38').value = 'CONDICIONAL_REGLA'; dataCell(cot.getCell('B38')); cot.getCell('C38').value = { formula: 'IF(SUM(I26:I29)>0,1,0)', result: 0 }; dataCell(cot.getCell('C38')); cot.getCell('D38').value = 1; dataCell(cot.getCell('D38')); cot.getCell('E38').value = 'GL'; dataCell(cot.getCell('E38')); cot.getCell('F38').value = '0060109'; dataCell(cot.getCell('F38')); cot.getCell('G38').value = 'Materiales obra civil'; dataCell(cot.getCell('G38')); cot.getCell('H38').value = { formula: 'ROUND(SUM(I26:I29)*0.4,2)', result: 0 }; dataCell(cot.getCell('H38')); cot.getCell('I38').value = { formula: 'C38*D38*H38', result: 0 }; dataCell(cot.getCell('I38')); cot.getCell('J38').value = '40% de MO civil activa'; dataCell(cot.getCell('J38')); money(cot.getCell('H38')); money(cot.getCell('I38'));
+  zebra(cot, 9, 38, 1, 10);
+
+  cot.getCell('G40').value = 'TOTAL MANO DE OBRA'; dataCell(cot.getCell('G40'),'dark-total'); cot.getCell('I40').value = { formula: 'SUM(I9:I11)+SUM(I20:I31)', result: 0 }; dataCell(cot.getCell('I40'),'dark-total'); money(cot.getCell('I40'));
+  cot.getCell('G41').value = 'TOTAL MATERIALES'; dataCell(cot.getCell('G41'),'dark-total'); cot.getCell('I41').value = { formula: 'SUM(I12:I19)+SUM(I32:I38)', result: 0 }; dataCell(cot.getCell('I41'),'dark-total'); money(cot.getCell('I41'));
+  cot.getCell('G42').value = 'SUBTOTAL'; dataCell(cot.getCell('G42'),'dark-total'); cot.getCell('I42').value = { formula: 'I40+I41', result: 0 }; dataCell(cot.getCell('I42'),'dark-total'); money(cot.getCell('I42'));
+  cot.getCell('G44').value = 'TOTAL COMERCIAL'; dataCell(cot.getCell('G44'),'gold-total'); cot.getCell('I44').value = { formula: "I42/'01_FORM_VISITA'!B17", result: 0 }; dataCell(cot.getCell('I44'),'gold-total'); money(cot.getCell('I44'));
+  cot.getCell('G45').value = 'MARGEN APLICADO'; dataCell(cot.getCell('G45'),'gold-total'); cot.getCell('I45').value = { formula: 'I44-I42', result: 0 }; dataCell(cot.getCell('I45'),'gold-total'); money(cot.getCell('I45'));
+  cot.getRow(44).height = 28; cot.getRow(45).height = 28;
+
+  for (const ws of [rs, fv, cat, cot]) {
+    ws.eachRow((row) => { if (!row.height) row.height = 22; });
+  }
+
+  await wb.xlsx.writeFile(OUTPUT_PATH);
+  return OUTPUT_PATH;
+}
+
+async function uploadToSupabase(localPath) {
+  const base = requiredEnv('SUPABASE_URL').replace(/\/$/, '');
+  const key = requiredEnv('SUPABASE_SERVICE_ROLE_KEY');
+  const body = await fs.readFile(localPath);
+  const res = await fetch(`${base}/storage/v1/object/${STORAGE_BUCKET}/${STORAGE_OBJECT}`, {
+    method: 'POST',
+    headers: {
+      apikey: key,
+      Authorization: `Bearer ${key}`,
+      'Content-Type': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+      'x-upsert': 'true',
+    },
+    body,
+  });
+  const text = await res.text();
+  if (!res.ok) throw new Error(`Upload Supabase falló: ${res.status} ${res.statusText} :: ${text}`);
+  return { bucket: STORAGE_BUCKET, object: STORAGE_OBJECT, raw: text };
+}
+
+const localPath = await buildWorkbook();
+const upload = await uploadToSupabase(localPath);
+console.log(JSON.stringify({ localPath, ...upload }, null, 2));

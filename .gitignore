@@ -1,0 +1,50 @@
+# Workspace / OpenClaw
+.openclaw/
+.runtime/
+state/
+.tmp/
+memory/
+
+# Environment
+.env
+.env.*
+!.env.example
+
+# Dependencies
+node_modules/
+**/node_modules/
+
+# Build outputs
+**/build/
+**/.dart_tool/
+**/.gradle/
+**/.cxx/
+**/coverage/
+**/.flutter-plugins
+**/.flutter-plugins-dependencies
+**/.packages
+
+# Runtime data / generated content
+**/data/
+**/storage/
+deliverables/
+memory/
+*.apk
+*.ipa
+*.aab
+*.zip
+*.log
+*.xlsx
+*.docx
+*.traineddata
+tmp_*.mjs
+tmp/
+
+# Python / Android local
+**/__pycache__/
+*.pyc
+**/local.properties
+
+# OS / editor
+.DS_Store
+Thumbs.db

@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "1074181938711",
+    "project_id": "protocolo-cargador",
+    "storage_bucket": "protocolo-cargador.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:1074181938711:android:c5a395e52ccf4b2b520652",
+        "android_client_info": {
+          "package_name": "com.example.protocolo_cargador"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyAt5EnVwSsJofdg-OC177CIPZrQEtKc3sg"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

@@ -1,0 +1,20 @@
+{
+  "name": "bioplasticoeduca-app",
+  "version": "1.0.0",
+  "description": "BioPlástico Educa app wrapper para Android con Capacitor.",
+  "private": true,
+  "scripts": {
+    "android:sync": "npx cap sync android",
+    "android:open": "npx cap open android",
+    "android:build:debug": "cd android && JAVA_HOME=/usr/lib/jvm/java-17-openjdk-amd64 ./gradlew assembleDebug"
+  },
+  "keywords": [],
+  "author": "EVINKA",
+  "license": "UNLICENSED",
+  "type": "commonjs",
+  "devDependencies": {
+    "@capacitor/android": "^8.3.2",
+    "@capacitor/cli": "^8.3.2",
+    "@capacitor/core": "^8.3.2"
+  }
+}

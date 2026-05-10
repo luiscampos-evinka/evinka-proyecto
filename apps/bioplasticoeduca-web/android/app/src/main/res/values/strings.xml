@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">BioPlástico Educa</string>
+    <string name="title_activity_main">BioPlástico Educa</string>
+    <string name="package_name">net.evinka.bioplasticoeduca</string>
+    <string name="custom_url_scheme">net.evinka.bioplasticoeduca</string>
+</resources>

@@ -1,0 +1,184 @@
+<!doctype html>
+<html lang="es">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>EVINKA Asesor</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <div id="loginView" class="login-shell">
+      <div class="login-card">
+        <img src="/logo-white.svg" alt="EVINKA" class="brand-logo" />
+        <h1>Asesor EVINKA</h1>
+        <p class="muted">Bandeja humana tipo call center para tomar handoffs de WhatsApp.</p>
+        <form id="loginForm" class="stack">
+          <label>
+            Correo
+            <input type="email" name="email" placeholder="raul@evinka.tech" required />
+          </label>
+          <label>
+            Contraseña
+            <input type="password" name="password" placeholder="••••••••" required />
+          </label>
+          <button type="submit" class="primary">Entrar</button>
+        </form>
+        <div id="loginError" class="error hidden"></div>
+      </div>
+    </div>
+
+    <div id="appView" class="app-shell hidden">
+      <aside class="sidebar">
+        <div class="sidebar-top">
+          <div>
+            <div class="brand-lockup brand-lockup-sidebar">
+              <img src="/logo-white.svg" alt="EVINKA" class="brand-logo brand-logo-sidebar" />
+              <div>
+                <div class="eyebrow">EVINKA · CALL CENTER</div>
+                <h2>Bandeja del asesor</h2>
+              </div>
+            </div>
+            <p class="sidebar-subtitle">Atiende, toma y resuelve conversaciones sin salir del mismo número de WhatsApp.</p>
+          </div>
+          <button id="logoutBtn" class="ghost">Salir</button>
+        </div>
+        <div class="toolbar">
+          <input id="searchInput" type="search" placeholder="Buscar cliente o teléfono" />
+          <select id="statusFilter">
+            <option value="active">Activos</option>
+            <option value="resolved">Resueltos</option>
+            <option value="all">Todos</option>
+          </select>
+        </div>
+        <div id="statsBar" class="stats-bar"></div>
+        <div id="conversationList" class="conversation-list"></div>
+      </aside>
+
+      <main class="chat-panel">
+        <section id="emptyState" class="empty-state">
+          <div class="phone-emoji">💬</div>
+          <h3>Selecciona un caso</h3>
+          <p>Verás aquí la conversación, el motivo del handoff y podrás responder como asesor por el mismo número de EVINKA.</p>
+        </section>
+
+        <section id="chatView" class="chat-view hidden">
+          <header class="chat-header">
+            <button type="button" id="profileSummaryBtn" class="chat-header-main profile-summary-btn">
+              <div class="customer-avatar" id="customerAvatar">EV</div>
+              <div>
+                <div id="customerName" class="customer-name"></div>
+                <div id="customerMeta" class="customer-meta"></div>
+                <div id="chatSubmeta" class="chat-submeta"></div>
+              </div>
+            </button>
+            <div class="header-actions">
+              <button id="claimBtn" class="secondary">Tomar caso</button>
+              <button id="resolveBtn" class="secondary">Marcar resuelto</button>
+              <button id="returnBotBtn" class="primary">Devolver al bot</button>
+            </div>
+          </header>
+
+          <section class="context-strip">
+            <div class="context-card">
+              <span class="label">Motivo</span>
+              <strong id="handoffReason">-</strong>
+            </div>
+            <div class="context-card">
+              <span class="label">Estado</span>
+              <strong id="caseStatus">-</strong>
+            </div>
+            <div class="context-card">
+              <span class="label">Asignado</span>
+              <strong id="assignedTo">-</strong>
+            </div>
+          </section>
+
+          <section id="messageList" class="message-list"></section>
+
+          <form id="composerForm" class="composer">
+            <div class="composer-tools">
+              <button type="button" id="attachBtn" class="tool-btn" title="Adjuntar imagen o PDF">📎</button>
+              <input id="fileInput" type="file" class="hidden" accept="image/*,application/pdf,.doc,.docx,.xls,.xlsx,.txt" />
+            </div>
+            <div class="composer-box">
+              <div id="attachmentPreview" class="attachment-preview hidden"></div>
+              <textarea id="composerInput" rows="1" placeholder="Escribe una respuesta clara y humana..."></textarea>
+              <div class="composer-meta">Enter para enviar · Shift+Enter para salto de línea</div>
+            </div>
+            <button type="submit" class="primary composer-send">Enviar</button>
+          </form>
+        </section>
+
+        <aside id="profileDrawer" class="profile-drawer hidden">
+          <div class="profile-drawer-backdrop" id="profileDrawerBackdrop"></div>
+          <div class="profile-drawer-panel">
+            <div class="profile-drawer-header">
+              <div class="profile-drawer-title-wrap">
+                <button type="button" id="closeProfileDrawerBtn" class="ghost compact-icon-btn">✕</button>
+                <h3>Info. del contacto</h3>
+              </div>
+              <button type="button" class="ghost compact-icon-btn">✎</button>
+            </div>
+
+            <div class="profile-drawer-body">
+              <section class="profile-hero">
+                <div id="drawerAvatar" class="profile-hero-avatar">EV</div>
+                <div class="profile-hero-name" id="drawerName">Cliente EVINKA</div>
+                <div class="profile-hero-sub" id="drawerShortName">-</div>
+                <div class="profile-hero-type">Servicio automotor</div>
+                <div class="profile-hero-status"><span>Abierto</span> hasta la(s) 18:00</div>
+                <button type="button" class="profile-share-btn">
+                  <span class="profile-share-icon">↗</span>
+                  <span>Compartir</span>
+                </button>
+              </section>
+
+              <section class="profile-section-note">
+                <div>Esta es una cuenta de empresa.</div>
+                <div class="profile-info-dot">i</div>
+              </section>
+
+              <section class="profile-company-card">
+                <div class="profile-company-name">EVINKA eMobility - Soluciones de Carga para Vehículos Eléctricos</div>
+                <div class="profile-company-row">
+                  <span class="profile-company-open">Abierto ahora</span>
+                  <span>09:00 - 18:00</span>
+                </div>
+                <div class="profile-company-mail" id="drawerEmail">-</div>
+              </section>
+
+              <div class="profile-block-grid">
+                <div class="profile-block">
+                  <span class="profile-label">Teléfono</span>
+                  <strong id="drawerPhone">-</strong>
+                </div>
+                <div class="profile-block">
+                  <span class="profile-label">Ubicación</span>
+                  <strong id="drawerLocation">-</strong>
+                </div>
+              </div>
+              <div class="profile-block">
+                <span class="profile-label">Dirección</span>
+                <strong id="drawerAddress">-</strong>
+              </div>
+              <div class="profile-block">
+                <span class="profile-label">Motivo del handoff</span>
+                <strong id="drawerReason">-</strong>
+              </div>
+              <div class="profile-block">
+                <span class="profile-label">Estado</span>
+                <strong id="drawerStatus">-</strong>
+              </div>
+              <div class="profile-block">
+                <span class="profile-label">Asignado a</span>
+                <strong id="drawerAssigned">-</strong>
+              </div>
+            </div>
+          </div>
+        </aside>
+      </main>
+    </div>
+
+    <script src="/app.js" defer></script>
+  </body>
+</html>

@@ -1,0 +1,221 @@
+<!doctype html>
+<html lang="es">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="theme-color" content="#0c0c0c" />
+    <title>EVINKA Cotizador</title>
+    <link rel="icon" type="image/png" href="/assets/favicon.png?v=20260428n" />
+    <link rel="shortcut icon" type="image/png" href="/assets/favicon.png?v=20260428n" />
+    <link rel="apple-touch-icon" href="/assets/favicon.png?v=20260428n" />
+    <meta name="application-name" content="EVINKA Cotizador" />
+    <link rel="stylesheet" href="/styles.css?v=20260502login1" />
+  </head>
+  <body>
+    <div id="app">
+      <main class="card login-card" id="loginView">
+        <div class="brand-lockup login-brand">
+          <img src="/assets/logo-white.svg?v=20260501a" alt="EVINKA" class="brand-logo brand-logo-login" />
+          <div>
+            <div class="brand-subtitle">Cotizador Comercial</div>
+          </div>
+        </div>
+        <h1>EVINKA Cotizador</h1>
+        <p class="muted">Acceso técnico o admin.</p>
+        <form id="loginForm" class="form-grid">
+          <label>
+            Correo
+            <input name="email" type="email" placeholder="admin@evinka.net" required />
+          </label>
+          <label>
+            Contraseña
+            <input name="password" type="password" placeholder="••••••••" required />
+          </label>
+          <button type="submit" class="primary">Entrar</button>
+        </form>
+        <div class="login-divider"><span>o</span></div>
+        <button type="button" id="toggleRegisterBtn" class="secondary full-width">Solicitar acceso corporativo</button>
+        <form id="registerForm" class="form-grid hidden top-gap-sm">
+          <label>
+            Nombre completo
+            <input name="name" type="text" placeholder="Luis Campos" required />
+          </label>
+          <label>
+            Correo corporativo
+            <input name="email" type="email" placeholder="nombre@evinka.tech" required />
+          </label>
+          <label>
+            Contraseña
+            <input name="password" type="password" placeholder="Mínimo 10 caracteres" required />
+          </label>
+          <button type="submit" class="primary">Enviar solicitud</button>
+        </form>
+        <div class="hint">
+          Acceso restringido para EVINKA. Las cuentas nuevas `@evinka.tech` quedan pendientes hasta aprobación del admin.
+        </div>
+      </main>
+
+      <section id="dashboardView" class="app-shell hidden">
+        <aside class="sidebar">
+          <div>
+            <div class="brand-lockup brand-lockup-sidebar">
+              <img src="/assets/logo-white.svg?v=20260501a" alt="EVINKA" class="brand-logo brand-logo-sidebar" />
+              <div>
+                <div class="brand-title">EVINKA</div>
+                <div class="brand-subtitle">Cotizador Center</div>
+              </div>
+            </div>
+
+            <nav class="nav-group tabs-nav">
+              <button class="tab nav-link active" data-tab="quote"><span>Cotizador</span><span>Nuevo</span></button>
+              <button class="tab nav-link" data-tab="quotes"><span>Cotizaciones</span><span>Historial</span></button>
+              <button class="tab nav-link hidden" data-tab="admin" id="adminTabBtn"><span>Admin</span><span>Ajustes</span></button>
+            </nav>
+          </div>
+
+          <div class="sidebar-footer">
+            <span id="sessionBadge" class="user-chip"></span>
+            <button id="logoutBtn" class="btn-ghost">Salir</button>
+          </div>
+        </aside>
+
+        <div class="content">
+          <header class="hero-card top-hero">
+            <div class="hero-block">
+              <span class="eyebrow">EVINKA INSTALLATION SUITE</span>
+              <h1 id="companyName">EVINKA Cotizador</h1>
+              <p id="companyTagline" class="section-copy"></p>
+            </div>
+            <div class="hero-visual"></div>
+          </header>
+
+        <section id="tab-quote" class="panel tab-panel">
+          <div class="section-header">
+            <h2>Cotización web</h2>
+            <p class="muted">Mismo criterio del Excel. Solo se añadió selección de cable.</p>
+          </div>
+          <form id="quoteForm" class="grid-form">
+            <div class="grid-2">
+              <label>Cliente<input name="clientName" required /></label>
+              <label>Correo<input name="email" type="email" placeholder="cliente@correo.com" required /></label>
+              <label>Ciudad<input name="city" /></label>
+              <label>Fecha visita<input name="visitDate" type="date" /></label>
+              <label>Tipo instalación
+                <select name="installationType" id="installationTypeSelect">
+                  <option value="Monofásico">Monofásico</option>
+                  <option value="Trifásico">Trifásico</option>
+                </select>
+              </label>
+              <label>Tipo cliente
+                <select name="clientType" id="clientTypeSelect">
+                  <option value="B2C">B2C</option>
+                  <option value="B2B">B2B</option>
+                </select>
+              </label>
+              <label>Perfil comercial
+                <select name="commercialProfileId" id="commercialProfileSelect"></select>
+              </label>
+              <label>Tipo inmueble
+                <select name="propertyType" id="propertyTypeSelect">
+                  <option value="Casa">Casa</option>
+                  <option value="Edificio">Edificio</option>
+                </select>
+              </label>
+            </div>
+
+            <div class="grid-3">
+              <label>Técnico<input id="techName" disabled /></label>
+              <label>Distancia instalación (m)<input name="distance" type="number" min="0" step="1" value="0" /></label>
+              <label>Tipo cable<select name="cableId" id="cableSelect"></select></label>
+              <label>Tipo tubería
+                <select name="tubeType">
+                  <option value="EMT">EMT</option>
+                  <option value="PVC">PVC</option>
+                </select>
+              </label>
+              <label>Voltaje (V)<input name="voltage" type="number" min="0" step="1" value="220" /></label>
+              <label>Corriente (A)<input name="current" type="number" min="0" step="1" value="32" /></label>
+              <label>Puesta a tierra real
+                <select name="grounding">
+                  <option value="SI">SI</option>
+                  <option value="NO">NO</option>
+                </select>
+              </label>
+              <label>Fuera de la ciudad
+                <select name="outOfCity">
+                  <option value="NO">NO</option>
+                  <option value="SI">SI</option>
+                </select>
+              </label>
+            </div>
+
+            <fieldset class="extras-box">
+              <legend>Condicionales activados por técnico</legend>
+              <div id="extrasList" class="extras-list"></div>
+            </fieldset>
+
+            <fieldset class="extras-box">
+              <legend>Informe fotográfico</legend>
+              <p class="muted">Sube fotos del punto de instalación, tablero, recorrido y condiciones relevantes.</p>
+              <div class="photo-upload-shell">
+                <input id="sitePhotos" class="visually-hidden-file" type="file" accept="image/png,image/jpeg,image/webp" multiple />
+                <label for="sitePhotos" class="photo-upload-trigger">
+                  <span class="photo-upload-icon">+</span>
+                  <span class="photo-upload-copy">
+                    <strong>Agregar imágenes</strong>
+                    <small>Puedes cargar una o varias y seguir sumando después</small>
+                  </span>
+                </label>
+                <div id="sitePhotosStatus" class="photo-upload-status">Sin imágenes cargadas</div>
+              </div>
+              <div id="sitePhotosInfo" class="muted">Máximo 6 imágenes. Se incluirán en el PDF como anexo técnico.</div>
+              <div id="sitePhotosPreview" class="photo-preview-grid"></div>
+            </fieldset>
+
+            <label>Observación técnica<textarea name="technicianNotes" rows="4" placeholder="Completar con observación técnica validada."></textarea></label>
+
+            <div class="actions-row">
+              <button class="primary" type="submit">Generar cotización</button>
+              <button class="secondary" type="button" id="resetFormBtn">Limpiar</button>
+            </div>
+          </form>
+
+          <div id="quoteResult" class="result hidden"></div>
+        </section>
+
+        <section id="tab-quotes" class="panel tab-panel hidden">
+          <div class="section-header">
+            <h2>Historial</h2>
+            <p class="muted">Cada cotización queda con su PDF.</p>
+          </div>
+          <div id="quotesList" class="quotes-list"></div>
+        </section>
+
+        <section id="tab-admin" class="panel tab-panel hidden">
+          <div class="section-header">
+            <h2>Admin</h2>
+            <p class="muted">Control comercial del cotizador: parámetros del negocio y catálogo maestro.</p>
+          </div>
+
+          <div id="accountsAdmin" class="catalog-section"></div>
+
+          <form id="adminForm" class="stack">
+            <div class="grid-3">
+              <label>Empresa<input name="companyName" /></label>
+              <label>Tagline<input name="companyTagline" /></label>
+              <label>IGV<input name="igv" type="number" min="0" step="0.01" /></label>
+            </div>
+
+            <div id="catalogEditor"></div>
+
+            <div class="actions-row">
+              <button class="primary" type="submit">Guardar parámetros</button>
+            </div>
+          </form>
+        </section>
+        </div>
+      </section>
+    </div>
+    <script src="/app.js?v=20260502login1"></script>
+  </body>
+  </html>

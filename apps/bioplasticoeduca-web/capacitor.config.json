@@ -1,0 +1,11 @@
+{
+  "appId": "net.evinka.bioplasticoeduca",
+  "appName": "BioPlástico Educa",
+  "webDir": "public",
+  "bundledWebRuntime": false,
+  "server": {
+    "url": "https://bioplasticoeduca.evinka.net",
+    "cleartext": false,
+    "androidScheme": "https"
+  }
+}

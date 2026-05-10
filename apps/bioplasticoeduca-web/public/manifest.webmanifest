@@ -1,0 +1,17 @@
+{
+  "name": "BioPlástico Educa",
+  "short_name": "BioPlástico",
+  "description": "App educativa sobre plástico biodegradable, beneficios, tipos y aprendizaje en casa.",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#e9fbf3",
+  "theme_color": "#1f8f63",
+  "icons": [
+    {
+      "src": "/assets/icon-bio.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}
