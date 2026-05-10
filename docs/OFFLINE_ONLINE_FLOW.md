@@ -89,6 +89,7 @@ Y una cola tipo:
 
 ## Ya implementado en esta fase
 - banner de conectividad en el dashboard
+- sincronización automática al volver internet
 - módulo de sincronización visible como pantalla separada
 - marca de documento local / pendiente / sincronizado / error
 - reintento manual desde el historial

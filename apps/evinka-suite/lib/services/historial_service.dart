@@ -74,7 +74,22 @@ class HistorialEntry {
       );
 }
 
+class HistorialSyncReport {
+  final int total;
+  final int synced;
+  final int failed;
+
+  const HistorialSyncReport({
+    required this.total,
+    required this.synced,
+    required this.failed,
+  });
+
+  bool get hasChanges => total > 0;
+}
+
 class HistorialService {
+  static bool _syncingAll = false;
   static Future<Directory> get _protocolosDir async {
     final base = await getApplicationDocumentsDirectory();
     final dir = Directory('${base.path}/protocolos');
@@ -231,6 +246,38 @@ class HistorialService {
       syncStatus: 'synced',
       syncMessage: 'Conformidad sincronizada correctamente.',
     );
+  }
+
+  static Future<HistorialSyncReport> retryPendingSyncs() async {
+    if (_syncingAll) {
+      return const HistorialSyncReport(total: 0, synced: 0, failed: 0);
+    }
+    _syncingAll = true;
+    try {
+      final items = await cargarPendientesSync();
+      var synced = 0;
+      var failed = 0;
+      for (final entry in items) {
+        try {
+          await retrySync(entry);
+          synced += 1;
+        } catch (e) {
+          failed += 1;
+          await actualizarEstadoSync(
+            entry.id,
+            syncStatus: 'error',
+            syncMessage: 'Reintento automático falló: $e',
+          );
+        }
+      }
+      return HistorialSyncReport(
+        total: items.length,
+        synced: synced,
+        failed: failed,
+      );
+    } finally {
+      _syncingAll = false;
+    }
   }
 
   static Future<Uint8List?> leerPdf(String archivo) async {

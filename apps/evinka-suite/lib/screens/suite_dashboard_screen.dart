@@ -47,7 +47,20 @@ class _SuiteDashboardScreenState extends State<SuiteDashboardScreen> {
   @override
   void initState() {
     super.initState();
+    NetworkStatusService.instance.state.addListener(_onNetworkStateChanged);
     _loadSummary();
+  }
+
+  @override
+  void dispose() {
+    NetworkStatusService.instance.state.removeListener(_onNetworkStateChanged);
+    super.dispose();
+  }
+
+  void _onNetworkStateChanged() {
+    if (NetworkStatusService.instance.state.value == NetworkState.online) {
+      _loadSummary();
+    }
   }
 
   Future<void> _loadSummary() async {

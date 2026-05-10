@@ -7,6 +7,7 @@ import 'screens/login_screen.dart';
 import 'screens/suite_dashboard_screen.dart';
 import 'services/app_settings_service.dart';
 import 'services/evinka_api_service.dart';
+import 'services/historial_service.dart';
 import 'services/network_status_service.dart';
 
 Future<void> main() async {
@@ -184,11 +185,43 @@ class _BootstrapScreen extends StatefulWidget {
 class _BootstrapScreenState extends State<_BootstrapScreen> {
   EvinkaUser? _user;
   bool _checking = true;
+  bool _syncingPending = false;
 
   @override
   void initState() {
     super.initState();
+    NetworkStatusService.instance.state.addListener(_onNetworkStateChanged);
     _restore();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _syncIfOnline();
+    });
+  }
+
+  @override
+  void dispose() {
+    NetworkStatusService.instance.state.removeListener(_onNetworkStateChanged);
+    super.dispose();
+  }
+
+  void _onNetworkStateChanged() {
+    if (NetworkStatusService.instance.state.value == NetworkState.online) {
+      _syncIfOnline();
+    }
+  }
+
+  Future<void> _syncIfOnline() async {
+    if (_syncingPending) return;
+    if (NetworkStatusService.instance.state.value != NetworkState.online)
+      return;
+    _syncingPending = true;
+    try {
+      final report = await HistorialService.retryPendingSyncs();
+      if (!mounted || !report.hasChanges) return;
+      // El dashboard se refresca solo cuando el usuario vuelve a entrar o pulsa refresh,
+      // pero este intento deja los pendientes listos para sync.
+    } finally {
+      _syncingPending = false;
+    }
   }
 
   Future<void> _restore() async {
