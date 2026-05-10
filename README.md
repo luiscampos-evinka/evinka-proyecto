@@ -1,18 +1,28 @@
 # EVINKA monorepo
 
-Estructura principal:
+Repo ordenado por frentes.
 
-- `apps/evinka-suite` → app Flutter principal de EVINKA
+## Mapa rápido
+- `apps/evinka-suite` → app Flutter principal
 - `apps/cotizador-web` → cotizador web
-- `apps/advisor-inbox` → inbox de asesoría
-- `apps/bioplasticoeduca-web` → web Bioplástico Educa
-- `apps/mapco-web` → MapCo / prospecting
-- `apps/overview-app` → overview interno
-- `apps/stock-web-v1` → stock web v1
-- `apps/google-cotizador-mvp` → prototipo Google cotizador
-- `src/` → servicios backend Node
+- `apps/advisor-inbox` → bandeja humana
+- `apps/bioplasticoeduca-web` → wrapper Android/web
+- `apps/mapco-web` → MapCo prospecting
+- `apps/overview-app` → overview operativo
+- `apps/stock-web-v1` → stock web
+- `apps/google-cotizador-mvp` → MVP Google Apps Script
+- `src/` → servicios Node compartidos
 - `scripts/` → utilidades, pruebas y generadores
-- `data/` → datos compartidos y estado local
-- `deliverables/` → notas de entrega y artefactos de release
+- `docs/` → arquitectura, deploy y specs
 
-Cada app vive separada para facilitar deploys y commits por frente.
+## Empieza aquí
+- `docs/ARCHITECTURE.md`
+- `docs/DEPLOYMENT.md`
+
+## Comandos raíz útiles
+```bash
+npm run cotizador:web
+npm run overview:web
+npm run evinka:apk
+npm run bioplasticoeduca:android:build
+```

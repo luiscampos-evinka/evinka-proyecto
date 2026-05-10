@@ -6,8 +6,8 @@ from pathlib import Path
 import requests
 
 ROOT = Path('/root/.openclaw/workspace')
-DATASET = ROOT / 'mapco-web/public/data/places-colombia-multicity.json'
-OUT = ROOT / 'mapco-web/public/data/places-colombia-multicity.estrato-medellin.json'
+DATASET = ROOT / 'apps/mapco-web/public/data/places-colombia-multicity.json'
+OUT = ROOT / 'apps/mapco-web/public/data/places-colombia-multicity.estrato-medellin.json'
 API = 'https://www.medellin.gov.co/servidormapas/rest/services/mapas_nacionales/VC_Distribucion_Poblacional/MapServer/0/query'
 MAX_WORKERS = 24
 TIMEOUT = 18

@@ -3,8 +3,8 @@ import re
 from pathlib import Path
 
 ROOT = Path('/root/.openclaw/workspace')
-DATASET = ROOT / 'mapco-web/public/data/places-colombia-multicity.json'
-OUTPUT = ROOT / 'mapco-web/public/data/places-colombia-multicity.v2.json'
+DATASET = ROOT / 'apps/mapco-web/public/data/places-colombia-multicity.json'
+OUTPUT = ROOT / 'apps/mapco-web/public/data/places-colombia-multicity.v2.json'
 VALIDATION_FILES = [
     ROOT / 'deliverables/mapco-google-validation-bogota.json',
     ROOT / 'deliverables/mapco-google-validation-medellin.json',

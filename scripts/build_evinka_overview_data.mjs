@@ -8,7 +8,7 @@ const __dirname = path.dirname(__filename);
 const ROOT = path.resolve(__dirname, '..');
 loadEnv(path.join(ROOT, '.env'));
 
-const OUT_DIR = path.join(ROOT, 'overview-app/public/data');
+const OUT_DIR = path.join(ROOT, 'apps/overview-app/public/data');
 const CACHE_DIR = path.join(ROOT, '.runtime/evinka-overview');
 const FILES = ['UBICACIONES.har', 'TODO.har', 'exportar.har'];
 const HEARTBEAT_OFFLINE_MS = 5 * 60 * 1000;

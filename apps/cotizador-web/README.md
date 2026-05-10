@@ -1,27 +1,20 @@
 # EVINKA Cotizador Web
 
-Primera versión web del cotizador.
+Cotizador web principal de EVINKA.
 
 ## Incluye
-- Login con roles: `admin` y `tech`
-- Formulario guiado para cotizar sin escribir tanto
-- Selección de cargador y cable
-- PDF descargable por cotización
-- Panel admin para editar parámetros y precios
-
-## Credenciales demo
-- Admin: `admin@evinka.net` / `Admin12345!`
-- Técnico: `tecnico@evinka.net` / `Tecnico12345!`
+- login por roles
+- flujo guiado de cotización
+- selección de cargador y cable
+- PDF descargable
+- panel admin de parámetros
 
 ## Ejecutar
+Desde la raíz del monorepo:
 ```bash
-npm run cotizador:web
-```
-
-Luego abrir:
-```text
-http://localhost:3008
+node apps/cotizador-web/server.mjs
 ```
 
 ## Datos
-Se guardan en `cotizador-web/data` y los PDFs en `cotizador-web/storage/quotes`.
+- `apps/cotizador-web/data`
+- PDFs en `apps/cotizador-web/storage/quotes`

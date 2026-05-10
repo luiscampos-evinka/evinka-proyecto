@@ -11,6 +11,9 @@
     "check:meta": "node --check src/whatsappMeta.mjs && node --check src/metaWebhookServer.mjs && node --check src/receiptOcr.mjs",
     "test:ocr": "node scripts/test_receipt_ocr.mjs",
     "cotizador:web": "node apps/cotizador-web/server.mjs",
+    "overview:web": "cd apps/overview-app && npm run build:data && npm run serve",
+    "evinka:apk": "cd apps/evinka-suite && JAVA_HOME=/usr/lib/jvm/java-17-openjdk-amd64 /opt/flutter/bin/flutter build apk --release",
+    "bioplasticoeduca:android:build": "cd apps/bioplasticoeduca-web && npm run android:build:debug",
     "mapco:google-validate": "node scripts/validate_mapco_google_places.mjs"
   },
   "dependencies": {

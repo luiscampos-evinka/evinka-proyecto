@@ -3,7 +3,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "build:data": "node ../scripts/build_evinka_overview_data.mjs",
+    "build:data": "node ../../scripts/build_evinka_overview_data.mjs",
     "serve": "python3 -m http.server 8081 --directory public"
   }
 }

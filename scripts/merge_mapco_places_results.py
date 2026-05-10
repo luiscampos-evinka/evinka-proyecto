@@ -2,8 +2,8 @@ import json
 from pathlib import Path
 
 ROOT = Path('/root/.openclaw/workspace')
-DATASET = ROOT / 'mapco-web/public/data/places-colombia-multicity.json'
-OUTPUT = ROOT / 'mapco-web/public/data/places-colombia-multicity.enriched.json'
+DATASET = ROOT / 'apps/mapco-web/public/data/places-colombia-multicity.json'
+OUTPUT = ROOT / 'apps/mapco-web/public/data/places-colombia-multicity.enriched.json'
 SOURCES = [
     ROOT / 'deliverables/mapco-google-validation-bogota.json',
     ROOT / 'deliverables/mapco-google-validation-medellin.json',
