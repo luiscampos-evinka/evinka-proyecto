@@ -18,6 +18,26 @@ Matrix4 = List[List[float]]
 Vector3 = Tuple[float, float, float]
 Quaternion = Tuple[float, float, float, float]  # (w, x, y, z)
 
+# =========================================================
+# ViperX-300 6DOF (vx300s) — datos oficiales del manual
+# =========================================================
+VIPERX_300S_M: Matrix4 = [
+    [1.0, 0.0, 0.0, 0.536494],
+    [0.0, 1.0, 0.0, 0.0],
+    [0.0, 0.0, 1.0, 0.42705],
+    [0.0, 0.0, 0.0, 1.0],
+]
+
+# Slist dado en la documentación oficial (se muestra allí transpuesto).
+VIPERX_300S_SLIST_ROWS: List[List[float]] = [
+    [0.0, 0.0, 1.0, 0.0, 0.0, 0.0],
+    [0.0, 1.0, 0.0, -0.12705, 0.0, 0.0],
+    [0.0, 1.0, 0.0, -0.42705, 0.0, 0.05955],
+    [1.0, 0.0, 0.0, 0.0, 0.42705, 0.0],
+    [0.0, 1.0, 0.0, -0.42705, 0.0, 0.35955],
+    [1.0, 0.0, 0.0, 0.0, 0.42705, 0.0],
+]
+
 
 # =========================================================
 # Utilidades generales
@@ -72,6 +92,69 @@ def pose_from_T(T: Matrix4) -> Tuple[Vector3, List[List[float]]]:
     p = (T[0][3], T[1][3], T[2][3])
     R = [row[:3] for row in T[:3]]
     return p, R
+
+
+def se3_exp(S: Sequence[float], theta: float) -> Matrix4:
+    """Exponencial de un screw axis revoluto usando la fórmula cerrada."""
+    w = list(S[:3])
+    v = list(S[3:])
+    wn = sqrt(sum(x * x for x in w))
+    if wn < 1e-12:
+        return [
+            [1.0, 0.0, 0.0, v[0] * theta],
+            [0.0, 1.0, 0.0, v[1] * theta],
+            [0.0, 0.0, 1.0, v[2] * theta],
+            [0.0, 0.0, 0.0, 1.0],
+        ]
+
+    wx, wy, wz = w
+    wxm = [
+        [0.0, -wz, wy],
+        [wz, 0.0, -wx],
+        [-wy, wx, 0.0],
+    ]
+    wx2 = [
+        [sum(wxm[i][k] * wxm[k][j] for k in range(3)) for j in range(3)]
+        for i in range(3)
+    ]
+    I = [[1.0 if i == j else 0.0 for j in range(3)] for i in range(3)]
+    c, s = cos(theta), sin(theta)
+    R = [
+        [I[i][j] + s * wxm[i][j] + (1.0 - c) * wx2[i][j] for j in range(3)]
+        for i in range(3)
+    ]
+
+    # p = (I - R)(w x v) + w(w^T v)theta
+    cross = [
+        wy * v[2] - wz * v[1],
+        wz * v[0] - wx * v[2],
+        wx * v[1] - wy * v[0],
+    ]
+    IminusR = [[I[i][j] - R[i][j] for j in range(3)] for i in range(3)]
+    p1 = [sum(IminusR[i][k] * cross[k] for k in range(3)) for i in range(3)]
+    wtv = sum(w[i] * v[i] for i in range(3))
+    p2 = [w[i] * wtv * theta for i in range(3)]
+    p = [p1[i] + p2[i] for i in range(3)]
+
+    return [
+        [R[0][0], R[0][1], R[0][2], p[0]],
+        [R[1][0], R[1][1], R[1][2], p[1]],
+        [R[2][0], R[2][1], R[2][2], p[2]],
+        [0.0, 0.0, 0.0, 1.0],
+    ]
+
+
+def viperx300s_fk(q: Sequence[float]) -> Matrix4:
+    """Cinemática directa oficial del vx300s usando PoE."""
+    T = [
+        [1.0, 0.0, 0.0, 0.0],
+        [0.0, 1.0, 0.0, 0.0],
+        [0.0, 0.0, 1.0, 0.0],
+        [0.0, 0.0, 0.0, 1.0],
+    ]
+    for S, th in zip(VIPERX_300S_SLIST_ROWS, q):
+        T = mat4_mul(T, se3_exp(S, th))
+    return mat4_mul(T, VIPERX_300S_M)
 
 
 # =========================================================
@@ -252,8 +335,29 @@ def solve_q1_with_dh_table(dh_table: Iterable[Tuple[float, float, float, float]]
     """Completar con la tabla DH estándar real del ViperX-300.
 
     Cada fila debe ser (theta, d, a, alpha) en radianes/metros.
+    La ficha oficial del vx300s expone M y Slist (PoE), no la tabla DH.
     """
     return fk_from_dh(list(dh_table))
+
+
+def viperx300s_specs() -> None:
+    print("ViperX-300 6DOF (vx300s)")
+    print("M =", VIPERX_300S_M)
+    print("Slist rows =")
+    for row in VIPERX_300S_SLIST_ROWS:
+        print(row)
+
+
+def demo_q1_numeric() -> None:
+    q = (0.3, 0.3, 0.3, 0.6, 0.6, 0.6)
+    T = viperx300s_fk(q)
+    p, R = pose_from_T(T)
+    print("\nPregunta 1 - vx300s")
+    print("q =", q)
+    print("posición =", tuple(round(v, 6) for v in p))
+    print("R =")
+    for row in R:
+        print([round(v, 6) for v in row])
 
 
 if __name__ == "__main__":
