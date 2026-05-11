@@ -7,7 +7,15 @@ Sirve para ejercicios tipo:
 - Robot móvil con cuaterniones y transformaciones homogéneas
 
 La idea es que tú cambies los parámetros arriba y el script te imprima la respuesta
-por incisos (a, b, c, ...).
+por incisos (a, b, c, ...), en español y con la salida lista para copiar.
+
+Qué cambiar según te pidan:
+- Si te dan una TABLA DH -> cambia ARM_MODEL = "dh" y llena la tabla en el bloque
+  correspondiente; si es PoE, deja ARM_MODEL = "poe" y usa M_HOME + SLIST_ROWS.
+- Si te piden CÁLCULO DE POSE de un brazo -> cambia Q_ARM.
+- Si te piden IK analítica -> cambia TARGET_IK, L1 y L2.
+- Si te piden descenso del gradiente -> cambia TARGET_GRAD, Q0, ALPHA e ITERS.
+- Si te piden robot móvil -> cambia T5_POS, T5_Q, T10_POS y T10_Q.
 """
 
 from __future__ import annotations
@@ -22,6 +30,12 @@ from typing import List, Sequence, Tuple
 EXERCISE_KIND = "arm"  # "arm" | "inverse_kinematics" | "gradient" | "mobile"
 ARM_MODEL = "poe"      # "dh" | "poe"
 DOF = 6
+
+# Guía rápida:
+# - "arm"               -> Pide brazo robot, DH/PoE, FK y pose.
+# - "inverse_kinematics"-> Pide cinemática inversa analítica.
+# - "gradient"          -> Pide IK por descenso del gradiente.
+# - "mobile"            -> Pide robot móvil con cuaterniones y homogéneas.
 
 # --- Brazo robot (PoE) ---
 M_HOME: List[List[float]] = [
@@ -167,8 +181,12 @@ def print_arm_answer():
     print("a) Asignación de sistemas de referencia:")
     print("- Usa z_i sobre cada eje de giro y x_i sobre la normal común.")
     print("- Si el enunciado da figura, marca la base, articulaciones y efector final.")
+    print("- Si te dicen 'convención estándar DH', mantén ese orden.")
     print()
     print("b) Modelo cinemático:")
+    print("- Si te dan DH, cambia ARM_MODEL a 'dh' y completa una tabla con theta, d, a, alpha.")
+    print("- Si te dan PoE, usa M_HOME y SLIST_ROWS.")
+    print("- Si te dan los datos del fabricante, copia esos valores aquí.")
     print(f"- GDL = {DOF}")
     print("- Modelo =", ARM_MODEL.upper())
     if ARM_MODEL.lower() == "poe":
@@ -209,6 +227,8 @@ def print_inverse_answer():
     header("PREGUNTA 2 - CINEMÁTICA INVERSA")
     q1, q2, q3 = prp_ik(*TARGET_IK, L1, L2)
     print("a) Solución analítica:")
+    print("- Si el problema cambia el robot, reemplaza la ecuación de FK antes de despejar.")
+    print("- Aquí se usa el caso PRP con 3 variables articulares.")
     print("- x = -q3 sin(q2)")
     print("- y = L1 + q3 cos(q2)")
     print("- z = q1 + L2")
@@ -241,6 +261,8 @@ def print_mobile_answer():
     yaw10 = quat_to_yaw(T10_Q)
     delta = yaw10 - yaw5
     print("a) Esbozo de posición y orientación:")
+    print("- Si te cambian los instantes, reemplaza T5_POS/T5_Q y T10_POS/T10_Q.")
+    print("- Si te cambian el tipo de orientación, adapta la conversión de cuaternión.")
     print(f"- t=5  -> p={T5_POS}, q={T5_Q}, yaw={yaw5 * 180 / pi:.3f}°")
     print(f"- t=10 -> p={T10_POS}, q={T10_Q}, yaw={yaw10 * 180 / pi:.3f}°")
     print(f"- Giro entre ambos instantes = {delta * 180 / pi:.3f}°")
@@ -261,9 +283,21 @@ def print_mobile_answer():
 # MAIN
 # =========================================================
 
+def print_how_to_change():
+    print("GUÍA DE CAMBIOS RÁPIDOS")
+    print("- Si el problema dice 'usa DH' -> ARM_MODEL = 'dh' y completa la tabla.")
+    print("- Si el problema dice 'usa PoE' -> ARM_MODEL = 'poe' y usa M_HOME + SLIST_ROWS.")
+    print("- Si cambian las longitudes -> modifica L1, L2 o los parámetros del brazo.")
+    print("- Si cambian los puntos objetivo -> modifica TARGET_IK o TARGET_GRAD.")
+    print("- Si cambian los ángulos/posiciones del robot móvil -> modifica T5_POS, T5_Q, T10_POS, T10_Q.")
+    print("- Si el ejercicio es otro brazo robot -> cambia EXERCISE_KIND a 'arm' y reemplaza el modelo.")
+    print()
+
+
 def main():
     print("PLANTILLA GENERAL DE EXAMEN - ROBÓTICA")
     print(f"Tipo: {EXERCISE_KIND}")
+    print_how_to_change()
     if EXERCISE_KIND == "arm":
         print_arm_answer()
     elif EXERCISE_KIND == "inverse_kinematics":
