@@ -353,9 +353,9 @@ def demo_q3_numeric() -> None:
     print()
     print("b) Transformación homogénea final en t=10:")
     T10 = homogeneous_from_pose(*t10_pose, t10_q)
-    print("T =")
+    print("- T =")
     for row in T10:
-        print("[" + ", ".join(f"{v:.6f}" for v in row) + "]")
+        print("  [" + ", ".join(f"{v:.6f}" for v in row) + "]")
 
 
 # =========================================================
@@ -393,13 +393,13 @@ def demo_q1_numeric() -> None:
     print("b) Parámetros/modelo cinemático:")
     print("- La ficha oficial del vx300s publica el modelo en PoE, con M y Slist.")
     print("- M =")
-    print(fmt_row(VIPERX_300S_M[0]))
-    print(fmt_row(VIPERX_300S_M[1]))
-    print(fmt_row(VIPERX_300S_M[2]))
-    print(fmt_row(VIPERX_300S_M[3]))
+    print("  " + fmt_row(VIPERX_300S_M[0]))
+    print("  " + fmt_row(VIPERX_300S_M[1]))
+    print("  " + fmt_row(VIPERX_300S_M[2]))
+    print("  " + fmt_row(VIPERX_300S_M[3]))
     print("- Slist (filas) =")
     for row in VIPERX_300S_SLIST_ROWS:
-        print(fmt_row(row))
+        print("  " + fmt_row(row))
     print("- Si el docente exige una tabla DH, se arma desde la figura del brazo; aquí se usa el modelo oficial equivalente.")
     print()
     print("c) Con q = (0.3, 0.3, 0.3, 0.6, 0.6, 0.6):")
