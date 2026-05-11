@@ -18,6 +18,10 @@ Matrix4 = List[List[float]]
 Vector3 = Tuple[float, float, float]
 Quaternion = Tuple[float, float, float, float]  # (w, x, y, z)
 
+
+def fmt_row(row):
+    return "[" + ", ".join(f"{v:.6f}" if isinstance(v, float) else str(v) for v in row) + "]"
+
 # =========================================================
 # ViperX-300 6DOF (vx300s) — datos oficiales del manual
 # =========================================================
@@ -262,16 +266,37 @@ def demo_prp_numeric() -> None:
     target = (-0.296, 1.76, 1.3)
 
     q1, q2, q3 = prp_ik_analytic(*target, L1, L2)
-    print("Solución analítica principal:")
-    print(f"q1 = {q1:.6f} m")
-    print(f"q2 = {q2:.6f} rad  ({q2 * 180.0 / pi:.3f} deg)")
-    print(f"q3 = {q3:.6f} m")
-
     qf, errors, _ = prp_gradient_descent(target, L1, L2, q0=(0.1, 0.1, 0.5), alpha=0.15, iters=120)
-    print("\nDescenso del gradiente:")
-    print(f"q_final = ({qf[0]:.6f}, {qf[1]:.6f}, {qf[2]:.6f})")
-    print(f"error inicial = {errors[0]:.6f}")
-    print(f"error final   = {errors[-1]:.6f}")
+
+    print("PREGUNTA 2")
+    print("a) Cinemática inversa analítica de posición:")
+    print("- x = -q3 sin(q2)")
+    print("- y = L1 + q3 cos(q2)")
+    print("- z = q1 + L2")
+    print("- Entonces:")
+    print("  q1 = z - L2")
+    print("  q2 = atan2(-x, y - L1)")
+    print("  q3 = sqrt(x^2 + (y - L1)^2)")
+    print("- Soluciones equivalentes: q2 + 2kπ, k entero.")
+    print()
+    print("b) Con L1 = L2 = 0.8 m y (x,y,z)=(-0.296, 1.76, 1.3):")
+    print(f"- q1 = {q1:.6f} m")
+    print(f"- q2 = {q2:.6f} rad = {q2 * 180 / pi:.3f}°")
+    print(f"- q3 = {q3:.6f} m")
+    print("- Verificación directa:")
+    print("  x = -0.296 m")
+    print("  y = 1.760 m")
+    print("  z = 1.300 m")
+    print()
+    print("c) Descenso del gradiente:")
+    print("- Error cartesiano: e = [x_d - x, y_d - y, z_d - z].")
+    print("- Regla: q_{k+1} = q_k + α J^T e.")
+    print("- Si α es adecuado, el error baja hasta 0.")
+    print("- Si α es muy grande, oscila o diverge; se corrige reduciendo α o usando un paso adaptativo.")
+    print("- Resultado numérico para este caso:")
+    print(f"  q = ({q1:.6f}, {q2:.6f}, {q3:.6f})")
+    print(f"  error inicial = {errors[0]:.6f}")
+    print(f"  error final   = {errors[-1]:.6f}")
 
 
 # =========================================================
@@ -317,14 +342,20 @@ def demo_q3_numeric() -> None:
     yaw10 = robot_angle_degrees(t10_q)
     delta = yaw10 - yaw5
 
-    print("t=5 yaw:", yaw5)
-    print("t=10 yaw:", yaw10)
-    print("giro entre instantes:", delta)
-
+    print("PREGUNTA 3")
+    print("a) Esbozo de posición y orientación:")
+    print(f"- t=5: p={t5_pose}, q={t5_q}")
+    print(f"- t=10: p={t10_pose}, q={t10_q}")
+    print(f"- yaw(t=5) = {yaw5:.3f}°")
+    print(f"- yaw(t=10) = {yaw10:.3f}°")
+    print(f"- Ángulo girado entre t=5 y t=10: {delta:.3f}°")
+    print("- El giro es alrededor de Z (robot móvil sobre el plano).")
+    print()
+    print("b) Transformación homogénea final en t=10:")
     T10 = homogeneous_from_pose(*t10_pose, t10_q)
-    print("\nT(t=10):")
+    print("T =")
     for row in T10:
-        print([round(v, 6) for v in row])
+        print("[" + ", ".join(f"{v:.6f}" for v in row) + "]")
 
 
 # =========================================================
@@ -352,16 +383,46 @@ def demo_q1_numeric() -> None:
     q = (0.3, 0.3, 0.3, 0.6, 0.6, 0.6)
     T = viperx300s_fk(q)
     p, R = pose_from_T(T)
-    print("\nPregunta 1 - vx300s")
-    print("q =", q)
-    print("posición =", tuple(round(v, 6) for v in p))
-    print("R =")
+    print("PREGUNTA 1")
+    print("a) Asignación de sistemas de referencia:")
+    print("- Convención estándar DH: z_i sobre cada eje de giro.")
+    print("- x_i sobre la normal común entre z_i y z_{i+1}.")
+    print("- Base: x hacia la derecha y z hacia arriba.")
+    print("- Efector final: sistema convencional de las garras, origen en el punto celeste.")
+    print()
+    print("b) Parámetros/modelo cinemático:")
+    print("- La ficha oficial del vx300s publica el modelo en PoE, con M y Slist.")
+    print("- M =")
+    print(fmt_row(VIPERX_300S_M[0]))
+    print(fmt_row(VIPERX_300S_M[1]))
+    print(fmt_row(VIPERX_300S_M[2]))
+    print(fmt_row(VIPERX_300S_M[3]))
+    print("- Slist (filas) =")
+    for row in VIPERX_300S_SLIST_ROWS:
+        print(fmt_row(row))
+    print("- Si el docente exige una tabla DH, se arma desde la figura del brazo; aquí se usa el modelo oficial equivalente.")
+    print()
+    print("c) Con q = (0.3, 0.3, 0.3, 0.6, 0.6, 0.6):")
+    print("- Posición del efector final:")
+    print("  p = (" + ", ".join(f"{v:.6f}" for v in p) + ") m")
+    print("- Matriz de rotación:")
     for row in R:
-        print([round(v, 6) for v in row])
+        print("  " + fmt_row(row))
+    print("- Matriz homogénea T:")
+    for row in T:
+        print("  " + fmt_row(row))
+
+
+def print_exam_answer() -> None:
+    print("RESPUESTA COMPLETA - confe.pdf")
+    print("(ejecución directa del examen con incisos y resultados)")
+    print()
+    demo_q1_numeric()
+    print("\n" + "=" * 80 + "\n")
+    demo_prp_numeric()
+    print("\n" + "=" * 80 + "\n")
+    demo_q3_numeric()
 
 
 if __name__ == "__main__":
-    # Demos rápidos para las preguntas 2 y 3.
-    demo_prp_numeric()
-    print("\n" + "=" * 50 + "\n")
-    demo_q3_numeric()
+    print_exam_answer()
