@@ -43,6 +43,12 @@ npm run android:build:debug
 - Google Apps Script.
 - Archivos: `apps/google-cotizador-mvp/Code.gs` y `appsscript.json`
 
+## 8) Supabase
+- Esquema local preparado en `supabase/`.
+- Migraciones versionadas en `supabase/migrations/`.
+- Seed opcional en `supabase/seed.sql`.
+- Al conectar GitHub ↔ Supabase, usa la rama `main` para producción y ramas preview para pruebas.
+
 ## Reglas de orden
 - No mezclar data viva con código.
 - No subir `node_modules`, `build`, `tmp`, `memory` ni `.env`.

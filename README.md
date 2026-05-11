@@ -9,6 +9,7 @@ Repositorio central ordenado por frentes.
 - `data/` → datos locales y estados compartidos
 - `docs/` → arquitectura, deploy y guías
 - `deliverables/` → notas de entrega y artefactos
+- `supabase/` → esquema, migraciones y configuración de Supabase
 
 ## Cómo leer el repo
 Empieza por:

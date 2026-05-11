@@ -1,0 +1,2 @@
+-- Seed inicial para Supabase.
+-- Agrega datos de prueba aquí si necesitas ramas preview con contenido.
