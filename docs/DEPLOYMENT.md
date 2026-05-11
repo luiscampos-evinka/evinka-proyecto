@@ -47,6 +47,8 @@ npm run android:build:debug
 - Esquema local preparado en `supabase/`.
 - Migraciones versionadas en `supabase/migrations/`.
 - Seed opcional en `supabase/seed.sql`.
+- Variables frontend: `NEXT_PUBLIC_SUPABASE_URL` y `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY`.
+- Variables backend: `SUPABASE_URL` y `SUPABASE_SERVICE_ROLE_KEY`.
 - Al conectar GitHub ↔ Supabase, usa la rama `main` para producción y ramas preview para pruebas.
 
 ## Reglas de orden
