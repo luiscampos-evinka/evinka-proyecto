@@ -42,6 +42,7 @@
           </div>
           <button id="logoutBtn" class="ghost">Salir</button>
         </div>
+
         <div class="toolbar">
           <input id="searchInput" type="search" placeholder="Buscar cliente o teléfono" />
           <select id="statusFilter">
@@ -50,6 +51,7 @@
             <option value="all">Todos</option>
           </select>
         </div>
+
         <div id="statsBar" class="stats-bar"></div>
         <div id="conversationList" class="conversation-list"></div>
       </aside>
@@ -79,8 +81,8 @@
           </header>
 
           <section class="context-strip">
-            <div class="context-card">
-              <span class="label">Motivo</span>
+            <div class="context-card context-span-2">
+              <span class="label">Motivo del handoff</span>
               <strong id="handoffReason">-</strong>
             </div>
             <div class="context-card">
@@ -88,25 +90,131 @@
               <strong id="caseStatus">-</strong>
             </div>
             <div class="context-card">
+              <span class="label">Prioridad</span>
+              <strong id="casePriority">-</strong>
+            </div>
+            <div class="context-card">
+              <span class="label">SLA</span>
+              <strong id="caseSla">-</strong>
+            </div>
+            <div class="context-card">
+              <span class="label">Etapa</span>
+              <strong id="caseStage">-</strong>
+            </div>
+            <div class="context-card context-span-2">
               <span class="label">Asignado</span>
               <strong id="assignedTo">-</strong>
             </div>
           </section>
 
-          <section id="messageList" class="message-list"></section>
+          <section class="chat-workbench">
+            <div class="chat-main-column">
+              <section id="messageList" class="message-list"></section>
 
-          <form id="composerForm" class="composer">
-            <div class="composer-tools">
-              <button type="button" id="attachBtn" class="tool-btn" title="Adjuntar imagen o PDF">📎</button>
-              <input id="fileInput" type="file" class="hidden" accept="image/*,application/pdf,.doc,.docx,.xls,.xlsx,.txt" />
+              <form id="composerForm" class="composer">
+                <div class="composer-tools">
+                  <button type="button" id="attachBtn" class="tool-btn" title="Adjuntar imagen o PDF">📎</button>
+                  <input id="fileInput" type="file" class="hidden" accept="image/*,application/pdf,.doc,.docx,.xls,.xlsx,.txt" />
+                </div>
+                <div class="composer-box">
+                  <div id="attachmentPreview" class="attachment-preview hidden"></div>
+                  <textarea id="composerInput" rows="1" placeholder="Escribe una respuesta clara y humana..."></textarea>
+                  <div class="composer-meta">Enter para enviar · Shift+Enter para salto de línea</div>
+                </div>
+                <button type="submit" class="primary composer-send">Enviar</button>
+              </form>
             </div>
-            <div class="composer-box">
-              <div id="attachmentPreview" class="attachment-preview hidden"></div>
-              <textarea id="composerInput" rows="1" placeholder="Escribe una respuesta clara y humana..."></textarea>
-              <div class="composer-meta">Enter para enviar · Shift+Enter para salto de línea</div>
-            </div>
-            <button type="submit" class="primary composer-send">Enviar</button>
-          </form>
+
+            <aside class="case-rail">
+              <section class="rail-card">
+                <div class="rail-title-row">
+                  <h3>Ficha rápida</h3>
+                  <button type="button" id="openProfileBtn" class="ghost compact-mini">Ver más</button>
+                </div>
+                <div class="mini-grid">
+                  <div class="mini-block">
+                    <span class="mini-label">Teléfono</span>
+                    <strong id="snapshotPhone">-</strong>
+                  </div>
+                  <div class="mini-block">
+                    <span class="mini-label">Correo</span>
+                    <strong id="snapshotEmail">-</strong>
+                  </div>
+                  <div class="mini-block">
+                    <span class="mini-label">Ubicación</span>
+                    <strong id="snapshotLocation">-</strong>
+                  </div>
+                  <div class="mini-block">
+                    <span class="mini-label">Ticket</span>
+                    <strong id="snapshotTicket">-</strong>
+                  </div>
+                </div>
+                <div class="mini-block full">
+                  <span class="mini-label">Dirección</span>
+                  <strong id="snapshotAddress">-</strong>
+                </div>
+              </section>
+
+              <section class="rail-card">
+                <div class="rail-title-row">
+                  <h3>Resumen del caso</h3>
+                  <span id="summaryPriorityBadge" class="badge neutral">Normal</span>
+                </div>
+                <p id="summaryText" class="summary-text">Selecciona un caso para ver el contexto.</p>
+              </section>
+
+              <section class="rail-card">
+                <div class="rail-title-row">
+                  <h3>Acciones directas</h3>
+                </div>
+                <div class="direct-actions">
+                  <button type="button" id="createVisitBtn" class="secondary full-width">Crear visita</button>
+                  <button type="button" id="openQuoteBtn" class="secondary full-width">Abrir cotización</button>
+                  <button type="button" id="markReadyCloseBtn" class="secondary full-width">Listo para cierre</button>
+                </div>
+              </section>
+
+              <section class="rail-card">
+                <div class="rail-title-row">
+                  <h3>Respuestas rápidas</h3>
+                </div>
+                <div id="quickReplies" class="quick-replies"></div>
+              </section>
+
+              <section class="rail-card">
+                <div class="rail-title-row">
+                  <h3>Notas internas</h3>
+                  <span id="metaSaveStatus" class="save-status"></span>
+                </div>
+                <label class="field-label">
+                  Próxima acción
+                  <select id="nextActionSelect">
+                    <option value="">Sin definir</option>
+                    <option value="contactar_cliente">Contactar cliente</option>
+                    <option value="pedir_datos">Pedir datos faltantes</option>
+                    <option value="agendar_visita">Agendar visita</option>
+                    <option value="enviar_cotizacion">Enviar cotización</option>
+                    <option value="seguimiento">Hacer seguimiento</option>
+                    <option value="cerrar">Cerrar caso</option>
+                  </select>
+                </label>
+                <label class="field-label">
+                  Prioridad manual
+                  <select id="prioritySelect">
+                    <option value="">Automática</option>
+                    <option value="urgent">Urgente</option>
+                    <option value="high">Alta</option>
+                    <option value="normal">Normal</option>
+                  </select>
+                </label>
+                <label class="field-label">
+                  Nota interna
+                  <textarea id="internalNoteInput" rows="5" placeholder="Ej.: Cliente listo para visita, duda sobre potencia, pidió llamada a las 4 pm..."></textarea>
+                </label>
+                <button type="button" id="saveCaseMetaBtn" class="secondary full-width">Guardar ficha interna</button>
+              </section>
+            </aside>
+          </section>
         </section>
 
         <aside id="profileDrawer" class="profile-drawer hidden">
@@ -127,10 +235,6 @@
                 <div class="profile-hero-sub" id="drawerShortName">-</div>
                 <div class="profile-hero-type">Servicio automotor</div>
                 <div class="profile-hero-status"><span>Abierto</span> hasta la(s) 18:00</div>
-                <button type="button" class="profile-share-btn">
-                  <span class="profile-share-icon">↗</span>
-                  <span>Compartir</span>
-                </button>
               </section>
 
               <section class="profile-section-note">

@@ -8,7 +8,7 @@ Te puedo ayudar con una de estas opciones:
 A. Instalar un cargador
 B. Reprogramar visita
 C. Cancelar visita
-D. Soporte humano (no disponible por ahora)
+D. Soporte humano
 Por favor responde con la letra de la opción que deseas.`;
 
 const CONSENT = `Perfecto 👍
@@ -137,30 +137,14 @@ B. Colombia
 
 Por favor responde con la letra de la opción que deseas.`;
 
-const CO_LOCATION_PROMPT = `Perfecto 👍
+const CO_LOCATION_PROMPT = `¡Perfecto! 👌
 
-Para agendar tu visita técnica, primero necesito tu localidad o zona en Colombia.
+Para mostrarte los horarios disponibles, necesito tu localidad 📍
+Selecciona la opción donde se encuentre tu localidad.`;
 
-👉 *AHORA ENVÍAME SOLO ESTO:*
-*LOCALIDAD, MUNICIPIO O ZONA*
+const CO_OTHER_CITY_PROMPT = `Aún no tenemos reserva automática para esa zona.
 
-Ejemplos:
-- Suba
-- Usaquén
-- Chía
-- Mosquera
-- Kennedy
-
-Si luego hace falta, te pediré la dirección exacta al final de la reserva.`;
-
-const CO_OTHER_CITY_PROMPT = `Por ahora esa localidad no tiene reserva automática en el bot.
-
-Si no encuentras tu localidad o ciudad en la lista, por favor escríbenos al 3242853029 o vuelve al menú principal.
-
-¿Qué deseas hacer?
-
-A. Intentar con otra localidad
-B. Ir al menú principal`;
+Si quieres, prueba otra localidad o escríbenos al 3242853029.`;
 
 const CO_ZONE_BOOKING_OPTIONS = [
   { id: 'CO_ZONE_OTHERS', title: 'Otras ciudades', description: 'Si no encuentras tu localidad o ciudad en la lista' },
@@ -246,7 +230,7 @@ const ADVISOR_SHORTCUTS = new Set([
   'persona',
   'ayuda humana',
 ]);
-const COLOMBIA_SHARED_TECH_CAPACITY = 1;
+const COLOMBIA_SHARED_TECH_CAPACITY = 3;
 
 function toMeridiemLabel(time = '') {
   const [hourRaw = '0', minute = '00'] = String(time || '').split(':');
@@ -1144,11 +1128,16 @@ function vehicleFieldPrompt(field) {
   return `${stepIntro}\n\n👉 *AHORA ELIGE SOLO UNA OPCIÓN:*\n*TIPO DE VEHÍCULO*\n\nA. 100% eléctrico\nB. Híbrido enchufable\nC. No estoy seguro`;
 }
 
-function parseSingleVehicleField(field, text) {
+function parseSingleVehicleField(field, text, payloadCrudo = null) {
   const value = cleanTextValue(text);
+  if (field === 'marca') return value && isLikelyVehicleBrand(value) ? value : null;
+  if (field === 'modelo') return value && isLikelyVehicleModel(value) ? value : null;
+
+  if (inputMatches(text, payloadCrudo, ['vehicle_type_bev', '100% eléctrico', '100% electrico', '100 electrico', '100 por ciento electrico', 'electrico', 'bev'])) return 'BEV';
+  if (inputMatches(text, payloadCrudo, ['vehicle_type_phev', 'híbrido enchufable', 'hibrido enchufable', 'enchufable', 'phev'])) return 'PHEV';
+  if (inputMatches(text, payloadCrudo, ['vehicle_type_unsure', 'no estoy seguro', 'no se', 'no sé', 'no estoy seguro/a'])) return 'NO_SEGURO';
+
   if (!value) return null;
-  if (field === 'marca') return isLikelyVehicleBrand(value) ? value : null;
-  if (field === 'modelo') return isLikelyVehicleModel(value) ? value : null;
   const t = normalize(value);
   if (['a', '100 electrico', '100% electrico', '100 por ciento electrico', 'electrico', '100% eléctrico', '100 electrico', 'bev'].includes(t)) return 'BEV';
   if (['b', 'hibrido enchufable', 'híbrido enchufable', 'enchufable', 'phev'].includes(t)) return 'PHEV';
@@ -1227,11 +1216,14 @@ function personFieldPrompt(field, other = false) {
   return `${intro}\n\n${highlightedFieldRequest('Correo electrónico')}`;
 }
 
-const BOOKING_DATA_NOTICE_CO = '🔒 Antes de continuar, te informamos que los datos que nos compartas serán tratados por EVINKA conforme a su Política de Tratamiento de Datos Personales, en cumplimiento de la Ley 1581 de 2012 y demás normas aplicables en Colombia.';
+const BOOKING_DATA_NOTICE_CO = '🔒 Tus datos se usan solo para gestionar tu visita, según la política de tratamiento de datos de EVINKA en Colombia.';
 
 function bookingFieldPrompt(field, { includeNotice = false } = {}) {
-  const intro = 'Perfecto 👍\n\nYa tengo el horario elegido. Ahora solo me faltan tus datos para cerrar la reserva.';
+  const intro = 'Ya casi 👌\n\nTengo el horario. Solo me faltan tus datos para cerrar la reserva.';
   const notice = includeNotice ? `\n\n${BOOKING_DATA_NOTICE_CO}` : '';
+  if (field === 'nombre' && includeNotice) {
+    return `Al continuar con este proceso, aceptas el tratamiento de tus datos personales conforme a la Política de Tratamiento de Datos de EVINKA, en cumplimiento de la normativa vigente en Colombia, incluyendo la Ley 1581 de 2012 y demás disposiciones aplicables.\n\nTu información será utilizada únicamente para gestionar tu solicitud y brindarte una mejor atención 😊\n\nAhora, escribe nombre y apellidos 👌`;
+  }
   if (field === 'nombre') return `${intro}${notice}\n\n${highlightedFieldRequest('Nombre y apellidos')}`;
   if (field === 'telefono') return `${intro}${notice}\n\n${highlightedFieldRequest('Número de teléfono')}`;
   if (field === 'correo') return `${intro}${notice}\n\n${highlightedFieldRequest('Correo electrónico')}`;
@@ -1255,18 +1247,18 @@ function parseSingleBookingField(field, text) {
 }
 
 function invalidBookingFieldPrompt(field) {
-  if (field === 'nombre') return 'No pude leer un nombre y apellidos válidos. Envíamelo otra vez.';
-  if (field === 'telefono') return 'No pude leer un teléfono válido. Envíamelo otra vez.';
-  if (field === 'correo') return 'No pude leer un correo válido. Envíamelo otra vez.';
-  return 'No pude leer una dirección válida. Envíamela otra vez.';
+  if (field === 'nombre') return 'Ups, no alcancé a leer bien tu nombre completo. Envíamelo otra vez.';
+  if (field === 'telefono') return 'Ups, no pude leer bien tu número. Envíamelo otra vez.';
+  if (field === 'correo') return 'Ups, no pude leer bien tu correo. Envíamelo otra vez.';
+  return 'Ups, no pude leer bien la dirección. Envíamela otra vez.';
 }
 
 function bookingSummary(data = {}) {
-  return `Perfecto 👍\n\nVoy a reservar la visita con estos datos:\n\n- Zona: ${data.zone || '-'}\n- Fecha: ${data.dateLabel || '-'}\n- Hora: ${data.hourLabel || '-'}\n- Nombre: ${data.nombre || '-'}\n- Teléfono: ${data.telefono || '-'}\n- Correo: ${data.correo || '-'}\n- Dirección: ${data.direccion || '-'}\n\n¿Está correcto?\n\nA. Sí, reservar\nB. Corregir`;
+  return `Así quedaría tu reserva 👌\n\n- Zona: ${data.zone || '-'}\n- Fecha: ${data.dateLabel || '-'}\n- Hora: ${data.hourLabel || '-'}\n- Nombre: ${data.nombre || '-'}\n- Teléfono: ${data.telefono || '-'}\n- Correo: ${data.correo || '-'}\n- Dirección: ${data.direccion || '-'}\n\n¿Todo bien?`;
 }
 
 function bookingCorrectionMenu(data = {}) {
-  return `Perfecto 👍\n\n¿Qué dato deseas corregir?\n\nA. Nombre (${data.nombre || '-'})\nB. Teléfono (${data.telefono || '-'})\nC. Correo (${data.correo || '-'})\nD. Dirección (${data.direccion || '-'})\n\nPor favor responde con la letra de la opción que deseas.`;
+  return `Claro ✨\n\n¿Qué quieres corregir?\n\nA. Nombre (${data.nombre || '-'})\nB. Teléfono (${data.telefono || '-'})\nC. Correo (${data.correo || '-'})\nD. Dirección (${data.direccion || '-'})\n\nElige una opción.`;
 }
 
 function personCorrectionMenu(data) {
@@ -1361,7 +1353,16 @@ function ensureAdvisorOption(reply) {
 
 function isAdvisorRequest(text = '') {
   const normalized = normalize(text);
-  return ADVISOR_SHORTCUTS.has(normalized) || normalized === 'asesor' || normalized === 'asesora';
+  if (!normalized) return false;
+  if (ADVISOR_SHORTCUTS.has(normalized) || normalized === 'asesor' || normalized === 'asesora') return true;
+  return [
+    /\bhablar con (un )?asesor(a)?\b/,
+    /\bcomunicar(me|te)? con (un )?asesor(a)?\b/,
+    /\bnecesito (un )?asesor(a)?\b/,
+    /\bquiero (hablar|comunicarme) con (un )?asesor(a)?\b/,
+    /\bsoporte humano\b/,
+    /\bagente humano\b/,
+  ].some((pattern) => pattern.test(normalized));
 }
 
 function isContinueRequest(text = '', letter = null, payloadCrudo = null) {
@@ -1421,6 +1422,11 @@ function resumePromptText() {
   return `Pasaron más de 15 minutos desde tu último mensaje. Guardé lo que avanzaste ✅\n\n¿Qué deseas hacer ahora?\n\nA. Retomar con el bot\nB. Ir al menú principal`;
 }
 
+function advisorHandoffText(country = null) {
+  const brand = country === 'CO' ? 'EVINKA Colombia' : 'EVINKA';
+  return `Gracias por contactarnos.\n\nTe estamos comunicando con un asesor de ${brand} para atender tu caso de forma personalizada.\n\nEn breve uno de nuestros asesores continuará contigo por este mismo chat.\n\nSi en cualquier momento deseas volver al menú principal, escribe MENU.`;
+}
+
 function advisorInactiveText() {
   return `Por el momento no tenemos un asesor activo en este canal.\n\n¿Qué deseas hacer ahora?\n\nA. Retomar con el bot\nB. Ir al menú principal`;
 }
@@ -1439,7 +1445,7 @@ function ticketRequestPrompt(action = 'gestionar') {
 }
 
 function ticketActionPrompt() {
-  return `Perfecto 👍\n\n¿Qué deseas hacer con esta cita?\n\nA. Reprogramar\nB. Cancelar\n\nPor favor responde con la letra de la opción que deseas.`;
+  return `Perfecto 👍\n\n¿Qué deseas hacer con esta cita?`;
 }
 
 function bookingReminderPrompt({ ticket, dateLabel, hourLabel, address }) {
@@ -1499,7 +1505,7 @@ function interactiveReplyForStep(step, text, { resumen, subestado } = {}) {
         { id: 'A', title: 'Instalar cargador', description: 'Evaluar instalación y visita técnica' },
         { id: 'B', title: 'Reprogramar visita', description: 'Cambiar fecha u hora de una visita' },
         { id: 'C', title: 'Cancelar visita', description: 'Cancelar una cita existente' },
-        { id: 'D', title: 'Soporte humano', description: 'No disponible por ahora' },
+        { id: 'D', title: 'Soporte humano', description: 'Hablar con un asesor EVINKA' },
       ], { title: 'Elige una opción', buttonText: 'Abrir menú' });
     case 'seleccion_pais':
       return makeStepButtons(step, text, [
@@ -1701,7 +1707,13 @@ function interactiveReplyForStep(step, text, { resumen, subestado } = {}) {
   }
 }
 
-function finalConfirmation({ ticket, dateLabel, hourLabel, address }) {
+function finalConfirmation({ ticket, dateLabel, hourLabel, address, country = null, kind = 'confirmed' }) {
+  if (country === 'CO') {
+    if (kind === 'rescheduled') {
+      return `¡Listo! ✨ Tu visita quedó actualizada.\n\nTicket: ${ticket}\nFecha: ${dateLabel}\nHora: ${hourLabel}\nDirección: ${address}\n\nSi quieres moverla otra vez o cancelarla, escríbenos por aquí.`;
+    }
+    return `¡Listo! 🎉 Tu visita quedó confirmada.\n\nTicket: ${ticket}\nFecha: ${dateLabel}\nHora: ${hourLabel}\nDirección: ${address}\n\nGracias por elegir EVINKA.`;
+  }
   return `Listo ✅\nTu visita técnica quedó confirmada.\n\nTicket: ${ticket}\nFecha: ${dateLabel}\nHora: ${hourLabel}\nDirección: ${address}\n\nSi más adelante necesitas reprogramar o cancelar, escríbenos por este mismo medio.\n\n¡Gracias por elegir EVINKA! ⚡`;
 }
 
@@ -1874,14 +1886,18 @@ export class ChatbotEngine {
   }
 
   phoneForUserId(userId = '') {
-    return String(userId || '').replace(/^whatsapp_/, '').trim();
+    return String(userId || '')
+      .replace(/^wco_/, '')
+      .replace(/^whatsapp_/, '')
+      .trim();
   }
 
   async scheduleBookingReminder({ userId, ticket, dateLabel, hourLabel, address }) {
     if (typeof this.reminderScheduler !== 'function') return null;
     const to = this.phoneForUserId(userId);
     if (!to || !ticket || !dateLabel || !hourLabel || !address) return null;
-    return this.reminderScheduler({ to, ticket, dateLabel, hourLabel, address });
+    const userScope = String(userId || '').startsWith('wco_') ? 'co' : 'default';
+    return this.reminderScheduler({ to, ticket, dateLabel, hourLabel, address, userScope });
   }
 
   async publishTechVisit({ conversation, profile, appointment, dateLabel, hourLabel }) {
@@ -1919,17 +1935,24 @@ export class ChatbotEngine {
     });
   }
 
-  async ensureUser(phone) {
+  async ensureUser(phone, scope = 'default') {
     const normalizedPhone = String(phone || '').replace(/[^+\d]/g, '');
+    const normalizedScope = String(scope || 'default').trim().toLowerCase();
+    const scopedPrefix = normalizedScope === 'co' ? 'wco_' : 'whatsapp_';
+    const scopedId = normalizedPhone.startsWith(scopedPrefix) ? normalizedPhone : `${scopedPrefix}${normalizedPhone}`;
     const legacyId = normalizedPhone.startsWith('whatsapp_') ? normalizedPhone : `whatsapp_${normalizedPhone}`;
-    const candidateIds = [...new Set([legacyId, normalizedPhone].filter(Boolean))];
+    const candidateIds = normalizedScope === 'default'
+      ? [...new Set([legacyId, normalizedPhone].filter(Boolean))]
+      : [scopedId];
 
     for (const candidateId of candidateIds) {
       const users = await this.sb.select('usuarios', `id_usuario=eq.${encodeURIComponent(candidateId)}&select=*`);
       if (users.length) return users[0];
     }
 
-    const id = legacyId.length <= 20 ? legacyId : normalizedPhone;
+    const id = normalizedScope === 'default'
+      ? (legacyId.length <= 20 ? legacyId : normalizedPhone)
+      : scopedId;
     const rows = await this.sb.insert('usuarios', { id_usuario: id, telefono_principal: normalizedPhone });
     return rows[0];
   }
@@ -1980,8 +2003,8 @@ export class ChatbotEngine {
     return rows[0] || null;
   }
 
-  async activateBookingReminder({ phone, ticket, dateLabel, hourLabel, address }) {
-    const user = await this.ensureUser(phone);
+  async activateBookingReminder({ phone, ticket, dateLabel, hourLabel, address, userScope = 'default' }) {
+    const user = await this.ensureUser(phone, userScope);
     const summary = JSON.stringify({ kind: 'booking_reminder', ticket, dateLabel, hourLabel, address });
     const conversation = await this.createConversation(user, {
       paso_actual: 'recordatorio_cita',
@@ -2090,8 +2113,8 @@ export class ChatbotEngine {
     return this.reply(conversation, receiptSummary(data), { paso_actual: 'confirmando_recibo', subestado_flujo: 'confirmacion_recibo_archivo' });
   }
 
-  async handleIncoming({ phone, text = '', media = null, payloadCrudo = null }) {
-    const user = await this.ensureUser(phone);
+  async handleIncoming({ phone, text = '', media = null, payloadCrudo = null, defaultCountry = null, userScope = 'default' }) {
+    const user = await this.ensureUser(phone, userScope);
     const latestConversation = await this.getLatestConversation(user);
     const latestLetter = pickLetter(text, payloadCrudo, latestConversation?.paso_actual || '');
     let conversation;
@@ -2115,12 +2138,29 @@ export class ChatbotEngine {
       payload_crudo: payloadCrudo || { text, media },
     });
 
+    const forcedChannelCountry = ['PE', 'CO'].includes(String(defaultCountry || '').toUpperCase())
+      ? String(defaultCountry || '').toUpperCase()
+      : null;
+    const selectedCountry = forcedChannelCountry || inferCountryFromZone(profile?.zona_cliente) || countryFromIntent(conversation.intencion_principal) || detectPhoneCountry(phone);
+    const sendToAdvisor = (reason = 'Soporte humano solicitado') => this.reply(
+      conversation,
+      advisorHandoffText(selectedCountry),
+      {
+        paso_actual: 'handoff_asesor',
+        subestado_flujo: selectedCountry === 'CO' ? 'asesor_co' : 'asesor_pe',
+        estado_conversacion: 'handoff',
+        requiere_handoff: true,
+        motivo_handoff: reason,
+        intencion_principal: conversation.intencion_principal || 'otro',
+      },
+    );
+
     if (shouldForceReset) {
       return this.reply(conversation, timeoutResetText(), { paso_actual: 'menu_principal', subestado_flujo: 'reinicio_timeout_24h', estado_conversacion: 'open', resumen: null, intencion_principal: null });
     }
 
     if (isAdvisorRequest(text)) {
-      return this.reply(conversation, advisorInactiveText(), { paso_actual: 'retomar_o_reiniciar', subestado_flujo: 'asesor_inactivo', estado_conversacion: 'paused', resumen: resumePromptPayload(conversation, { previousStep: 'menu_principal', previousSubstate: 'inicio' }), requiere_handoff: false, motivo_handoff: null, intencion_principal: null });
+      return sendToAdvisor('Soporte humano solicitado por el cliente');
     }
 
     const step = conversation.paso_actual || 'menu_principal';
@@ -2145,7 +2185,18 @@ export class ChatbotEngine {
       if (letter === 'A') return this.reply(conversation, MENU, { paso_actual: 'menu_principal', subestado_flujo: 'post_cierre_menu', estado_conversacion: 'open' });
       if (letter === 'B') return this.reply(conversation, ticketRequestPrompt('reschedule'), { paso_actual: 'gestion_ticket', subestado_flujo: 'esperando_ticket', intencion_principal: 'otro', accion_ticket_actual: 'reschedule' });
     }
-    const selectedCountry = inferCountryFromZone(profile?.zona_cliente) || countryFromIntent(conversation.intencion_principal) || detectPhoneCountry(phone);
+    const continueWithCountry = async (menuOption, country) => {
+      const forcedZone = defaultZoneForCountry(country);
+      if (profile?.id_perfil) {
+        profile = await this.patchProfile(conversation.id_conversacion, { zona_cliente: forcedZone }) || profile;
+      }
+      if (menuOption === 'A' && country === 'CO') return this.reply(conversation, CO_LOCATION_PROMPT, { intencion_principal: 'instalacion_cargador', paso_actual: 'capturando_localidad_co', subestado_flujo: 'localidad_inicial' });
+      if (menuOption === 'A') return this.reply(conversation, CONSENT, { intencion_principal: 'instalacion_cargador', paso_actual: 'consentimiento', subestado_flujo: 'instalacion' });
+      if (menuOption === 'B') return this.reply(conversation, ticketRequestPrompt('reschedule'), { intencion_principal: 'otro', paso_actual: 'gestion_ticket', subestado_flujo: 'esperando_ticket', accion_ticket_actual: 'reschedule' });
+      if (menuOption === 'C') return this.reply(conversation, ticketRequestPrompt('cancel'), { intencion_principal: 'otro', paso_actual: 'gestion_ticket', subestado_flujo: 'esperando_ticket', accion_ticket_actual: 'cancel' });
+      if (menuOption === 'D') return sendToAdvisor('Soporte humano solicitado desde el menú principal');
+      return this.reply(conversation, MENU, { paso_actual: 'menu_principal', subestado_flujo: 'reinicio' });
+    };
 
     if (step !== 'menu_principal' && isMainMenuRequest(text, payloadCrudo)) {
       return this.reply(conversation, MENU, { paso_actual: 'menu_principal', subestado_flujo: 'menu_directo', estado_conversacion: 'open', resumen: null, requiere_handoff: false, motivo_handoff: null, intencion_principal: null });
@@ -2173,7 +2224,12 @@ export class ChatbotEngine {
           confirmada_por_cliente: true,
           confirmada_en: new Date().toISOString(),
         });
-        return this.reply(conversation, `Perfecto 👍\n\nTu cita sigue confirmada.\n\nTicket: ${ticket}\nFecha: ${reminder.dateLabel || 'Pendiente'}\nHora: ${reminder.hourLabel || 'Pendiente'}\nDirección: ${reminder.address || 'Pendiente'}\n\nSi luego necesitas moverla o cancelarla, escríbenos por este mismo medio.`, { paso_actual: 'cita_confirmada', subestado_flujo: ticket, estado_conversacion: 'closed', accion_ticket_actual: 'confirm', codigo_ticket_solicitado: ticket, cerrada_en: new Date().toISOString() });
+        const rows = await this.sb.select('citas', `codigo_cita=eq.${encodeURIComponent(ticket)}&select=zona_cliente,provincia_cita`);
+        const reminderCountry = inferCountryFromZone(rows[0]?.zona_cliente || rows[0]?.provincia_cita || '') === 'CO' ? 'CO' : null;
+        const reminderText = reminderCountry === 'CO'
+          ? `¡Listo! 👌 Tu visita sigue confirmada.\n\nTicket: ${ticket}\nFecha: ${reminder.dateLabel || 'Pendiente'}\nHora: ${reminder.hourLabel || 'Pendiente'}\nDirección: ${reminder.address || 'Pendiente'}\n\nSi luego quieres moverla o cancelarla, escríbenos por aquí.`
+          : `Perfecto 👍\n\nTu cita sigue confirmada.\n\nTicket: ${ticket}\nFecha: ${reminder.dateLabel || 'Pendiente'}\nHora: ${reminder.hourLabel || 'Pendiente'}\nDirección: ${reminder.address || 'Pendiente'}\n\nSi luego necesitas moverla o cancelarla, escríbenos por este mismo medio.`;
+        return this.reply(conversation, reminderText, { paso_actual: 'cita_confirmada', subestado_flujo: ticket, estado_conversacion: 'closed', accion_ticket_actual: 'confirm', codigo_ticket_solicitado: ticket, cerrada_en: new Date().toISOString() });
       }
       if (action === 'reschedule') {
         const rows = await this.sb.select('citas', `codigo_cita=eq.${encodeURIComponent(ticket)}&select=*`);
@@ -2238,6 +2294,9 @@ export class ChatbotEngine {
     if (step === 'menu_principal') {
       if (!letter) return this.reply(conversation, MENU);
       if (['A','B','C','D'].includes(letter)) {
+        if (forcedChannelCountry) {
+          return continueWithCountry(letter, forcedChannelCountry);
+        }
         return this.reply(conversation, COUNTRY_PROMPT, { paso_actual: 'seleccion_pais', subestado_flujo: letter });
       }
     }
@@ -2245,18 +2304,9 @@ export class ChatbotEngine {
     if (step === 'seleccion_pais') {
       if (!letter) return this.reply(conversation, COUNTRY_PROMPT);
       const menuOption = conversation.subestado_flujo;
-      const country = letter === 'B' ? 'CO' : letter === 'A' ? 'PE' : null;
+      const country = forcedChannelCountry || (letter === 'B' ? 'CO' : letter === 'A' ? 'PE' : null);
       if (!country) return this.reply(conversation, COUNTRY_PROMPT);
-      const forcedZone = defaultZoneForCountry(country);
-      if (profile?.id_perfil) {
-        profile = await this.patchProfile(conversation.id_conversacion, { zona_cliente: forcedZone }) || profile;
-      }
-      if (menuOption === 'A' && country === 'CO') return this.reply(conversation, CO_LOCATION_PROMPT, { intencion_principal: 'instalacion_cargador', paso_actual: 'capturando_localidad_co', subestado_flujo: 'localidad_inicial' });
-      if (menuOption === 'A') return this.reply(conversation, CONSENT, { intencion_principal: 'instalacion_cargador', paso_actual: 'consentimiento', subestado_flujo: 'instalacion' });
-      if (menuOption === 'B') return this.reply(conversation, ticketRequestPrompt('reschedule'), { intencion_principal: 'otro', paso_actual: 'gestion_ticket', subestado_flujo: 'esperando_ticket', accion_ticket_actual: 'reschedule' });
-      if (menuOption === 'C') return this.reply(conversation, ticketRequestPrompt('cancel'), { intencion_principal: 'otro', paso_actual: 'gestion_ticket', subestado_flujo: 'esperando_ticket', accion_ticket_actual: 'cancel' });
-      if (menuOption === 'D') return this.reply(conversation, advisorInactiveText(), { paso_actual: 'retomar_o_reiniciar', subestado_flujo: 'asesor_inactivo', estado_conversacion: 'paused', resumen: resumePromptPayload(conversation, { previousStep: 'menu_principal', previousSubstate: 'inicio' }), requiere_handoff: false, motivo_handoff: null, intencion_principal: null });
-      return this.reply(conversation, MENU, { paso_actual: 'menu_principal', subestado_flujo: 'reinicio' });
+      return continueWithCountry(menuOption, country);
     }
 
     if (step === 'capturando_localidad_co') {
@@ -2489,7 +2539,7 @@ export class ChatbotEngine {
       const field = conversation.subestado_flujo === 'vehiculo' ? 'marca' : (conversation.subestado_flujo || 'marca');
       const pendingRaw = String(profile?.notas_recibo || '_pending_vehiculo={}');
       const current = pendingRaw.startsWith('_pending_vehiculo=') ? JSON.parse(pendingRaw.replace('_pending_vehiculo=', '')) : {};
-      const value = parseSingleVehicleField(field, text);
+      const value = parseSingleVehicleField(field, text, payloadCrudo);
       if (!value) return this.reply(conversation, `${invalidVehicleFieldPrompt(field)}\n\n${vehicleFieldPrompt(field)}`);
       current[field] = value;
       await this.patchProfile(conversation.id_conversacion, { notas_recibo: `_pending_vehiculo=${JSON.stringify(current)}` });
@@ -2762,7 +2812,7 @@ export class ChatbotEngine {
         } catch (error) {
           console.error('publishTechVisit failed:', error);
         }
-        return this.reply(conversation, finalConfirmation({ ticket: appointment.codigo_cita, dateLabel: draft.dateLabel, hourLabel: draft.hourLabel, address: finalAddress }), { paso_actual: 'cita_confirmada', subestado_flujo: 'agenda_confirmada', estado_conversacion: 'closed', accion_ticket_actual: 'confirm', codigo_ticket_solicitado: appointment.codigo_cita, cerrada_en: new Date().toISOString() });
+        return this.reply(conversation, finalConfirmation({ ticket: appointment.codigo_cita, dateLabel: draft.dateLabel, hourLabel: draft.hourLabel, address: finalAddress, country: 'CO' }), { paso_actual: 'cita_confirmada', subestado_flujo: 'agenda_confirmada', estado_conversacion: 'closed', accion_ticket_actual: 'confirm', codigo_ticket_solicitado: appointment.codigo_cita, cerrada_en: new Date().toISOString() });
       }
     }
 
@@ -2780,7 +2830,7 @@ export class ChatbotEngine {
       const rows = await this.sb.select('citas', `codigo_cita=eq.${encodeURIComponent(ticket)}&select=*`);
       if (!rows.length) return this.reply(conversation, 'No pude encontrar una cita con ese ticket.\n\nPor favor envíame solo tu documento para ayudarte a buscar tus citas registradas.', { paso_actual: 'busqueda_por_identidad', subestado_flujo: 'ticket_no_encontrado' });
       const cita = rows[0];
-      return this.reply(conversation, `Encontré esta cita registrada:\n\nTicket: ${cita.codigo_cita}\nFecha: ${cita.fecha_cita}\nHora: ${cita.etiqueta_horario || cita.hora_inicio}\nDirección: ${cita.direccion_cita}\n\n¿Confirmas que esta es la cita que deseas gestionar?\n\nA. Sí\nB. No\n\nPor favor responde con la letra de la opción que deseas.`, { paso_actual: 'confirmando_ticket', subestado_flujo: cita.codigo_cita });
+      return this.reply(conversation, `Encontré esta cita registrada:\n\nTicket: ${cita.codigo_cita}\nFecha: ${cita.fecha_cita}\nHora: ${cita.etiqueta_horario || cita.hora_inicio}\nDirección: ${cita.direccion_cita}\n\n¿Confirmas que esta es la cita que deseas gestionar?`, { paso_actual: 'confirmando_ticket', subestado_flujo: cita.codigo_cita });
     }
 
     if (step === 'busqueda_por_identidad') {
@@ -2801,18 +2851,18 @@ export class ChatbotEngine {
       const doc = cleanDoc(identity.doc);
       const citas = await this.sb.select('citas', `dni_cliente=eq.${encodeURIComponent(doc)}&select=*`);
       if (!citas.length) {
-        return this.reply(conversation, 'No pude encontrar citas registradas con esos datos.\n\nSi deseas, puedes elegir una de estas opciones:\n\nA. Intentar nuevamente\nB. Ir al menú principal\n\nPor favor responde con la letra de la opción que deseas.', { paso_actual: 'sin_citas_encontradas', subestado_flujo: 'sin_resultados', resumen: null });
+        return this.reply(conversation, 'No pude encontrar citas registradas con esos datos.\n\nSi deseas, puedes intentar nuevamente o volver al menú principal.', { paso_actual: 'sin_citas_encontradas', subestado_flujo: 'sin_resultados', resumen: null });
       }
       if (citas.length === 1) {
         const c = citas[0];
-        return this.reply(conversation, `Encontré esta cita registrada a tu nombre:\n\nA. ${c.codigo_cita} — ${c.fecha_cita} — ${c.etiqueta_horario || c.hora_inicio} — ${c.direccion_cita}\n\nPor favor responde con la letra de la cita que deseas gestionar.`, { paso_actual: 'seleccionando_cita_identidad', subestado_flujo: 'opciones_cita_identidad', resumen: encodeTicketOptions([{ code: 'A', ticket: c.codigo_cita }]) });
+        return this.reply(conversation, `Encontré esta cita registrada a tu nombre:\n\n${c.codigo_cita} — ${c.fecha_cita} — ${c.etiqueta_horario || c.hora_inicio} — ${c.direccion_cita}\n\nElige esta cita para continuar.`, { paso_actual: 'seleccionando_cita_identidad', subestado_flujo: 'opciones_cita_identidad', resumen: encodeTicketOptions([{ code: 'A', ticket: c.codigo_cita }]) });
       }
       const options = citas.slice(0, 5).map((c, i) => ({ code: String.fromCharCode(65 + i), ticket: c.codigo_cita, label: `${String.fromCharCode(65 + i)}. ${c.codigo_cita} — ${c.fecha_cita} — ${c.etiqueta_horario || c.hora_inicio} — ${c.direccion_cita}` }));
-      return this.reply(conversation, `Encontré estas citas registradas a tu nombre:\n\n${options.map(x => x.label).join('\n')}\n\nPor favor responde con la letra de la cita que deseas gestionar.`, { paso_actual: 'seleccionando_cita_identidad', subestado_flujo: 'opciones_cita_identidad', resumen: encodeTicketOptions(options) });
+      return this.reply(conversation, `Encontré estas citas registradas a tu nombre:\n\n${options.map(x => x.label).join('\n')}\n\nElige la cita que deseas gestionar.`, { paso_actual: 'seleccionando_cita_identidad', subestado_flujo: 'opciones_cita_identidad', resumen: encodeTicketOptions(options) });
     }
 
     if (step === 'sin_citas_encontradas') {
-      if (!letter) return this.reply(conversation, 'No pude encontrar citas registradas con esos datos.\n\nSi deseas, puedes elegir una de estas opciones:\n\nA. Intentar nuevamente\nB. Ir al menú principal\n\nPor favor responde con la letra de la opción que deseas.');
+      if (!letter) return this.reply(conversation, 'Elige una de las opciones para continuar.');
       if (letter === 'A') return this.reply(conversation, ticketRequestPrompt(conversation.accion_ticket_actual || 'gestionar'), { paso_actual: 'gestion_ticket', subestado_flujo: 'esperando_ticket', accion_ticket_actual: conversation.accion_ticket_actual || null });
       if (letter === 'B') return this.reply(conversation, MENU, { paso_actual: 'menu_principal', subestado_flujo: 'sin_citas_menu', estado_conversacion: 'open', resumen: null, requiere_handoff: false, motivo_handoff: null, intencion_principal: null });
     }
@@ -2820,15 +2870,15 @@ export class ChatbotEngine {
     if (step === 'seleccionando_cita_identidad') {
       const options = decodeTicketOptions(conversation.resumen || '');
       const chosen = options.find(x => x.code === letter);
-      if (!chosen) return this.reply(conversation, 'Por favor responde con la letra de la cita que deseas gestionar.');
+      if (!chosen) return this.reply(conversation, 'Elige una cita de la lista para continuar.');
       const rows = await this.sb.select('citas', `codigo_cita=eq.${encodeURIComponent(chosen.ticket)}&select=*`);
       if (!rows.length) return this.reply(conversation, 'No pude encontrar esa cita. Vuelve a intentarlo con tu ticket.', { paso_actual: 'gestion_ticket', subestado_flujo: 'esperando_ticket' });
       const cita = rows[0];
-      return this.reply(conversation, `Encontré esta cita registrada:\n\nTicket: ${cita.codigo_cita}\nFecha: ${cita.fecha_cita}\nHora: ${cita.etiqueta_horario || cita.hora_inicio}\nDirección: ${cita.direccion_cita}\n\n¿Confirmas que esta es la cita que deseas gestionar?\n\nA. Sí\nB. No\n\nPor favor responde con la letra de la opción que deseas.`, { paso_actual: 'confirmando_ticket', subestado_flujo: cita.codigo_cita });
+      return this.reply(conversation, `Encontré esta cita registrada:\n\nTicket: ${cita.codigo_cita}\nFecha: ${cita.fecha_cita}\nHora: ${cita.etiqueta_horario || cita.hora_inicio}\nDirección: ${cita.direccion_cita}\n\n¿Confirmas que esta es la cita que deseas gestionar?`, { paso_actual: 'confirmando_ticket', subestado_flujo: cita.codigo_cita });
     }
 
     if (step === 'confirmando_ticket') {
-      if (!letter) return this.reply(conversation, 'Por favor responde con A o B.');
+      if (!letter) return this.reply(conversation, 'Elige una de las opciones para continuar.');
       if (letter === 'A') {
         if (conversation.accion_ticket_actual === 'reschedule') {
           const ticket = conversation.subestado_flujo;
@@ -2944,7 +2994,7 @@ export class ChatbotEngine {
       } catch (error) {
         console.error('publishTechVisit failed after reschedule:', error);
       }
-      return this.reply(conversation, finalConfirmation({ ticket: old.codigo_cita, dateLabel: chosen.dateLabel, hourLabel: chosen.hourLabel, address: `${old.direccion_cita} ${old.distrito_cita} ${old.provincia_cita}` }), { paso_actual: 'cita_reprogramada', subestado_flujo: old.codigo_cita, estado_conversacion: 'closed', cerrada_en: new Date().toISOString() });
+      return this.reply(conversation, finalConfirmation({ ticket: old.codigo_cita, dateLabel: chosen.dateLabel, hourLabel: chosen.hourLabel, address: `${old.direccion_cita} ${old.distrito_cita} ${old.provincia_cita}`, country: inferCountryFromZone(old.zona_cliente || old.provincia_cita || '') === 'CO' ? 'CO' : null, kind: 'rescheduled' }), { paso_actual: 'cita_reprogramada', subestado_flujo: old.codigo_cita, estado_conversacion: 'closed', cerrada_en: new Date().toISOString() });
     }
 
     if (step === 'seleccionando_hora_reprogramacion') {
@@ -2993,7 +3043,7 @@ export class ChatbotEngine {
       } catch (error) {
         console.error('publishTechVisit failed after reschedule:', error);
       }
-      return this.reply(conversation, finalConfirmation({ ticket: old.codigo_cita, dateLabel: data.dateLabel, hourLabel: chosen.label, address: `${old.direccion_cita} ${old.distrito_cita} ${old.provincia_cita}` }), { paso_actual: 'cita_reprogramada', subestado_flujo: old.codigo_cita, estado_conversacion: 'closed', cerrada_en: new Date().toISOString() });
+      return this.reply(conversation, finalConfirmation({ ticket: old.codigo_cita, dateLabel: data.dateLabel, hourLabel: chosen.label, address: `${old.direccion_cita} ${old.distrito_cita} ${old.provincia_cita}`, country: inferCountryFromZone(old.zona_cliente || old.provincia_cita || '') === 'CO' ? 'CO' : null, kind: 'rescheduled' }), { paso_actual: 'cita_reprogramada', subestado_flujo: old.codigo_cita, estado_conversacion: 'closed', cerrada_en: new Date().toISOString() });
     }
 
     return this.reply(conversation, MENU, { paso_actual: 'menu_principal', subestado_flujo: 'fallback' });

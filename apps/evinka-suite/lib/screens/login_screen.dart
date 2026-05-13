@@ -6,14 +6,11 @@ class LoginScreen extends StatefulWidget {
   const LoginScreen({
     super.key,
     required this.onLogin,
-    required this.onRequestAccess,
-    this.initialEmail = '',
+    this.initialIdentifier = '',
   });
 
-  final Future<void> Function(String email, String password) onLogin;
-  final Future<String> Function(String name, String email, String password)
-      onRequestAccess;
-  final String initialEmail;
+  final Future<void> Function(String identifier, String secret) onLogin;
+  final String initialIdentifier;
 
   @override
   State<LoginScreen> createState() => _LoginScreenState();
@@ -21,29 +18,21 @@ class LoginScreen extends StatefulWidget {
 
 class _LoginScreenState extends State<LoginScreen> {
   final _formKey = GlobalKey<FormState>();
-  late final TextEditingController _emailCtrl;
-  final _passwordCtrl = TextEditingController();
-  final _requestNameCtrl = TextEditingController();
-  final _requestEmailCtrl = TextEditingController();
-  final _requestPasswordCtrl = TextEditingController();
+  late final TextEditingController _identifierCtrl;
+  final _secretCtrl = TextEditingController();
   bool _loading = false;
   bool _obscure = true;
-  bool _showRequest = false;
-  bool _requestObscure = true;
 
   @override
   void initState() {
     super.initState();
-    _emailCtrl = TextEditingController(text: widget.initialEmail);
+    _identifierCtrl = TextEditingController(text: widget.initialIdentifier);
   }
 
   @override
   void dispose() {
-    _emailCtrl.dispose();
-    _passwordCtrl.dispose();
-    _requestNameCtrl.dispose();
-    _requestEmailCtrl.dispose();
-    _requestPasswordCtrl.dispose();
+    _identifierCtrl.dispose();
+    _secretCtrl.dispose();
     super.dispose();
   }
 
@@ -51,7 +40,7 @@ class _LoginScreenState extends State<LoginScreen> {
     if (!_formKey.currentState!.validate()) return;
     setState(() => _loading = true);
     try {
-      await widget.onLogin(_emailCtrl.text.trim(), _passwordCtrl.text);
+      await widget.onLogin(_identifierCtrl.text.trim(), _secretCtrl.text);
     } catch (e) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
@@ -62,51 +51,12 @@ class _LoginScreenState extends State<LoginScreen> {
     }
   }
 
-  Future<void> _submitRequest() async {
-    if ((_requestNameCtrl.text).trim().isEmpty) {
-      _showMessage('Ingresa tu nombre.');
-      return;
-    }
-    final email = _requestEmailCtrl.text.trim();
-    if (email.isEmpty || !email.contains('@')) {
-      _showMessage('Ingresa un correo válido.');
-      return;
-    }
-    if (_requestPasswordCtrl.text.length < 10) {
-      _showMessage('La contraseña debe tener al menos 10 caracteres.');
-      return;
-    }
-    setState(() => _loading = true);
-    try {
-      final message = await widget.onRequestAccess(
-        _requestNameCtrl.text,
-        email,
-        _requestPasswordCtrl.text,
-      );
-      if (!mounted) return;
-      _showMessage(message);
-      setState(() => _showRequest = false);
-      _requestNameCtrl.clear();
-      _requestEmailCtrl.clear();
-      _requestPasswordCtrl.clear();
-    } catch (e) {
-      _showMessage(e.toString().replaceFirst('Exception: ', ''));
-    } finally {
-      if (mounted) setState(() => _loading = false);
-    }
-  }
-
-  void _showMessage(String message) {
-    if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text(message)),
-    );
-  }
-
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final isDark = theme.brightness == Brightness.dark;
+    final brandAsset =
+        isDark ? 'assets/logo_dark.png' : 'assets/logo_light.png';
     return Scaffold(
       body: Container(
         decoration: BoxDecoration(
@@ -135,7 +85,8 @@ class _LoginScreenState extends State<LoginScreen> {
                 child: Card(
                   elevation: 18,
                   shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(28)),
+                    borderRadius: BorderRadius.circular(28),
+                  ),
                   child: Padding(
                     padding: const EdgeInsets.all(28),
                     child: Form(
@@ -147,22 +98,30 @@ class _LoginScreenState extends State<LoginScreen> {
                             children: [
                               ClipRRect(
                                 borderRadius: BorderRadius.circular(18),
-                                child: Image.asset('assets/logo.png',
-                                    width: 64, height: 64, fit: BoxFit.cover),
+                                child: Image.asset(
+                                  brandAsset,
+                                  width: 64,
+                                  height: 64,
+                                  fit: BoxFit.cover,
+                                ),
                               ),
                               const SizedBox(width: 16),
                               Expanded(
                                 child: Column(
                                   crossAxisAlignment: CrossAxisAlignment.start,
                                   children: [
-                                    Text('EVINKA Suite',
-                                        style: theme.textTheme.headlineSmall
-                                            ?.copyWith(
-                                                fontWeight: FontWeight.w800)),
+                                    Text(
+                                      'EVINKA Suite',
+                                      style: theme.textTheme.headlineSmall
+                                          ?.copyWith(
+                                        fontWeight: FontWeight.w800,
+                                      ),
+                                    ),
                                     const SizedBox(height: 4),
                                     Text(
-                                        'Cotizador + conformidad + control comercial',
-                                        style: theme.textTheme.bodyMedium),
+                                      'Ingreso rápido por código + PIN',
+                                      style: theme.textTheme.bodyMedium,
+                                    ),
                                   ],
                                 ),
                               ),
@@ -181,32 +140,38 @@ class _LoginScreenState extends State<LoginScreen> {
                           ),
                           const SizedBox(height: 28),
                           TextFormField(
-                            controller: _emailCtrl,
-                            keyboardType: TextInputType.emailAddress,
-                            decoration:
-                                const InputDecoration(labelText: 'Correo'),
+                            controller: _identifierCtrl,
+                            textCapitalization: TextCapitalization.characters,
+                            decoration: const InputDecoration(
+                              labelText: 'Código',
+                              hintText: 'Ej. TEC014',
+                            ),
                             validator: (value) =>
                                 (value == null || value.trim().isEmpty)
-                                    ? 'Ingresa tu correo'
+                                    ? 'Ingresa tu código'
                                     : null,
                           ),
                           const SizedBox(height: 16),
                           TextFormField(
-                            controller: _passwordCtrl,
+                            controller: _secretCtrl,
+                            keyboardType: TextInputType.number,
                             obscureText: _obscure,
                             decoration: InputDecoration(
-                              labelText: 'Contraseña',
+                              labelText: 'PIN',
+                              hintText: '4 a 8 dígitos',
                               suffixIcon: IconButton(
                                 onPressed: () =>
                                     setState(() => _obscure = !_obscure),
-                                icon: Icon(_obscure
-                                    ? Icons.visibility_outlined
-                                    : Icons.visibility_off_outlined),
+                                icon: Icon(
+                                  _obscure
+                                      ? Icons.visibility_outlined
+                                      : Icons.visibility_off_outlined,
+                                ),
                               ),
                             ),
                             validator: (value) =>
                                 (value == null || value.isEmpty)
-                                    ? 'Ingresa tu contraseña'
+                                    ? 'Ingresa tu PIN'
                                     : null,
                             onFieldSubmitted: (_) => _submit(),
                           ),
@@ -218,91 +183,40 @@ class _LoginScreenState extends State<LoginScreen> {
                                     width: 18,
                                     height: 18,
                                     child: CircularProgressIndicator(
-                                        strokeWidth: 2),
+                                      strokeWidth: 2,
+                                    ),
                                   )
                                 : const Icon(Icons.login),
                             label: Text(_loading ? 'Entrando...' : 'Entrar'),
                           ),
-                          const SizedBox(height: 12),
-                          OutlinedButton.icon(
-                            onPressed: _loading
-                                ? null
-                                : () => setState(
-                                    () => _showRequest = !_showRequest),
-                            icon: const Icon(Icons.verified_user_outlined),
-                            label: Text(_showRequest
-                                ? 'Ocultar solicitud'
-                                : 'Solicitar acceso corporativo'),
-                          ),
-                          if (_showRequest) ...[
-                            const SizedBox(height: 18),
-                            Container(
-                              padding: const EdgeInsets.all(16),
-                              decoration: BoxDecoration(
-                                color: isDark
-                                    ? const Color(0xFF1C1916)
-                                    : const Color(0xFFF5F0E8),
-                                borderRadius: BorderRadius.circular(20),
-                                border:
-                                    Border.all(color: const Color(0x22C7A06A)),
-                              ),
-                              child: Column(
-                                crossAxisAlignment: CrossAxisAlignment.stretch,
-                                children: [
-                                  Text(
-                                    'Acceso para personal EVINKA',
-                                    style: theme.textTheme.titleMedium
-                                        ?.copyWith(fontWeight: FontWeight.w800),
-                                  ),
-                                  const SizedBox(height: 6),
-                                  Text(
-                                    'Solo para correos @evinka.tech. La cuenta queda pendiente hasta aprobación del admin.',
-                                    style: theme.textTheme.bodySmall,
-                                  ),
-                                  const SizedBox(height: 14),
-                                  TextField(
-                                    controller: _requestNameCtrl,
-                                    decoration: const InputDecoration(
-                                        labelText: 'Nombre completo'),
-                                  ),
-                                  const SizedBox(height: 12),
-                                  TextField(
-                                    controller: _requestEmailCtrl,
-                                    keyboardType: TextInputType.emailAddress,
-                                    decoration: const InputDecoration(
-                                        labelText: 'Correo corporativo'),
-                                  ),
-                                  const SizedBox(height: 12),
-                                  TextField(
-                                    controller: _requestPasswordCtrl,
-                                    obscureText: _requestObscure,
-                                    decoration: InputDecoration(
-                                      labelText: 'Contraseña',
-                                      suffixIcon: IconButton(
-                                        onPressed: () => setState(() =>
-                                            _requestObscure = !_requestObscure),
-                                        icon: Icon(_requestObscure
-                                            ? Icons.visibility_outlined
-                                            : Icons.visibility_off_outlined),
-                                      ),
-                                    ),
-                                  ),
-                                  const SizedBox(height: 14),
-                                  FilledButton(
-                                    onPressed: _loading ? null : _submitRequest,
-                                    child: Text(_loading
-                                        ? 'Enviando...'
-                                        : 'Enviar solicitud'),
-                                  ),
-                                ],
+                          const SizedBox(height: 16),
+                          Container(
+                            padding: const EdgeInsets.all(16),
+                            decoration: BoxDecoration(
+                              color: isDark
+                                  ? const Color(0xFF1C1916)
+                                  : const Color(0xFFF5F0E8),
+                              borderRadius: BorderRadius.circular(20),
+                              border: Border.all(
+                                color: const Color(0x22C7A06A),
                               ),
                             ),
-                          ],
-                          const SizedBox(height: 14),
-                          Text(
-                            'Login técnico/admin conectado al backend actual. Las cuentas nuevas @evinka.tech ahora pasan por aprobación manual.',
-                            style: theme.textTheme.bodySmall,
-                            textAlign: TextAlign.center,
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  '¿No tienes código o PIN?',
+                                  style: theme.textTheme.titleMedium?.copyWith(
+                                    fontWeight: FontWeight.w800,
+                                  ),
+                                ),
+                                const SizedBox(height: 6),
+                                Text(
+                                  'El administrador crea la cuenta y te asigna el código y el PIN. Después del primer ingreso online, la app puede volver a abrir sin internet.',
+                                  style: theme.textTheme.bodySmall,
+                                ),
+                              ],
+                            ),
                           ),
                         ],
                       ),

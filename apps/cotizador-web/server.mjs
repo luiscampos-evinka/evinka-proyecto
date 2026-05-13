@@ -5,10 +5,10 @@ import crypto from 'crypto';
 import PDFDocument from 'pdfkit';
 import ExcelJS from 'exceljs';
 import { fileURLToPath } from 'url';
-import { loadEnv } from '../src/config.mjs';
-import { MicrosoftGraphClient } from '../src/microsoftGraph.mjs';
-import { SupabaseRest } from '../src/supabase.mjs';
-import { WhatsAppMetaClient } from '../src/whatsappMeta.mjs';
+import { loadEnv } from '../../src/config.mjs';
+import { MicrosoftGraphClient } from '../../src/microsoftGraph.mjs';
+import { SupabaseRest } from '../../src/supabase.mjs';
+import { WhatsAppMetaClient } from '../../src/whatsappMeta.mjs';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -36,7 +36,7 @@ const DISPLAY_TIME_ZONE = 'America/Lima';
 const PORT = Number(process.env.PORT || 3008);
 const MOBILE_APP_API_KEY = process.env.CONFORMITY_APP_API_KEY || 'EvinkaConformidad#2026';
 const BOT_VISITS_API_KEY = process.env.EVINKA_BOT_VISITS_API_KEY || 'EvinkaBotVisits#2026';
-const ALLOWED_CORPORATE_DOMAIN = 'evinka.tech';
+const ALLOWED_CORPORATE_DOMAINS = ['evinka.tech', 'nevperu.com'];
 const EXCEL_SOURCE_PATH = path.join('/root/.openclaw/workspace', 'Cotizador_EVINKA_validacion_v10.xlsx');
 const EMAIL_FROM_NAME = process.env.MICROSOFT_SENDER_NAME || 'EVINKA';
 const mailer = process.env.MICROSOFT_CLIENT_ID && process.env.MICROSOFT_CLIENT_SECRET && process.env.MICROSOFT_SENDER_EMAIL
@@ -88,17 +88,54 @@ app.get('/favicon.ico', (req, res) => {
   res.sendFile(path.join(assetsDir, 'favicon.png'));
 });
 
-app.get('/', (req, res) => {
+function serveAppShell(req, res) {
   res.type('html').send(fs.readFileSync(path.join(publicDir, 'index.html'), 'utf8'));
-});
+}
+
+app.get('/', serveAppShell);
+app.get('/chat', serveAppShell);
 app.get('/health', (req, res) => res.json({ ok: true }));
 
 app.post('/api/login', (req, res) => {
-  const { email, password } = req.body || {};
+  const body = req.body || {};
   const users = readUsers();
-  const user = users.find((u) => u.email.toLowerCase() === String(email || '').toLowerCase());
-  if (!user || !verifyPassword(String(password || ''), user.passwordHash)) {
-    return res.status(401).json({ error: 'Credenciales inválidas' });
+  const rawIdentifier = String(
+    body.identifier || body.employeeCode || body.code || body.email || '',
+  ).trim();
+  const secret = String(body.secret || body.pin || body.password || '').trim();
+
+  let user = null;
+  const normalizedCode = normalizeEmployeeCode(rawIdentifier);
+  const looksLikeEmail = rawIdentifier.includes('@');
+
+  if (normalizedCode && !looksLikeEmail) {
+    const candidate = users.find(
+      (item) => normalizeEmployeeCode(item.employeeCode) === normalizedCode,
+    );
+    if (candidate) {
+      if (!candidate.pinHash) {
+        return res.status(403).json({
+          error: 'Tu cuenta todavía no tiene PIN configurado. Pide al admin que lo active.',
+          status: 'pending_pin',
+        });
+      }
+      if (!verifyPassword(secret, candidate.pinHash)) {
+        return res.status(401).json({ error: 'Código o PIN inválido.' });
+      }
+      user = candidate;
+    }
+  }
+
+  if (!user && rawIdentifier) {
+    const email = normalizeEmail(rawIdentifier);
+    const candidate = users.find((item) => item.email.toLowerCase() === email);
+    if (candidate?.passwordHash && verifyPassword(secret, candidate.passwordHash)) {
+      user = candidate;
+    }
+  }
+
+  if (!user) {
+    return res.status(401).json({ error: 'Credenciales inválidas.' });
   }
   if (user.status !== 'active') {
     return res.status(403).json({
@@ -132,8 +169,8 @@ app.post('/api/register-request', (req, res) => {
   const password = String(body.password || '');
   if (!name) return res.status(400).json({ error: 'Falta el nombre.' });
   if (!isValidEmail(email)) return res.status(400).json({ error: 'Correo inválido.' });
-  if (!email.endsWith(`@${ALLOWED_CORPORATE_DOMAIN}`)) {
-    return res.status(400).json({ error: `Solo se permiten correos @${ALLOWED_CORPORATE_DOMAIN}.` });
+  if (!isAllowedCorporateEmail(email)) {
+    return res.status(400).json({ error: `Solo se permiten correos ${allowedCorporateDomainsLabel()}.` });
   }
   if (!isStrongPassword(password)) {
     return res.status(400).json({ error: 'La contraseña debe tener al menos 10 caracteres e incluir mayúscula, minúscula y número.' });
@@ -194,6 +231,89 @@ app.get('/api/admin/users', authRequired, adminOnly, (req, res) => {
   res.json(users);
 });
 
+app.post('/api/admin/users', authRequired, adminOnly, (req, res) => {
+  const body = req.body || {};
+  const name = String(body.name || '').trim();
+  const email = normalizeEmail(body.email || '');
+  const role = normalizeManagedUserRole(body.role || 'tech');
+  const status = normalizeUserStatus(body.status || 'active');
+  const requestedCode = normalizeEmployeeCode(body.employeeCode || '');
+  const pin = String(body.pin || '').trim();
+
+  if (!name) return res.status(400).json({ error: 'Falta el nombre.' });
+  if (email && !isValidEmail(email)) {
+    return res.status(400).json({ error: 'Correo inválido.' });
+  }
+  if (!isStrongPin(pin)) {
+    return res.status(400).json({ error: 'El PIN debe tener entre 4 y 8 dígitos.' });
+  }
+
+  const users = readUsers();
+  if (email && users.some((user) => normalizeEmail(user.email) === email)) {
+    return res.status(409).json({ error: 'Ese correo ya está registrado.' });
+  }
+
+  const employeeCode = requestedCode || nextEmployeeCode(users, role);
+  if (!isValidEmployeeCode(employeeCode)) {
+    return res.status(400).json({ error: 'Código inválido. Usa 3 a 20 caracteres A-Z, 0-9 o guion.' });
+  }
+  if (users.some((user) => normalizeEmployeeCode(user.employeeCode) === employeeCode)) {
+    return res.status(409).json({ error: 'Ese código ya está en uso.' });
+  }
+
+  const now = new Date().toISOString();
+  const user = normalizeUserRecord({
+    id: `usr-${Date.now()}`,
+    name,
+    email,
+    role,
+    status,
+    employeeCode,
+    pinHash: hashPassword(pin),
+    pinUpdatedAt: now,
+    passwordHash: '',
+    requestedAt: now,
+    accessGrantedAt: status === 'active' ? now : '',
+    approvedBy: safeUser(req.user),
+  });
+  users.push(user);
+  writeUsers(users);
+  res.status(201).json({ ok: true, user: safeUser(user) });
+});
+
+app.patch('/api/admin/users/:id/credentials', authRequired, adminOnly, (req, res) => {
+  const users = readUsers();
+  const index = users.findIndex((user) => user.id === req.params.id);
+  if (index < 0) return res.status(404).json({ error: 'Usuario no encontrado' });
+
+  const body = req.body || {};
+  const nextCode = body.employeeCode === undefined
+    ? normalizeEmployeeCode(users[index].employeeCode)
+    : normalizeEmployeeCode(body.employeeCode);
+  const nextPin = body.pin === undefined ? '' : String(body.pin || '').trim();
+
+  if (!isValidEmployeeCode(nextCode)) {
+    return res.status(400).json({ error: 'Código inválido. Usa 3 a 20 caracteres A-Z, 0-9 o guion.' });
+  }
+  if (users.some((user, userIndex) => userIndex !== index && normalizeEmployeeCode(user.employeeCode) === nextCode)) {
+    return res.status(409).json({ error: 'Ese código ya está en uso.' });
+  }
+  if (body.pin !== undefined && !isStrongPin(nextPin)) {
+    return res.status(400).json({ error: 'El PIN debe tener entre 4 y 8 dígitos.' });
+  }
+
+  users[index] = normalizeUserRecord({
+    ...users[index],
+    employeeCode: nextCode,
+    pinHash: body.pin === undefined ? users[index].pinHash : hashPassword(nextPin),
+    pinUpdatedAt: body.pin === undefined ? users[index].pinUpdatedAt : new Date().toISOString(),
+    approvedBy: safeUser(req.user),
+  });
+  writeUsers(users);
+  invalidateUserSessions(users[index].id);
+  res.json({ ok: true, user: safeUser(users[index]) });
+});
+
 app.patch('/api/admin/users/:id/access', authRequired, adminOnly, (req, res) => {
   const users = readUsers();
   const index = users.findIndex((user) => user.id === req.params.id);
@@ -206,7 +326,7 @@ app.patch('/api/admin/users/:id/access', authRequired, adminOnly, (req, res) => 
   }
   users[index] = normalizeUserRecord({
     ...users[index],
-    role: ['admin', 'tech', 'supervisor'].includes(role) ? role : 'tech',
+    role: normalizeManagedUserRole(role),
     status: action === 'approve' ? 'active' : 'blocked',
     accessGrantedAt: action === 'approve' ? new Date().toISOString() : '',
     approvedBy: safeUser(req.user),
@@ -530,21 +650,122 @@ app.get('/api/quotes/:id', authRequired, (req, res) => {
   res.json(quote);
 });
 
+app.get('/api/installation-orders', authRequired, (req, res) => {
+  const user = req.user;
+  const orders = readJSON(files.installationOrders, [])
+    .filter((order) => canUserSeeAllOperations(user)
+      || normalizeEmail(order.assignedTechEmail) === normalizeEmail(user?.email))
+    .sort((a, b) => String(b.updatedAt || b.createdAt || '').localeCompare(String(a.updatedAt || a.createdAt || '')));
+  res.json(orders);
+});
+
 app.get('/api/installation-orders/:id', authRequired, (req, res) => {
   const order = readJSON(files.installationOrders, []).find((item) => item.id === req.params.id);
   if (!order) return res.status(404).json({ error: 'Orden no encontrada' });
+  if (!canUserSeeAllOperations(req.user)
+    && normalizeEmail(order.assignedTechEmail) !== normalizeEmail(req.user?.email)) {
+    return res.status(403).json({ error: 'No tienes permiso para ver esta orden' });
+  }
   res.json(order);
 });
 
 app.get('/api/tech/visits', authRequired, async (req, res) => {
   const visits = (await syncTechVisitsFromCalendar())
-    .filter((visit) => req.user?.role === 'admin' || normalizeEmail(visit.assignedTechEmail) === normalizeEmail(req.user?.email))
+    .filter((visit) => canUserSeeAllOperations(req.user)
+      || normalizeEmail(visit.assignedTechEmail) === normalizeEmail(req.user?.email))
     .sort((a, b) => {
       const dateA = String(a.scheduledAt || a.createdAt || '');
       const dateB = String(b.scheduledAt || b.createdAt || '');
       return dateA.localeCompare(dateB);
     });
   res.json(visits);
+});
+
+app.get('/api/conformities', authRequired, (req, res) => {
+  const user = req.user;
+  const canSeeAll = canUserSeeAllOperations(user);
+  const userEmail = normalizeEmail(user?.email);
+  const orders = readJSON(files.installationOrders, []);
+  const visits = readJSON(files.techVisits, []).map(normalizeTechVisit);
+  const allowedOrderIds = new Set(
+    orders
+      .filter((order) => canSeeAll || normalizeEmail(order.assignedTechEmail) === userEmail)
+      .map((order) => String(order.id || '').trim())
+      .filter(Boolean),
+  );
+  const allowedQuoteIds = new Set(
+    visits
+      .filter((visit) => canSeeAll || normalizeEmail(visit.assignedTechEmail) === userEmail)
+      .map((visit) => String(visit.quoteId || '').trim())
+      .filter(Boolean),
+  );
+  const conformities = readJSON(files.conformities, [])
+    .filter((item) => canSeeAll
+      || allowedOrderIds.has(String(item.installationOrderId || '').trim())
+      || allowedQuoteIds.has(String(item.quoteId || '').trim()))
+    .map((item) => ({
+      id: String(item.id || '').trim(),
+      installationOrderId: String(item.installationOrderId || '').trim(),
+      quoteId: String(item.quoteId || '').trim(),
+      clientName: String(item.clientName || '').trim(),
+      clientEmail: normalizeEmail(item.clientEmail || ''),
+      ruc: String(item.ruc || '').trim(),
+      address: String(item.address || '').trim(),
+      chargerBrand: String(item.chargerBrand || '').trim(),
+      serialNumber: String(item.serialNumber || '').trim(),
+      voltage: String(item.voltage || '').trim(),
+      amperage: String(item.amperage || '').trim(),
+      powerKw: String(item.powerKw || '').trim(),
+      observations: String(item.observations || '').trim(),
+      deliveredItems: Array.isArray(item.deliveredItems) ? item.deliveredItems : [],
+      photoUrls: Array.isArray(item.photoUrls) ? item.photoUrls : [],
+      pdfUrl: String(item.pdfUrl || '').trim(),
+      hasPdfBase64: Boolean(String(item.pdfBase64 || '').trim()),
+      status: String(item.status || 'pdf_generated').trim(),
+      createdAt: String(item.createdAt || '').trim(),
+      createdBy: String(item.createdBy || '').trim(),
+      emailDelivery: item.emailDelivery || null,
+    }))
+    .sort((a, b) => String(b.createdAt || '').localeCompare(String(a.createdAt || '')));
+  res.json(conformities);
+});
+
+app.get('/api/conformities/:id/pdf', authRequired, async (req, res) => {
+  const user = req.user;
+  const canSeeAll = canUserSeeAllOperations(user);
+  const orders = readJSON(files.installationOrders, []);
+  const visits = readJSON(files.techVisits, []).map(normalizeTechVisit);
+  const conformity = readJSON(files.conformities, []).find((item) => String(item.id || '').trim() === req.params.id);
+  if (!conformity) return res.status(404).json({ error: 'Conformidad no encontrada' });
+
+  const order = orders.find((item) => String(item.id || '').trim() === String(conformity.installationOrderId || '').trim());
+  const sameTechByOrder = normalizeEmail(order?.assignedTechEmail) === normalizeEmail(user?.email);
+  const sameTechByVisit = visits.some((visit) => String(visit.installationOrderId || '').trim() === String(conformity.installationOrderId || '').trim()
+    && normalizeEmail(visit.assignedTechEmail) === normalizeEmail(user?.email));
+  if (!canSeeAll && !sameTechByOrder && !sameTechByVisit) {
+    return res.status(403).json({ error: 'No tienes permiso para ver esta conformidad' });
+  }
+
+  const pdfBase64 = String(conformity.pdfBase64 || '').trim();
+  if (pdfBase64) {
+    try {
+      const buffer = Buffer.from(pdfBase64, 'base64');
+      res.setHeader('Content-Type', 'application/pdf');
+      res.setHeader('Content-Disposition', `inline; filename="Conformidad_${String(conformity.installationOrderId || conformity.id || 'EVINKA')}.pdf"`);
+      return res.end(buffer);
+    } catch (error) {
+      return res.status(500).json({ error: `No pude decodificar el PDF: ${error?.message || error}` });
+    }
+  }
+
+  const pdfUrl = String(conformity.pdfUrl || '').trim();
+  if (!pdfUrl) {
+    return res.status(404).json({ error: 'Esta conformidad no tiene PDF disponible.' });
+  }
+  if (pdfUrl.startsWith('/')) {
+    return res.redirect(pdfUrl);
+  }
+  return res.redirect(pdfUrl);
 });
 
 app.patch('/api/tech/visits/:id', authRequired, async (req, res) => {
@@ -599,7 +820,7 @@ app.post('/api/internal/tech-visits', internalBotAuth, (req, res) => {
   }
 
   const visits = readJSON(files.techVisits, []);
-  const techs = readUsers().filter((user) => user.role === 'tech' && user.status === 'active');
+  const techs = readUsers().filter((user) => isTechAssignableUser(user) && user.status === 'active');
   const assignedEmail = normalizeEmail(body.assignedTechEmail || techs[0]?.email || '');
   const assignedTech = techs.find((user) => normalizeEmail(user.email) === assignedEmail);
   const createdAt = new Date().toISOString();
@@ -815,6 +1036,9 @@ function safeUser(user) {
     id: user.id,
     name: user.name,
     email: user.email,
+    employeeCode: user.employeeCode || '',
+    hasPin: Boolean(user.pinHash),
+    pinUpdatedAt: user.pinUpdatedAt || '',
     role: user.role,
     status: user.status || 'active',
     requestedAt: user.requestedAt || '',
@@ -893,7 +1117,7 @@ async function syncTechVisitsFromCalendar() {
     return stored;
   }
 
-  const techs = readUsers().filter((user) => user.role === 'tech' && user.status === 'active');
+  const techs = readUsers().filter((user) => isTechAssignableUser(user) && user.status === 'active');
   const defaultTech = techs.find((user) => normalizeEmail(user.email) === TECH_VISITS_DEFAULT_EMAIL)
     || techs.find((user) => normalizeEmail(user.email) === 'luis.campos@evinka.tech')
     || techs[0]
@@ -1200,6 +1424,9 @@ function buildAppConfig() {
       ...stored.defaults,
       factorGeneralCosts: Number(stored.defaults?.factorGeneralCosts || 1),
       divisorMargin: Number(stored.defaults?.divisorMargin || 0.75),
+      chargerExchangeRate: Number(stored.defaults?.chargerExchangeRate || 3.75),
+      miniboxPriceUsd: Number(stored.defaults?.miniboxPriceUsd || 700),
+      alienPriceUsd: Number(stored.defaults?.alienPriceUsd || 900),
     };
     return {
       ...stored,
@@ -1213,16 +1440,20 @@ function buildAppConfig() {
     ...stored.defaults,
     factorGeneralCosts: Number(stored.defaults?.factorGeneralCosts ?? EXCEL_SOURCE.defaults.factorGeneralCosts ?? 1),
     divisorMargin: Number(stored.defaults?.divisorMargin ?? EXCEL_SOURCE.defaults.divisorMargin ?? 0.75),
+    chargerExchangeRate: Number(stored.defaults?.chargerExchangeRate ?? EXCEL_SOURCE.defaults?.chargerExchangeRate ?? 3.75),
+    miniboxPriceUsd: Number(stored.defaults?.miniboxPriceUsd ?? EXCEL_SOURCE.defaults?.miniboxPriceUsd ?? 700),
+    alienPriceUsd: Number(stored.defaults?.alienPriceUsd ?? EXCEL_SOURCE.defaults?.alienPriceUsd ?? 900),
   };
   const items = Array.isArray(stored.catalog?.items) && stored.catalog.items.length
     ? stored.catalog.items
     : EXCEL_SOURCE.catalog.items;
+  const roles = [...new Set([...(stored.roles?.length ? stored.roles : ['admin', 'tech']), 'tecnico_supervisor'])];
   return {
     company: { ...EXCEL_SOURCE.company, ...stored.company },
     currency: 'PEN',
     defaults,
     commercialProfiles: normalizeCommercialProfiles(stored.commercialProfiles, defaults.divisorMargin),
-    roles: stored.roles?.length ? stored.roles : ['admin', 'tech'],
+    roles,
     catalog: buildCatalogFromItems(items, defaults),
   };
 }
@@ -1418,7 +1649,7 @@ function buildQuote(payload, config, user) {
   const tubeType = String(payload.tubeType || 'EMT').toUpperCase();
   const propertyType = String(payload.propertyType || 'Casa').trim();
   const cable = effectiveConfig.catalog.cables.find((item) => item.id === payload.cableId) || pickCableByDistance(distance, effectiveConfig.catalog.cables, effectiveConfig.defaults);
-  const charger = resolveChargerSelection(payload);
+  const charger = resolveChargerSelection(payload, config);
 
   const mandatoryRows = computeMandatoryRows(distance, tubeType, cable, effectiveConfig);
   const conditionalRows = computeConditionalRows(payload.conditionals, effectiveConfig);
@@ -1788,21 +2019,46 @@ function publicBaseUrl(req) {
 }
 
 const CHARGER_CATALOG = {
-  minibox: { code: 'EVK-CHG-MINIBOX', label: 'Cargador EVINKA MiniBox', priceUsd: 700 },
-  alien: { code: 'EVK-CHG-ALIEN', label: 'Cargador EVINKA Alien', priceUsd: 900 },
+  minibox: { code: 'EVK-CHG-MINIBOX', label: 'Cargador EVINKA MiniBox' },
+  alien: { code: 'EVK-CHG-ALIEN', label: 'Cargador EVINKA Alien X' },
 };
 
-function resolveChargerSelection(payload = {}) {
+function resolveChargerSelection(payload = {}, config = buildAppConfig()) {
+  const included = payload.chargerIncluded === true
+    || String(payload.chargerIncluded || '').trim().toLowerCase() === 'si'
+    || String(payload.chargerIncluded || '').trim().toLowerCase() === 'yes'
+    || String(payload.chargerIncluded || '').trim().toLowerCase() === 'true';
   const requestedModel = String(payload.chargerModel || '').trim().toLowerCase();
-  const selected = CHARGER_CATALOG[requestedModel] || CHARGER_CATALOG.minibox;
+  const selected = CHARGER_CATALOG[requestedModel] || null;
+  const customLabel = String(payload.chargerLabel || '').trim();
   const rawUsd = Number(payload.chargerPriceUsd);
   const rawFx = Number(payload.exchangeRate);
-  const priceUsd = Number.isFinite(rawUsd) && rawUsd > 0 ? rawUsd : Number(selected.priceUsd || 0);
-  const exchangeRate = Number.isFinite(rawFx) && rawFx > 0 ? rawFx : 3.75;
+  const defaultModelUsd = requestedModel === 'alien'
+    ? Number(config?.defaults?.alienPriceUsd ?? 900)
+    : Number(config?.defaults?.miniboxPriceUsd ?? 700);
+  const priceUsd = Number.isFinite(rawUsd) && rawUsd > 0
+    ? rawUsd
+    : (Number.isFinite(defaultModelUsd) ? defaultModelUsd : 0);
+  const defaultFx = Number(config?.defaults?.chargerExchangeRate ?? 3.75);
+  const exchangeRate = Number.isFinite(rawFx) && rawFx > 0
+    ? rawFx
+    : (Number.isFinite(defaultFx) ? defaultFx : 3.75);
+  if (!included) {
+    return {
+      included: false,
+      id: 'no-incluido',
+      code: 'EVK-CHG-NOINC',
+      label: 'Cargador no incluido',
+      priceUsd: 0,
+      exchangeRate: roundMoney(exchangeRate),
+      pricePen: 0,
+    };
+  }
   return {
-    id: requestedModel || 'minibox',
-    code: selected.code,
-    label: selected.label,
+    included: true,
+    id: requestedModel || 'incluido',
+    code: selected?.code || 'EVK-CHG-INCL',
+    label: customLabel || selected?.label || 'Cargador incluido',
     priceUsd: roundMoney(priceUsd),
     exchangeRate: roundMoney(exchangeRate),
     pricePen: roundMoney(priceUsd * exchangeRate),
@@ -1819,15 +2075,17 @@ function buildCommercialRows({ propertyType, minimumBase, additionalMeterage, co
       total: roundMoney(minimumBase),
       unit: 'UND',
     },
-    {
+  ];
+  if (charger?.included && Number(charger?.pricePen || 0) > 0) {
+    rows.push({
       code: charger.code,
       label: `${charger.label} · ref. US$ ${amount(charger.priceUsd)} · TC ${amount(charger.exchangeRate)}`,
       qty: 1,
       unitPrice: roundMoney(charger.pricePen),
       total: roundMoney(charger.pricePen),
       unit: 'UND',
-    },
-  ];
+    });
+  }
   if (additionalMeterage > 0) {
     rows.push({
       code: '0060001A',
@@ -2101,10 +2359,12 @@ function displayAdvisorName(value) {
 }
 
 function buildServiceParagraph(quote) {
-  const chargerLabel = quote?.charger?.label || 'cargador EVINKA';
-  const priceUsd = amount(quote?.charger?.priceUsd || 0);
-  const fx = amount(quote?.charger?.exchangeRate || 0);
-  return `Se plantea realizar la instalación eléctrica desde el punto de alimentación hasta la ubicación definida para el ${chargerLabel}, dentro del alcance del servicio estándar de instalación. Esta propuesta contempla la visita técnica, la ingeniería básica, el transporte, las protecciones, el tablero, la canalización, el cableado, la conexión final del sistema y el cargador con precio referencial de US$ ${priceUsd} calculado al tipo de cambio referencial ${fx}, para una instalación ordenada, segura y conforme a las normativas eléctricas vigentes.`;
+  const chargerIncluded = quote?.charger?.included === true;
+  const chargerLabel = quote?.charger?.label || 'cargador';
+  const chargerText = chargerIncluded
+    ? `, incluyendo ${chargerLabel} según definición comercial del proyecto,`
+    : ',';
+  return `Se plantea realizar la instalación eléctrica desde el punto de alimentación hasta la ubicación definida para el proyecto${chargerText} dentro del alcance del servicio estándar de instalación. Esta propuesta contempla la visita técnica, la ingeniería básica, el transporte, las protecciones, el tablero, la canalización, el cableado y la conexión final del sistema, para una instalación ordenada, segura y conforme a las normativas eléctricas vigentes.`;
 }
 
 function buildAdditionalParagraph(row, quote) {
@@ -2119,7 +2379,7 @@ function buildBaseIncludedScope({ propertyType, includedMeters, tubeType, cable,
   const isEdificio = String(propertyType || '').toUpperCase() === 'EDIFICIO';
   return [
     `Servicio estándar de instalación del cargador con visita técnica, ingeniería, transporte, movilidad y herramientas.`,
-    `${charger?.label || 'Cargador EVINKA'} incluido con precio referencial de US$ ${amount(charger?.priceUsd || 0)} (TC ref. ${amount(charger?.exchangeRate || 0)}).`,
+    charger?.included ? `${charger?.label || 'Cargador incluido'} contemplado según definición comercial del proyecto.` : null,
     `Tablero eléctrico, interruptor termomagnético de protección e interruptor diferencial tipo A.`,
     isEdificio ? 'Medidor digital para el esquema base de edificio.' : null,
     `Cableado de potencia y puesta a tierra dentro del alcance base de ${formatNumber(includedMeters)} m, usando cable ${cable?.label || '-'} y tubería ${tubeType || '-'}.`,
@@ -2157,6 +2417,10 @@ function buildObservationLines(quote) {
     'El servicio estándar contempla 1 día de trabajo y la participación de 2 electricistas.',
     'No se incluyen adecuaciones eléctricas adicionales al tablero ni infraestructura complementaria no detallada en esta propuesta.',
     'No se incluyen trabajos de pintura ni reposición de acabados.',
+    'Todo trabajo o adecuación no detallada expresamente en esta propuesta será considerado adicional y cotizado por separado.',
+    'El cliente autoriza el registro y uso de fotografías de la instalación y equipos con fines de soporte técnico, trazabilidad, capacitación y material comercial o publicitario, evitando divulgar información sensible.',
+    'La responsabilidad de EVINKA se limita al alcance del servicio contratado y al valor efectivamente pagado por el cliente.',
+    'Aplican las condiciones del Certificado de Garantía EVINKA entregado junto con la instalación.',
   ];
 }
 
@@ -2289,7 +2553,11 @@ function defaultConfig() {
       tagline: 'Cotizador web para técnicos y administración',
     },
     currency: 'PEN',
-    defaults: {},
+    defaults: {
+      chargerExchangeRate: 3.75,
+      miniboxPriceUsd: 700,
+      alienPriceUsd: 900,
+    },
     commercialProfiles: defaultCommercialProfiles(0.75),
     roles: ['admin', 'tech'],
     catalog: { services: [], cables: [], conditionals: [], items: [] },
@@ -2362,20 +2630,26 @@ function ensureSeedData() {
         id: 'admin',
         name: 'Admin EVINKA',
         email: process.env.COTIZADOR_ADMIN_EMAIL || 'admin@evinka.net',
+        employeeCode: 'ADM001',
         role: 'admin',
         status: 'active',
         requestedAt: new Date().toISOString(),
         accessGrantedAt: new Date().toISOString(),
+        pinHash: hashPassword(process.env.COTIZADOR_ADMIN_PIN || '1234'),
+        pinUpdatedAt: new Date().toISOString(),
         passwordHash: hashPassword(process.env.COTIZADOR_ADMIN_PASSWORD || 'Admin12345!'),
       },
       {
         id: 'tech',
         name: 'Técnico EVINKA',
         email: process.env.COTIZADOR_TECH_EMAIL || 'tecnico@evinka.net',
+        employeeCode: 'TEC001',
         role: 'tech',
         status: 'active',
         requestedAt: new Date().toISOString(),
         accessGrantedAt: new Date().toISOString(),
+        pinHash: hashPassword(process.env.COTIZADOR_TECH_PIN || '1234'),
+        pinUpdatedAt: new Date().toISOString(),
         passwordHash: hashPassword(process.env.COTIZADOR_TECH_PASSWORD || 'Tecnico12345!'),
       },
     ]);
@@ -2386,27 +2660,100 @@ function ensureSeedData() {
 }
 
 function readUsers() {
-  return readJSON(files.users, []).map(normalizeUserRecord);
+  return assignEmployeeCodes(readJSON(files.users, []).map(normalizeUserRecord));
 }
 
 function writeUsers(users) {
-  writeJSON(files.users, users.map(normalizeUserRecord));
+  writeJSON(files.users, assignEmployeeCodes(users.map(normalizeUserRecord)));
 }
 
 function normalizeUserRecord(user = {}) {
-  const role = String(user.role || 'tech').trim().toLowerCase() || 'tech';
+  const role = normalizeManagedUserRole(user.role || 'tech');
   const email = normalizeEmail(user.email || '');
   return {
     id: String(user.id || `usr-${Date.now()}`).trim(),
     name: String(user.name || '').trim(),
     email,
+    employeeCode: normalizeEmployeeCode(user.employeeCode || ''),
     role,
     status: normalizeUserStatus(user.status || 'active'),
     passwordHash: String(user.passwordHash || '').trim(),
+    pinHash: String(user.pinHash || '').trim(),
+    pinUpdatedAt: String(user.pinUpdatedAt || '').trim(),
     requestedAt: String(user.requestedAt || user.createdAt || '').trim(),
     accessGrantedAt: String(user.accessGrantedAt || '').trim(),
     approvedBy: user.approvedBy || null,
   };
+}
+
+function assignEmployeeCodes(users = []) {
+  const used = new Set();
+  return users.map((user) => {
+    let employeeCode = normalizeEmployeeCode(user.employeeCode || '');
+    if (!isValidEmployeeCode(employeeCode) || used.has(employeeCode)) {
+      employeeCode = nextEmployeeCode(users, user.role, used);
+    }
+    used.add(employeeCode);
+    return {
+      ...user,
+      employeeCode,
+    };
+  });
+}
+
+function normalizeEmployeeCode(value) {
+  return String(value || '')
+    .trim()
+    .toUpperCase()
+    .replace(/\s+/g, '')
+    .replace(/[^A-Z0-9-]/g, '');
+}
+
+function isValidEmployeeCode(value) {
+  return /^[A-Z0-9-]{3,20}$/.test(String(value || '').trim());
+}
+
+function nextEmployeeCode(users = [], role = 'tech', usedCodes = new Set()) {
+  const prefix = role === 'admin'
+    ? 'ADM'
+    : role === 'tecnico_supervisor'
+      ? 'SUP'
+      : 'TEC';
+  const normalizedUsed = new Set(
+    [
+      ...usedCodes,
+      ...users.map((user) => normalizeEmployeeCode(user.employeeCode)),
+    ].filter(Boolean),
+  );
+  let index = 1;
+  while (index < 10000) {
+    const candidate = `${prefix}${String(index).padStart(3, '0')}`;
+    if (!normalizedUsed.has(candidate)) return candidate;
+    index += 1;
+  }
+  return `${prefix}${Date.now().toString().slice(-6)}`;
+}
+
+function normalizeManagedUserRole(value) {
+  const role = String(value || 'tech').trim().toLowerCase().replace(/[\s-]+/g, '_');
+  if (role === 'admin') return 'admin';
+  if (['supervisor', 'tecnico_supervisor', 'supervisor_tecnico', 'tech_supervisor', 'technical_supervisor'].includes(role)) {
+    return 'tecnico_supervisor';
+  }
+  return 'tech';
+}
+
+function isTechAssignableUser(user = {}) {
+  return normalizeManagedUserRole(user.role || 'tech') === 'tech'
+    || normalizeManagedUserRole(user.role || 'tech') === 'tecnico_supervisor';
+}
+
+function canUserSeeAllOperations(user = {}) {
+  const role = normalizeManagedUserRole(user.role || 'tech');
+  const email = normalizeEmail(user.email || '');
+  return role === 'admin'
+    || role === 'tecnico_supervisor'
+    || email === 'luis.campos@evinka.tech';
 }
 
 function normalizeUserStatus(value) {
@@ -2414,10 +2761,14 @@ function normalizeUserStatus(value) {
   return ['pending', 'active', 'blocked'].includes(status) ? status : 'active';
 }
 
+function isStrongPin(value) {
+  return /^\d{4,8}$/.test(String(value || '').trim());
+}
+
 function defaultTechVisits() {
   const users = readUsers();
   const orders = readJSON(files.installationOrders, []);
-  const techs = users.filter((user) => user.role === 'tech');
+  const techs = users.filter((user) => isTechAssignableUser(user));
   const luis = techs.find((user) => normalizeEmail(user.email) === 'luis.campos@evinka.tech') || techs[0];
   const fallbackTech = techs[1] || techs[0] || {};
   const now = new Date();
@@ -2498,6 +2849,15 @@ function writeJSON(file, data) {
 
 function normalizeEmail(value) {
   return String(value || '').trim().toLowerCase();
+}
+
+function isAllowedCorporateEmail(email) {
+  const normalized = normalizeEmail(email);
+  return ALLOWED_CORPORATE_DOMAINS.some((domain) => normalized.endsWith(`@${domain}`));
+}
+
+function allowedCorporateDomainsLabel() {
+  return ALLOWED_CORPORATE_DOMAINS.map((domain) => `@${domain}`).join(' o ');
 }
 
 function isValidEmail(value) {

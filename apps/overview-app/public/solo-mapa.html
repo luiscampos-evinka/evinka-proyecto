@@ -7,7 +7,9 @@
   <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate" />
   <meta http-equiv="Pragma" content="no-cache" />
   <meta http-equiv="Expires" content="0" />
-  <link rel="icon" type="image/png" href="/assets/favicon.png?v=20260428q" />
+  <link rel="icon" type="image/png" href="/assets/favicon-light.png?v=20260512a" media="(prefers-color-scheme: light)" />
+  <link rel="icon" type="image/png" href="/assets/favicon-dark.png?v=20260512a" media="(prefers-color-scheme: dark)" />
+  <link rel="shortcut icon" type="image/png" href="/assets/favicon-dark.png?v=20260512a" />
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" crossorigin="" />
   <style>
     :root { --bg:#0c0c0c; --panel:rgba(26,26,26,.92); --panel-border:rgba(255,255,255,.08); --text:#f3eee6; --muted:#cabfae; --gold:#d3b07a; }
@@ -540,7 +542,7 @@
     <button class="dock-btn restore-btn" id="restoreLocationsBtn" type="button">Ver ubicaciones</button>
   </div>
   <aside class="overlay-left" id="legendPanel">
-    <div class="brand-card"><div class="brand-lockup"><img class="brand-logo" src="/assets/favicon.png?v=20260428q" alt="EVINKA" /><div><div class="brand-eyebrow">EVINKA CONNECT</div><div class="brand-heading">Mapa de cargadores</div></div></div><div class="brand-subtitle">Encuentra cargadores cercanos con una lectura simple: verde disponible, azul cargando y negro en mantenimiento.</div></div>
+    <div class="brand-card"><div class="brand-lockup"><img class="brand-logo" src="/assets/favicon-dark.png?v=20260512a" alt="EVINKA" /><div><div class="brand-eyebrow">EVINKA CONNECT</div><div class="brand-heading">Mapa de cargadores</div></div></div><div class="brand-subtitle">Encuentra cargadores cercanos con una lectura simple: verde disponible, azul cargando y negro en mantenimiento.</div></div>
     <div class="overlay-head"><div class="overlay-title">LEYENDA DEL MAPA</div><button class="overlay-toggle" id="hideLegendBtn" type="button">Ocultar</button></div>
     <div class="legend-list" id="legend">
       <div class="legend-pill available"><span>Disponible</span><strong>5</strong></div>

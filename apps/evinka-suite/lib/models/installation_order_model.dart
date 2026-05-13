@@ -4,6 +4,7 @@ class InstallationOrderModel {
   final String quoteNumber;
   final String clientName;
   final String clientEmail;
+  final String clientPhone;
   final String clientDocument;
   final String city;
   final String address;
@@ -25,6 +26,7 @@ class InstallationOrderModel {
     required this.quoteNumber,
     required this.clientName,
     required this.clientEmail,
+    required this.clientPhone,
     required this.clientDocument,
     required this.city,
     required this.address,
@@ -48,6 +50,7 @@ class InstallationOrderModel {
       quoteNumber: json['quoteNumber']?.toString() ?? '',
       clientName: json['clientName']?.toString() ?? '',
       clientEmail: json['clientEmail']?.toString() ?? '',
+      clientPhone: json['clientPhone']?.toString() ?? '',
       clientDocument: json['clientDocument']?.toString() ?? '',
       city: json['city']?.toString() ?? '',
       address: json['address']?.toString() ?? '',

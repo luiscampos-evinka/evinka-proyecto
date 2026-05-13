@@ -2,6 +2,7 @@ class EvinkaUser {
   final String id;
   final String name;
   final String email;
+  final String employeeCode;
   final String role;
   final String status;
 
@@ -9,53 +10,78 @@ class EvinkaUser {
     required this.id,
     required this.name,
     required this.email,
+    this.employeeCode = '',
     required this.role,
     this.status = 'active',
   });
 
   String get normalizedRole => role.trim().toLowerCase();
+  String get normalizedRoleKey =>
+      normalizedRole.replaceAll(RegExp(r'[\s-]+'), '_');
   String get normalizedEmail => email.trim().toLowerCase();
 
   bool get isAdmin => normalizedRole == 'admin';
   bool get isLuisSupervisor => normalizedEmail == 'luis.campos@evinka.tech';
+  bool get isTechSupervisor => const {
+        'tecnico_supervisor',
+        'supervisor_tecnico',
+        'tech_supervisor',
+        'technical_supervisor',
+        'supervisor',
+      }.contains(normalizedRoleKey);
   bool get hasFullAccess => isAdmin || isLuisSupervisor;
   bool get isCommercial => const {
         'comercial',
         'ventas',
         'sales',
         'commercial',
-      }.contains(normalizedRole);
+      }.contains(normalizedRoleKey);
   bool get isAdvisor => const {
         'asesor',
         'asesor_humano',
         'advisor',
         'human_advisor',
-      }.contains(normalizedRole);
+      }.contains(normalizedRoleKey);
   bool get isInstaller => const {
         'instalador',
         'installer',
         'tecnico_instalador',
-      }.contains(normalizedRole);
+      }.contains(normalizedRoleKey);
   bool get isVisitTech => const {
         'tech',
         'tecnico',
         'tecnico_visita',
         'field_tech',
-      }.contains(normalizedRole);
+      }.contains(normalizedRoleKey);
   bool get isTech =>
-      isVisitTech || isInstaller || (!isAdmin && !isCommercial && !isAdvisor);
-  bool get canSeeCommercialData => hasFullAccess || isCommercial;
-  bool get canEditCommercialFlow => hasFullAccess || isCommercial;
+      isTechSupervisor ||
+      isVisitTech ||
+      isInstaller ||
+      (!isAdmin && !isCommercial && !isAdvisor);
+  bool get canSeeCommercialData =>
+      hasFullAccess || isCommercial || isTechSupervisor;
+  bool get canEditCommercialFlow =>
+      hasFullAccess || isCommercial || isTechSupervisor;
 
   factory EvinkaUser.fromJson(Map<String, dynamic> json) {
     return EvinkaUser(
       id: json['id']?.toString() ?? '',
       name: json['name']?.toString() ?? '',
       email: json['email']?.toString() ?? '',
+      employeeCode: json['employeeCode']?.toString() ?? '',
       role: json['role']?.toString() ?? 'tech',
       status: json['status']?.toString() ?? 'active',
     );
   }
+
+  Map<String, dynamic> toJson() => {
+        'id': id,
+        'name': name,
+        'email': email,
+        'employeeCode': employeeCode,
+        'role': role,
+        'status': status,
+      };
 }
 
 class DistanceFactor {
@@ -88,6 +114,9 @@ class EvinkaDefaults {
   final double igv;
   final double factorGeneralCosts;
   final double divisorMargin;
+  final double chargerExchangeRate;
+  final double miniboxPriceUsd;
+  final double alienPriceUsd;
   final double max6mm;
   final double max10mm;
   final double includedMetersCasa;
@@ -100,6 +129,9 @@ class EvinkaDefaults {
     required this.igv,
     required this.factorGeneralCosts,
     required this.divisorMargin,
+    required this.chargerExchangeRate,
+    required this.miniboxPriceUsd,
+    required this.alienPriceUsd,
     required this.max6mm,
     required this.max10mm,
     required this.includedMetersCasa,
@@ -118,6 +150,10 @@ class EvinkaDefaults {
       igv: (json['igv'] as num?)?.toDouble() ?? 0.18,
       factorGeneralCosts: (json['factorGeneralCosts'] as num?)?.toDouble() ?? 1,
       divisorMargin: (json['divisorMargin'] as num?)?.toDouble() ?? 0.75,
+      chargerExchangeRate:
+          (json['chargerExchangeRate'] as num?)?.toDouble() ?? 3.75,
+      miniboxPriceUsd: (json['miniboxPriceUsd'] as num?)?.toDouble() ?? 700,
+      alienPriceUsd: (json['alienPriceUsd'] as num?)?.toDouble() ?? 900,
       max6mm: (json['max6mm'] as num?)?.toDouble() ?? 25,
       max10mm: (json['max10mm'] as num?)?.toDouble() ?? 40,
       includedMetersCasa:
@@ -134,6 +170,9 @@ class EvinkaDefaults {
         'igv': igv,
         'factorGeneralCosts': factorGeneralCosts,
         'divisorMargin': divisorMargin,
+        'chargerExchangeRate': chargerExchangeRate,
+        'miniboxPriceUsd': miniboxPriceUsd,
+        'alienPriceUsd': alienPriceUsd,
         'max6mm': max6mm,
         'max10mm': max10mm,
         'includedMetersCasa': includedMetersCasa,
@@ -147,6 +186,9 @@ class EvinkaDefaults {
     double? igv,
     double? factorGeneralCosts,
     double? divisorMargin,
+    double? chargerExchangeRate,
+    double? miniboxPriceUsd,
+    double? alienPriceUsd,
     double? max6mm,
     double? max10mm,
     double? includedMetersCasa,
@@ -159,6 +201,9 @@ class EvinkaDefaults {
       igv: igv ?? this.igv,
       factorGeneralCosts: factorGeneralCosts ?? this.factorGeneralCosts,
       divisorMargin: divisorMargin ?? this.divisorMargin,
+      chargerExchangeRate: chargerExchangeRate ?? this.chargerExchangeRate,
+      miniboxPriceUsd: miniboxPriceUsd ?? this.miniboxPriceUsd,
+      alienPriceUsd: alienPriceUsd ?? this.alienPriceUsd,
       max6mm: max6mm ?? this.max6mm,
       max10mm: max10mm ?? this.max10mm,
       includedMetersCasa: includedMetersCasa ?? this.includedMetersCasa,

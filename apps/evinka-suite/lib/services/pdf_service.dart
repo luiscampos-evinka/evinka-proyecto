@@ -315,7 +315,7 @@ class PdfService {
 
   static pw.Widget _textoLegal() {
     return pw.Text(
-      'El Cliente/Responsable está de acuerdo con los puntos indicados en el documento, acepta estar conforme con la instalación, operación y entrega de implementos del cargador además da su consentimiento para el registro fotográfico de la instalación y entrega de implementos.',
+      'EL CLIENTE/REPRESENTANTE declara recibir conforme la instalación e implementos detallados en el presente documento, salvo observaciones indicadas. Asimismo, autoriza a EVINKA el registro y uso de fotografías de la instalación y equipos con fines de soporte técnico, garantía, trazabilidad, capacitación, estudio interno y material comercial o publicitario, evitando divulgar información sensible del cliente.\n\nLos registros digitales, validaciones electrónicas, fotografías y reportes generados por los sistemas EVINKA constituyen medios válidos de conformidad y trazabilidad del servicio.',
       style: const pw.TextStyle(fontSize: 9),
       textAlign: pw.TextAlign.justify,
     );
@@ -375,10 +375,19 @@ class PdfService {
     final codigoGarantia = _buildWarrantyCode(data, order);
     final producto = _productName(data, order);
     final modelo = _productModel(data, order);
-    final soporteCorreo = 'soporte@evinka.tech';
-    final soporteTelefono = '+51 999 999 999';
-    final ciudad =
-        (order?.city.isNotEmpty ?? false) ? order!.city : 'Lima, Perú';
+    final titularGarantia = _firstNonEmpty(
+      [data.cliente, order?.clientName],
+      fallback: 'No registrado',
+    );
+    final correoContacto = _firstNonEmpty(
+      [data.clientEmail, order?.clientEmail],
+      fallback: 'No registrado',
+    );
+    final telefonoContacto = _firstNonEmpty(
+      [order?.clientPhone],
+      fallback: 'No registrado',
+    );
+    final ciudad = _firstNonEmpty([order?.city], fallback: 'Lima, Perú');
 
     pdf.addPage(
       pw.Page(
@@ -498,7 +507,7 @@ class PdfService {
                     number: '5',
                     title: 'Alcance oficial de la garantía',
                     text:
-                        'EVINKA certifica que el equipo identificado en este documento cuenta con cobertura de garantía comercial limitada por dos años, válida desde la fecha de instalación y sujeta al cumplimiento de las condiciones técnicas, eléctricas, operativas y de seguridad establecidas por la marca.',
+                        'EVINKA certifica que el equipo identificado en este documento cuenta con cobertura de garantía comercial limitada por dos años, válida desde la fecha de instalación y sujeta al cumplimiento de las condiciones técnicas, eléctricas, operativas y de seguridad establecidas por la marca. La atención de garantía estará sujeta a evaluación técnica y disponibilidad operativa de EVINKA, no implicando reemplazo inmediato ni cobertura de perjuicios indirectos o lucro cesante.',
                     fill: const PdfColor(1, 0.98, 0.95),
                     stroke: const PdfColor(0.95, 0.87, 0.78),
                   ),
@@ -559,7 +568,7 @@ class PdfService {
                     number: '7',
                     title: 'Condiciones de validez',
                     text:
-                        'La presente garantía aplica únicamente al equipo cuyo número de serie figura en este certificado. Para su validez, el cargador debe conservar identificación legible, haber sido instalado por EVINKA o por personal autorizado y operar dentro de los parámetros eléctricos recomendados. La cobertura no sustituye daños causados por terceros, alteraciones posteriores de la instalación, uso inadecuado ni eventos externos fuera del control de la marca.',
+                        'La presente garantía aplica únicamente al equipo cuyo número de serie figura en este certificado. Para su validez, el cargador debe conservar identificación legible, haber sido instalado por EVINKA o por personal autorizado y operar dentro de los parámetros eléctricos recomendados. La cobertura no sustituye daños causados por terceros, alteraciones posteriores de la instalación, uso inadecuado ni eventos externos fuera del control de la marca. Funciones remotas, conectividad, aplicaciones, plataformas, integración OCPP o servicios en línea podrán depender de terceros, internet o condiciones externas ajenas al control de EVINKA.',
                     fill: PdfColors.white,
                     stroke: const PdfColor(0.89, 0.92, 0.95),
                   ),
@@ -603,6 +612,7 @@ class PdfService {
                       'El cliente reporta la incidencia indicando el código de garantía, número de serie y descripción concreta del evento observado.',
                       'EVINKA valida antecedentes, evidencia fotográfica, condiciones de seguridad y consistencia entre equipo, dirección e instalación registrada.',
                       'De corresponder cobertura, se coordina diagnóstico, reparación, reposición de componente o solución técnica equivalente según evaluación.',
+                      'EVINKA podrá reparar, reemplazar componentes o aplicar soluciones técnicas equivalentes según evaluación técnica y disponibilidad.',
                     ],
                   ),
                 ),
@@ -612,8 +622,10 @@ class PdfService {
                     data,
                     codigoGarantia,
                     ciudad,
-                    soporteCorreo,
-                    soporteTelefono,
+                    titularGarantia,
+                    correoContacto,
+                    telefonoContacto,
+                    order,
                   ),
                 ),
                 pw.Padding(
@@ -630,7 +642,7 @@ class PdfService {
                           number: '10',
                           title: 'Disposiciones complementarias',
                           text:
-                              'La atención de garantía podrá requerir validación del código de garantía, número de serie legible, evidencia fotográfica y verificación de las condiciones de instalación.',
+                              'La garantía no cubre trabajos civiles, acabados, pintura, modificaciones posteriores de la instalación ni daños ocasionados por infraestructura eléctrica preexistente del inmueble. La atención de garantía estará sujeta a evaluación técnica y disponibilidad operativa de EVINKA, no implicando reemplazo inmediato ni cobertura de perjuicios indirectos o lucro cesante. Funciones remotas, conectividad, aplicaciones, plataformas, integración OCPP o servicios en línea podrán depender de terceros, internet o condiciones externas ajenas al control de EVINKA. Los tiempos de carga y desempeño final podrán variar según el vehículo, batería, suministro eléctrico y condiciones externas de operación. EVINKA podrá conservar registro fotográfico técnico de la instalación para fines de trazabilidad, soporte, capacitación y mejora continua.',
                           fill: const PdfColor(0.97, 0.985, 1),
                           stroke: const PdfColor(0.86, 0.91, 0.96),
                         ),
@@ -705,16 +717,35 @@ class PdfService {
 
   static String _productName(
       ProtocoloModel data, InstallationOrderModel? order) {
-    final source = '${data.marca} ${order?.chargerBrand ?? ''}'.toLowerCase();
-    return source.contains('alien') ? 'EVINKA Alien X' : 'EVINKA MiniBox';
+    final source =
+        _firstNonEmpty([data.marca, order?.chargerBrand]).toLowerCase();
+    if (source.contains('alien')) return 'EVINKA Alien X';
+    if (source.contains('mini')) return 'EVINKA MiniBox';
+    return 'Cargador EVINKA';
   }
 
   static String _productModel(
       ProtocoloModel data, InstallationOrderModel? order) {
-    final source = '${data.marca} ${order?.chargerBrand ?? ''}'.toLowerCase();
+    final source =
+        _firstNonEmpty([data.marca, order?.chargerBrand]).toLowerCase();
+    final potenciaKw = _firstNonEmpty([data.potenciaKw, order?.powerKw]);
+    final potenciaLabel = potenciaKw.isNotEmpty ? ' $potenciaKw kW' : '';
     return source.contains('alien')
-        ? 'Alien X Smart AC ${data.potenciaKw.isNotEmpty ? data.potenciaKw : order?.powerKw ?? ''} kW'
-        : 'MiniBox Smart AC ${data.potenciaKw.isNotEmpty ? data.potenciaKw : order?.powerKw ?? ''} kW';
+        ? 'Alien X Smart AC$potenciaLabel'
+        : 'MiniBox Smart AC$potenciaLabel';
+  }
+
+  static String _firstNonEmpty(
+    List<String?> values, {
+    String fallback = '',
+  }) {
+    for (final value in values) {
+      final cleaned = value?.trim() ?? '';
+      if (cleaned.isNotEmpty && cleaned != '-') {
+        return cleaned;
+      }
+    }
+    return fallback;
   }
 
   static pw.Widget _garantiaHeader({
@@ -890,10 +921,19 @@ class PdfService {
         children: [
           _sectionCaption('1', 'Identificación del equipo'),
           pw.SizedBox(height: 14),
-          _pairRow('Producto', producto, 'Modelo', modelo),
+          _pairRow(
+            'Producto',
+            _firstNonEmpty([producto], fallback: 'No registrado'),
+            'Modelo',
+            _firstNonEmpty([modelo], fallback: 'No registrado'),
+          ),
           pw.SizedBox(height: 10),
-          _pairRow('Serie', serie.isNotEmpty ? serie : 'No registrada',
-              'Instalación', fechaInstalacion),
+          _pairRow(
+            'Serie',
+            _firstNonEmpty([serie], fallback: 'No registrada'),
+            'Instalación',
+            _firstNonEmpty([fechaInstalacion], fallback: 'No registrada'),
+          ),
           pw.SizedBox(height: 10),
           _singleLine('Vigencia', '2 años · hasta $vigencia'),
         ],
@@ -904,6 +944,8 @@ class PdfService {
   static pw.Widget _garantiaProductCard(
       ProtocoloModel data, InstallationOrderModel? order) {
     final source = '${data.marca} ${order?.chargerBrand ?? ''}'.toLowerCase();
+    final isAlien = source.contains('alien');
+    final modelName = isAlien ? 'Alien X' : 'MiniBox';
     return pw.Container(
       padding: const pw.EdgeInsets.all(16),
       decoration: pw.BoxDecoration(
@@ -915,24 +957,139 @@ class PdfService {
         children: [
           pw.Container(
             height: 170,
-            alignment: pw.Alignment.center,
-            child: pw.Text(
-              source.contains('alien') ? 'Alien X' : 'MiniBox',
-              style: pw.TextStyle(
-                  fontSize: 28,
-                  fontWeight: pw.FontWeight.bold,
-                  color: const PdfColor(0.07, 0.11, 0.21)),
+            padding: const pw.EdgeInsets.symmetric(horizontal: 12),
+            decoration: pw.BoxDecoration(
+              color: PdfColors.white,
+              borderRadius: pw.BorderRadius.circular(18),
+              border: pw.Border.all(color: const PdfColor(0.86, 0.91, 0.96)),
+            ),
+            child: pw.Row(
+              children: [
+                pw.Container(
+                  width: 86,
+                  height: 122,
+                  child: pw.Stack(
+                    alignment: pw.Alignment.center,
+                    children: [
+                      pw.Positioned(
+                        top: 8,
+                        child: pw.Container(
+                          width: 58,
+                          height: 94,
+                          decoration: pw.BoxDecoration(
+                            color: const PdfColor(0.10, 0.16, 0.30),
+                            borderRadius: pw.BorderRadius.circular(12),
+                            border: pw.Border.all(
+                                color: const PdfColor(0.91, 0.82, 0.70),
+                                width: 1.2),
+                          ),
+                        ),
+                      ),
+                      pw.Positioned(
+                        top: 21,
+                        child: pw.Container(
+                          width: 26,
+                          height: 18,
+                          decoration: pw.BoxDecoration(
+                            color: const PdfColor(0.87, 0.92, 0.98),
+                            borderRadius: pw.BorderRadius.circular(4),
+                          ),
+                        ),
+                      ),
+                      pw.Positioned(
+                        bottom: 10,
+                        child: pw.Container(
+                          width: 38,
+                          height: 8,
+                          decoration: pw.BoxDecoration(
+                            color: const PdfColor(0.07, 0.11, 0.21),
+                            borderRadius: pw.BorderRadius.circular(999),
+                          ),
+                        ),
+                      ),
+                      pw.Positioned(
+                        right: 4,
+                        top: 40,
+                        child: pw.Container(
+                          width: 18,
+                          height: 40,
+                          decoration: pw.BoxDecoration(
+                            border: pw.Border.all(
+                                color: const PdfColor(0.10, 0.16, 0.30),
+                                width: 2),
+                            borderRadius: pw.BorderRadius.circular(999),
+                          ),
+                        ),
+                      ),
+                      pw.Positioned(
+                        right: 0,
+                        top: 72,
+                        child: pw.Container(
+                          width: 12,
+                          height: 12,
+                          decoration: pw.BoxDecoration(
+                            color: const PdfColor(0.91, 0.82, 0.70),
+                            borderRadius: pw.BorderRadius.circular(999),
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                pw.SizedBox(width: 12),
+                pw.Expanded(
+                  child: pw.Column(
+                    mainAxisAlignment: pw.MainAxisAlignment.center,
+                    crossAxisAlignment: pw.CrossAxisAlignment.start,
+                    children: [
+                      pw.Container(
+                        padding: const pw.EdgeInsets.symmetric(
+                            horizontal: 8, vertical: 4),
+                        decoration: pw.BoxDecoration(
+                          color: const PdfColor(1, 0.98, 0.95),
+                          borderRadius: pw.BorderRadius.circular(999),
+                        ),
+                        child: pw.Text(
+                          isAlien ? 'Línea DC rápida' : 'Línea AC residencial',
+                          style: pw.TextStyle(
+                            fontSize: 8.5,
+                            fontWeight: pw.FontWeight.bold,
+                            color: const PdfColor(0.65, 0.42, 0.15),
+                          ),
+                        ),
+                      ),
+                      pw.SizedBox(height: 10),
+                      pw.Text(
+                        modelName,
+                        style: pw.TextStyle(
+                          fontSize: 24,
+                          fontWeight: pw.FontWeight.bold,
+                          color: const PdfColor(0.07, 0.11, 0.21),
+                        ),
+                      ),
+                      pw.SizedBox(height: 6),
+                      pw.Text(
+                        'Equipo certificado EVINKA',
+                        style: pw.TextStyle(
+                          fontSize: 10.2,
+                          fontWeight: pw.FontWeight.bold,
+                          color: const PdfColor(0.10, 0.16, 0.30),
+                        ),
+                      ),
+                      pw.SizedBox(height: 4),
+                      pw.Text(
+                        'Representación referencial para esta garantía',
+                        style: const pw.TextStyle(
+                          fontSize: 8.5,
+                          color: PdfColor(0.40, 0.44, 0.50),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
             ),
           ),
-          pw.Text('Equipo certificado EVINKA',
-              style: pw.TextStyle(
-                  fontSize: 10.2,
-                  fontWeight: pw.FontWeight.bold,
-                  color: const PdfColor(0.10, 0.16, 0.30))),
-          pw.SizedBox(height: 4),
-          pw.Text('Referencia visual validada para esta garantía',
-              style: const pw.TextStyle(
-                  fontSize: 8.5, color: PdfColor(0.40, 0.44, 0.50))),
         ],
       ),
     );
@@ -954,9 +1111,11 @@ class PdfService {
           pw.SizedBox(height: 14),
           _tripleRow(
               'Titular',
-              data.cliente,
+              _firstNonEmpty([data.cliente, order?.clientName],
+                  fallback: 'No registrado'),
               'Documento',
-              data.ruc,
+              _firstNonEmpty([data.ruc, order?.clientDocument],
+                  fallback: 'No registrado'),
               'Instalado por',
               order?.assignedTechnician.isNotEmpty == true
                   ? order!.assignedTechnician
@@ -964,9 +1123,8 @@ class PdfService {
           pw.SizedBox(height: 10),
           _singleLine(
               'Dirección de instalación',
-              data.direccion.isNotEmpty
-                  ? data.direccion
-                  : order?.address ?? ''),
+              _firstNonEmpty([data.direccion, order?.address, order?.city],
+                  fallback: 'No registrada')),
         ],
       ),
     );
@@ -976,8 +1134,10 @@ class PdfService {
     ProtocoloModel data,
     String codigoGarantia,
     String ciudad,
-    String soporteCorreo,
-    String soporteTelefono,
+    String titular,
+    String correoContacto,
+    String telefonoContacto,
+    InstallationOrderModel? order,
   ) {
     return pw.Container(
       padding: const pw.EdgeInsets.all(16),
@@ -991,11 +1151,24 @@ class PdfService {
         children: [
           _sectionCaption('Registro', 'Registro técnico resumido'),
           pw.SizedBox(height: 12),
-          _tripleRow('Código', codigoGarantia, 'Serie', data.numeroSerie,
-              'Ciudad', ciudad),
+          _tripleRow(
+            'Código',
+            codigoGarantia,
+            'Serie',
+            _firstNonEmpty([data.numeroSerie], fallback: 'No registrada'),
+            'Ciudad',
+            _firstNonEmpty([ciudad], fallback: 'No registrada'),
+          ),
           pw.SizedBox(height: 10),
-          _tripleRow('Titular', data.cliente, 'Correo', soporteCorreo,
-              'Teléfono', soporteTelefono),
+          _pairRow(
+            'Código de orden',
+            _firstNonEmpty([data.installationOrderId, order?.id], fallback: 'No registrado'),
+            'Cotización',
+            _firstNonEmpty([data.quoteId, order?.quoteId, order?.quoteNumber], fallback: 'No registrada'),
+          ),
+          pw.SizedBox(height: 10),
+          _tripleRow('Titular', titular, 'Correo', correoContacto, 'Teléfono',
+              telefonoContacto),
         ],
       ),
     );
@@ -1015,7 +1188,7 @@ class PdfService {
           _sectionCaption('9', 'Validación y conformidad'),
           pw.SizedBox(height: 12),
           pw.Text(
-            'Este certificado acredita la emisión de garantía del equipo descrito y forma parte del expediente documental de instalación EVINKA.',
+            'Este certificado acredita la emisión de garantía del equipo descrito y forma parte del expediente documental de instalación EVINKA. Su validación puede apoyarse en registros digitales, número de serie, código de orden, registro fotográfico técnico y firmas/evidencias asociadas al servicio.',
             textAlign: pw.TextAlign.center,
             style: const pw.TextStyle(fontSize: 9.8),
           ),
@@ -1185,20 +1358,21 @@ class PdfService {
   }
 
   static pw.Widget _sectionCaption(String number, String title) {
-    final badgeWidth = number.length > 1 ? 30.0 : 22.0;
-    final fontSize = number.length > 1 ? 10.0 : 11.0;
+    final fontSize =
+        number.length >= 6 ? 8.4 : (number.length > 1 ? 10.0 : 11.0);
     return pw.Row(
       crossAxisAlignment: pw.CrossAxisAlignment.center,
       children: [
         pw.Container(
-          width: badgeWidth,
-          height: 22,
+          padding: const pw.EdgeInsets.symmetric(horizontal: 7, vertical: 4),
+          constraints: const pw.BoxConstraints(minWidth: 24, minHeight: 24),
           decoration: pw.BoxDecoration(
             color: const PdfColor(0.78, 0.60, 0.36),
             borderRadius: pw.BorderRadius.circular(7),
           ),
           alignment: pw.Alignment.center,
           child: pw.Text(number,
+              textAlign: pw.TextAlign.center,
               style: pw.TextStyle(
                   color: PdfColors.white,
                   fontSize: fontSize,

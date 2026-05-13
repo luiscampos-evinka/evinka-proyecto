@@ -128,9 +128,11 @@ class _SuiteDashboardScreenState extends State<SuiteDashboardScreen> {
   Widget build(BuildContext context) {
     final cards = widget.user.hasFullAccess
         ? (widget.user.isTech ? _supervisorTechCards() : _adminCards())
-        : widget.user.canSeeCommercialData
-            ? _commercialCards()
-            : _techCards();
+        : (widget.user.isTechSupervisor
+            ? _techSupervisorCards()
+            : (widget.user.canSeeCommercialData
+                ? _commercialCards()
+                : _techCards()));
 
     return Scaffold(
       appBar: AppBar(
@@ -293,6 +295,37 @@ class _SuiteDashboardScreenState extends State<SuiteDashboardScreen> {
         subtitle: 'Editar márgenes, perfiles, mínimos y costos base.',
         icon: Icons.admin_panel_settings_outlined,
         builder: (_) => AdminPanelScreen(user: widget.user),
+      ),
+      _ModuleCardData(
+        title: 'Sincronización',
+        subtitle: 'Revisa documentos locales, pendientes y reintentos de sync.',
+        icon: Icons.sync_outlined,
+        builder: (_) => const HistorialScreen(),
+      ),
+    ];
+  }
+
+  List<_ModuleCardData> _techSupervisorCards() {
+    return [
+      _ModuleCardData(
+        title: 'Visitas',
+        subtitle:
+            'Agenda, ejecución y seguimiento del trabajo de campo con enfoque técnico.',
+        icon: Icons.calendar_month_outlined,
+        builder: (_) => VisitsModuleScreen(user: widget.user),
+      ),
+      _ModuleCardData(
+        title: 'Cotizaciones',
+        subtitle:
+            'Nueva cotización e historial comercial sin abrir el panel de admin.',
+        icon: Icons.request_quote_outlined,
+        builder: (_) => QuotesModuleScreen(user: widget.user),
+      ),
+      _ModuleCardData(
+        title: 'Conformidad',
+        subtitle: 'Nueva conformidad e historial de cierres en un solo módulo.',
+        icon: Icons.fact_check_outlined,
+        builder: (_) => const ConformidadModuleScreen(),
       ),
       _ModuleCardData(
         title: 'Sincronización',
@@ -599,6 +632,9 @@ class _hero extends StatelessWidget {
       child: LayoutBuilder(
         builder: (context, constraints) {
           final stacked = constraints.maxWidth < 760;
+          final brandAsset = Theme.of(context).brightness == Brightness.dark
+              ? 'assets/logo_dark.png'
+              : 'assets/logo_light.png';
           final content = [
             Expanded(
               flex: 6,
@@ -623,9 +659,11 @@ class _hero extends StatelessWidget {
                   Text(
                     user.hasFullAccess && user.isTech
                         ? 'Tienes modo supervisor técnico: mantienes la operación de campo y además ves el frente comercial completo.'
-                        : user.canSeeCommercialData
-                            ? 'Gestiona cotización, órdenes y conformidad desde la misma app con el backend real de EVINKA.'
-                            : 'Aquí tienes una base operativa para técnicos: visitas, ejecución y conformidad con separación del frente comercial.',
+                        : user.isTechSupervisor
+                            ? 'Tienes rol técnico supervisor: mantienes el frente técnico y además puedes cotizar y cerrar conformidades.'
+                            : user.canSeeCommercialData
+                                ? 'Gestiona cotización, órdenes y conformidad desde la misma app con el backend real de EVINKA.'
+                                : 'Aquí tienes una base operativa para técnicos: visitas, ejecución y conformidad con separación del frente comercial.',
                     style: Theme.of(context).textTheme.bodyLarge,
                   ),
                 ],
@@ -641,8 +679,8 @@ class _hero extends StatelessWidget {
                 height: stacked ? 160 : 220,
                 decoration: BoxDecoration(
                   borderRadius: BorderRadius.circular(24),
-                  image: const DecorationImage(
-                      image: AssetImage('assets/logo.png'),
+                  image: DecorationImage(
+                      image: AssetImage(brandAsset),
                       fit: BoxFit.cover,
                       opacity: 0.35),
                   color: Theme.of(context).brightness == Brightness.dark
@@ -663,11 +701,13 @@ class _hero extends StatelessWidget {
                   child: Text(
                       user.hasFullAccess && user.isTech
                           ? 'Modo supervisor técnico'
-                          : user.canSeeCommercialData
-                              ? (user.isAdmin
-                                  ? 'Modo admin activo'
-                                  : 'Modo comercial activo')
-                              : 'Modo técnico operativo',
+                          : user.isTechSupervisor
+                              ? 'Modo técnico supervisor'
+                              : user.canSeeCommercialData
+                                  ? (user.isAdmin
+                                      ? 'Modo admin activo'
+                                      : 'Modo comercial activo')
+                                  : 'Modo técnico operativo',
                       style: const TextStyle(fontWeight: FontWeight.w700)),
                 ),
               ),

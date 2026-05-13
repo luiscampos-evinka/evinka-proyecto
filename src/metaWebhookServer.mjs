@@ -72,8 +72,8 @@ function roleSourceFor(role) {
   return 'auto';
 }
 
-async function resolveInboundRole(phone) {
-  const user = await engine.ensureUser(phone);
+async function resolveInboundRole(phone, userScope = 'default') {
+  const user = await engine.ensureUser(phone, userScope);
   const persistedRole = engine.normalizeUserRole(user?.rol_usuario);
   const inferredRole = persistedRole || detectSenderRole(phone);
   if (inferredRole && persistedRole !== inferredRole) {
@@ -126,7 +126,7 @@ function bookingReminderText({ ticket, dateLabel, hourLabel, address }) {
   return `Recordatorio de cita EVINKA ⏰\n\nTicket: ${ticket}\nFecha: ${dateLabel}\nHora: ${hourLabel}\nDirección: ${address}\n\n¿Qué deseas hacer con esta cita?`;
 }
 
-function scheduleReminder({ to, ticket, dateLabel, hourLabel, address }) {
+function scheduleReminder({ to, ticket, dateLabel, hourLabel, address, userScope = 'default' }) {
   const enabled = String(process.env.BOOKING_REMINDER_ENABLED || 'true').toLowerCase();
   if (enabled === 'false' || enabled === '0' || enabled === 'off') return null;
   const afterMinutes = Number(process.env.BOOKING_REMINDER_AFTER_MINUTES || 10);
@@ -135,7 +135,9 @@ function scheduleReminder({ to, ticket, dateLabel, hourLabel, address }) {
   const timer = setTimeout(async () => {
     try {
       const text = bookingReminderText({ ticket, dateLabel, hourLabel, address });
-      await meta.sendButtons(to, {
+      const channel = whatsappChannels.find((item) => item.key === userScope) || defaultWhatsAppChannel;
+      const metaClient = metaByPhoneNumberId.get(channel.phoneNumberId) || meta;
+      await metaClient.sendButtons(to, {
         body: text,
         footer: 'EVINKA',
         buttons: [
@@ -144,7 +146,7 @@ function scheduleReminder({ to, ticket, dateLabel, hourLabel, address }) {
           { id: 'reminder_cancel', title: 'Cancelar' },
         ],
       });
-      await engine.activateBookingReminder({ phone: to, ticket, dateLabel, hourLabel, address });
+      await engine.activateBookingReminder({ phone: to, ticket, dateLabel, hourLabel, address, userScope });
     } catch (error) {
       console.error('booking reminder failed:', error);
     } finally {
@@ -174,20 +176,62 @@ async function publishTechVisit(payload) {
 }
 
 const engine = new ChatbotEngine({ sb, calendar, reminderScheduler: scheduleReminder, visitPublisher: publishTechVisit });
-const meta = new WhatsAppMetaClient({
-  accessToken: requiredEnv('WHATSAPP_ACCESS_TOKEN'),
-  phoneNumberId: requiredEnv('WHATSAPP_PHONE_NUMBER_ID'),
-  appSecret: process.env.META_APP_SECRET,
-});
 
-async function sendReply(to, reply) {
+function buildWhatsAppChannels() {
+  const channels = [];
+  channels.push({
+    key: 'default',
+    accessToken: requiredEnv('WHATSAPP_ACCESS_TOKEN'),
+    phoneNumberId: requiredEnv('WHATSAPP_PHONE_NUMBER_ID'),
+    businessAccountId: process.env.WHATSAPP_BUSINESS_ACCOUNT_ID || null,
+    defaultCountry: process.env.WHATSAPP_DEFAULT_COUNTRY || null,
+    appSecret: process.env.META_APP_SECRET,
+  });
+  if (process.env.WHATSAPP_ACCESS_TOKEN_CO && process.env.WHATSAPP_PHONE_NUMBER_ID_CO) {
+    channels.push({
+      key: 'co',
+      accessToken: process.env.WHATSAPP_ACCESS_TOKEN_CO,
+      phoneNumberId: process.env.WHATSAPP_PHONE_NUMBER_ID_CO,
+      businessAccountId: process.env.WHATSAPP_BUSINESS_ACCOUNT_ID_CO || null,
+      defaultCountry: process.env.WHATSAPP_DEFAULT_COUNTRY_CO || 'CO',
+      appSecret: process.env.META_APP_SECRET,
+    });
+  }
+  return channels;
+}
+
+const whatsappChannels = buildWhatsAppChannels();
+const defaultWhatsAppChannel = whatsappChannels[0];
+const metaByPhoneNumberId = new Map(
+  whatsappChannels.map((channel) => [
+    channel.phoneNumberId,
+    new WhatsAppMetaClient({
+      accessToken: channel.accessToken,
+      phoneNumberId: channel.phoneNumberId,
+      appSecret: channel.appSecret,
+    }),
+  ]),
+);
+const meta = metaByPhoneNumberId.get(defaultWhatsAppChannel.phoneNumberId);
+
+function resolveWhatsAppChannel(phoneNumberId = null) {
+  return whatsappChannels.find((channel) => String(channel.phoneNumberId) === String(phoneNumberId || '')) || defaultWhatsAppChannel;
+}
+
+function resolveMetaClient(phoneNumberId = null) {
+  const channel = resolveWhatsAppChannel(phoneNumberId);
+  return metaByPhoneNumberId.get(channel.phoneNumberId) || meta;
+}
+
+async function sendReply(to, reply, phoneNumberId = null) {
   if (!reply) return;
+  const client = resolveMetaClient(phoneNumberId);
   if (typeof reply === 'string') {
-    await meta.sendText(to, reply);
+    await client.sendText(to, reply);
     return;
   }
   if (reply.kind === 'buttons') {
-    await meta.sendButtons(to, {
+    await client.sendButtons(to, {
       body: reply.text,
       footer: reply.footer || '',
       buttons: reply.buttons || [],
@@ -195,7 +239,7 @@ async function sendReply(to, reply) {
     return;
   }
   if (reply.kind === 'list') {
-    await meta.sendList(to, {
+    await client.sendList(to, {
       body: reply.text,
       footer: reply.footer || '',
       buttonText: reply.buttonText || 'Ver opciones',
@@ -203,7 +247,7 @@ async function sendReply(to, reply) {
     });
     return;
   }
-  await meta.sendText(to, reply.text || String(reply));
+  await client.sendText(to, reply.text || String(reply));
 }
 
 function sendJson(res, code, obj) {
@@ -268,10 +312,12 @@ const server = http.createServer(async (req, res) => {
       const payload = JSON.parse(raw.toString('utf8') || '{}');
       const messages = meta.extractMessages(payload);
       for (const message of messages) {
+        const channel = resolveWhatsAppChannel(message.channelPhoneNumberId);
+        const metaClient = resolveMetaClient(message.channelPhoneNumberId);
         if (rememberMessage(message.id)) continue;
-        const { user, role } = await resolveInboundRole(message.from);
+        const { user, role } = await resolveInboundRole(message.from, channel.key);
         if (role === 'tecnico') {
-          await meta.sendText(message.from, 'Tu número está registrado como técnico EVINKA. Para no mezclar clientes con alertas técnicas, el flujo comercial ya no se ejecuta en este chat.');
+          await metaClient.sendText(message.from, 'Tu número está registrado como técnico EVINKA. Para no mezclar clientes con alertas técnicas, el flujo comercial ya no se ejecuta en este chat.');
           continue;
         }
         let reply = null;
@@ -281,7 +327,11 @@ const server = http.createServer(async (req, res) => {
         }
 
         const latestConversation = await engine.getLatestConversation(user);
-        const handoffActive = false;
+        const handoffActive = latestConversation && (
+          latestConversation.estado_conversacion === 'handoff'
+          || latestConversation.paso_actual === 'handoff_asesor'
+          || latestConversation.requiere_handoff === true
+        );
         const inboundText = message.type === 'interactive' && message.interactive?.id
           ? (message.interactive.id || message.text || '')
           : (message.text || '');
@@ -296,7 +346,7 @@ const server = http.createServer(async (req, res) => {
           let messageType = message.type === 'interactive' ? 'interactive' : 'text';
           if (message.media?.id) {
             try {
-              const downloaded = await meta.downloadMedia(message.media.id);
+              const downloaded = await metaClient.downloadMedia(message.media.id);
               const stored = saveConversationMedia({
                 conversationId: latestConversation.id_conversacion,
                 direction: 'inbound',
@@ -342,6 +392,8 @@ const server = http.createServer(async (req, res) => {
             phone: message.from,
             text: message.interactive.id,
             payloadCrudo: message.raw,
+            defaultCountry: channel.defaultCountry,
+            userScope: channel.key,
           });
         }
 
@@ -350,13 +402,15 @@ const server = http.createServer(async (req, res) => {
             phone: message.from,
             text: message.text,
             payloadCrudo: message.raw,
+            defaultCountry: channel.defaultCountry,
+            userScope: channel.key,
           });
         }
 
         if (!reply && (message.type === 'image' || message.type === 'document') && message.media?.id) {
           let mediaResult = null;
           try {
-            const downloaded = await meta.downloadMedia(message.media.id);
+            const downloaded = await metaClient.downloadMedia(message.media.id);
             mediaResult = await extractReceiptDataFromBuffer({
               buffer: downloaded.buffer,
               mimeType: message.media.mimeType || downloaded.mimeType,
@@ -371,6 +425,8 @@ const server = http.createServer(async (req, res) => {
                 ocr: mediaResult,
               },
               payloadCrudo: message.raw,
+              defaultCountry: channel.defaultCountry,
+              userScope: channel.key,
             });
           } catch (error) {
             console.error(error);
@@ -382,6 +438,8 @@ const server = http.createServer(async (req, res) => {
                 error: error.message,
               },
               payloadCrudo: message.raw,
+              defaultCountry: channel.defaultCountry,
+              userScope: channel.key,
             });
           }
         }
@@ -396,7 +454,7 @@ const server = http.createServer(async (req, res) => {
             lastIncomingAt: new Date().toISOString(),
           }));
         }
-        await sendReply(message.from, reply);
+        await sendReply(message.from, reply, channel.phoneNumberId);
       }
       sendJson(res, 200, { ok: true, processed: messages.length });
       return;

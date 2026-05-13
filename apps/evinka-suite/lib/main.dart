@@ -233,19 +233,10 @@ class _BootstrapScreenState extends State<_BootstrapScreen> {
     }
   }
 
-  Future<void> _login(String email, String password) async {
-    final user = await EvinkaApiService.instance.login(email, password);
+  Future<void> _login(String identifier, String secret) async {
+    final user = await EvinkaApiService.instance.login(identifier, secret);
     if (!mounted) return;
     setState(() => _user = user);
-  }
-
-  Future<String> _requestAccess(
-      String name, String email, String password) async {
-    return EvinkaApiService.instance.registerAccessRequest(
-      name: name,
-      email: email,
-      password: password,
-    );
   }
 
   Future<void> _logout() async {
@@ -260,7 +251,7 @@ class _BootstrapScreenState extends State<_BootstrapScreen> {
       return const Scaffold(body: Center(child: CircularProgressIndicator()));
     }
     if (_user == null) {
-      return LoginScreen(onLogin: _login, onRequestAccess: _requestAccess);
+      return LoginScreen(onLogin: _login);
     }
     return SuiteDashboardScreen(user: _user!, onLogout: _logout);
   }

@@ -189,6 +189,8 @@ export class WhatsAppMetaClient {
           out.push({
             id: msg.id,
             from: msg.from,
+            channelPhoneNumberId: value.metadata?.phone_number_id || null,
+            channelDisplayPhoneNumber: value.metadata?.display_phone_number || null,
             profileName: contacts[0]?.profile?.name || null,
             type: msg.type,
             text:

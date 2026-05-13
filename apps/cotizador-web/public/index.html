@@ -5,11 +5,12 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta name="theme-color" content="#0c0c0c" />
     <title>EVINKA Cotizador</title>
-    <link rel="icon" type="image/png" href="/assets/favicon.png?v=20260428n" />
-    <link rel="shortcut icon" type="image/png" href="/assets/favicon.png?v=20260428n" />
-    <link rel="apple-touch-icon" href="/assets/favicon.png?v=20260428n" />
+    <link rel="icon" type="image/png" href="/assets/favicon-light.png?v=20260512a" media="(prefers-color-scheme: light)" />
+    <link rel="icon" type="image/png" href="/assets/favicon-dark.png?v=20260512a" media="(prefers-color-scheme: dark)" />
+    <link rel="shortcut icon" type="image/png" href="/assets/favicon-light.png?v=20260512a" />
+    <link rel="apple-touch-icon" href="/assets/favicon-light.png?v=20260512a" />
     <meta name="application-name" content="EVINKA Cotizador" />
-    <link rel="stylesheet" href="/styles.css?v=20260502login1" />
+    <link rel="stylesheet" href="/styles.css?v=20260513ops1" />
   </head>
   <body>
     <div id="app">
@@ -21,37 +22,20 @@
           </div>
         </div>
         <h1>EVINKA Cotizador</h1>
-        <p class="muted">Acceso técnico o admin.</p>
+        <p class="muted">Acceso por código + PIN. El admin puede seguir entrando con su respaldo.</p>
         <form id="loginForm" class="form-grid">
           <label>
-            Correo
-            <input name="email" type="email" placeholder="admin@evinka.net" required />
+            Código o correo admin
+            <input name="identifier" type="text" placeholder="TEC014" required />
           </label>
           <label>
-            Contraseña
-            <input name="password" type="password" placeholder="••••••••" required />
+            PIN o contraseña
+            <input name="secret" type="password" placeholder="••••" required />
           </label>
           <button type="submit" class="primary">Entrar</button>
         </form>
-        <div class="login-divider"><span>o</span></div>
-        <button type="button" id="toggleRegisterBtn" class="secondary full-width">Solicitar acceso corporativo</button>
-        <form id="registerForm" class="form-grid hidden top-gap-sm">
-          <label>
-            Nombre completo
-            <input name="name" type="text" placeholder="Luis Campos" required />
-          </label>
-          <label>
-            Correo corporativo
-            <input name="email" type="email" placeholder="nombre@evinka.tech" required />
-          </label>
-          <label>
-            Contraseña
-            <input name="password" type="password" placeholder="Mínimo 10 caracteres" required />
-          </label>
-          <button type="submit" class="primary">Enviar solicitud</button>
-        </form>
         <div class="hint">
-          Acceso restringido para EVINKA. Las cuentas nuevas `@evinka.tech` quedan pendientes hasta aprobación del admin.
+          El admin crea la cuenta, define el código y asigna el PIN. Si aún no tienes PIN, pídeselo al administrador.
         </div>
       </main>
 
@@ -67,8 +51,11 @@
             </div>
 
             <nav class="nav-group tabs-nav">
-              <button class="tab nav-link active" data-tab="quote"><span>Cotizador</span><span>Nuevo</span></button>
-              <button class="tab nav-link" data-tab="quotes"><span>Cotizaciones</span><span>Historial</span></button>
+              <button class="tab nav-link active" data-tab="quote" id="quoteTabBtn"><span>Cotizador</span><span>Nuevo</span></button>
+              <button class="tab nav-link" data-tab="quotes" id="quotesTabBtn"><span>Cotizaciones</span><span>Historial</span></button>
+              <button class="tab nav-link" data-tab="visits" id="visitsTabBtn"><span>Visitas</span><span>Agenda</span></button>
+              <button class="tab nav-link" data-tab="ops" id="opsTabBtn"><span>Operación</span><span>Pendientes</span></button>
+              <button class="tab nav-link" data-tab="conformities" id="conformitiesTabBtn"><span>Conformidades</span><span>Historial</span></button>
               <button class="tab nav-link hidden" data-tab="admin" id="adminTabBtn"><span>Admin</span><span>Ajustes</span></button>
             </nav>
           </div>
@@ -191,6 +178,33 @@
           <div id="quotesList" class="quotes-list"></div>
         </section>
 
+        <section id="tab-visits" class="panel tab-panel hidden">
+          <div class="section-header">
+            <h2>Visitas</h2>
+            <p class="muted">Agenda técnica y avance real de campo desde el navegador.</p>
+          </div>
+          <div id="visitsSummary" class="result-grid top-gap-sm"></div>
+          <div id="visitsList" class="quotes-list top-gap-sm"></div>
+        </section>
+
+        <section id="tab-ops" class="panel tab-panel hidden">
+          <div class="section-header">
+            <h2>Operación</h2>
+            <p class="muted">Vista compacta de lo que hoy normalmente controlas en la app.</p>
+          </div>
+          <div id="opsBoard"></div>
+        </section>
+
+        <section id="tab-conformities" class="panel tab-panel hidden">
+          <div class="section-header">
+            <h2>Conformidades</h2>
+            <p class="muted">Historial generado desde la app con acceso web al PDF y estado del envío.</p>
+          </div>
+          <div id="conformitiesSummary" class="result-grid top-gap-sm"></div>
+          <div class="hint top-gap-sm">La cola offline local del teléfono sigue siendo propia del dispositivo. Aquí se refleja lo que ya llegó al backend.</div>
+          <div id="conformitiesList" class="quotes-list top-gap-sm"></div>
+        </section>
+
         <section id="tab-admin" class="panel tab-panel hidden">
           <div class="section-header">
             <h2>Admin</h2>
@@ -216,6 +230,6 @@
         </div>
       </section>
     </div>
-    <script src="/app.js?v=20260502login1"></script>
+    <script src="/app.js?v=20260513ops1"></script>
   </body>
   </html>

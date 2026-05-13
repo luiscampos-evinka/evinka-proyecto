@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
@@ -13,12 +14,21 @@ class EvinkaApiService {
 
   static const String _baseUrl = 'https://cotizador.evinka.net';
   static const String _cookieKey = 'evinka_suite_cookie';
+  static const String _cachedUserKey = 'evinka_suite_cached_user';
 
   String? _cookie;
+  EvinkaUser? _cachedUser;
 
   Future<void> init() async {
     final prefs = await SharedPreferences.getInstance();
     _cookie = prefs.getString(_cookieKey);
+    final rawUser = prefs.getString(_cachedUserKey);
+    if (rawUser != null && rawUser.isNotEmpty) {
+      final parsed = _decodeJsonBody(rawUser);
+      if (parsed is Map<String, dynamic>) {
+        _cachedUser = EvinkaUser.fromJson(parsed);
+      }
+    }
   }
 
   String get baseUrl => _baseUrl;
@@ -30,6 +40,20 @@ class EvinkaApiService {
     } else {
       await prefs.setString(_cookieKey, _cookie!);
     }
+  }
+
+  Future<void> _persistCachedUser(EvinkaUser? user) async {
+    final prefs = await SharedPreferences.getInstance();
+    _cachedUser = user;
+    if (user == null) {
+      await prefs.remove(_cachedUserKey);
+    } else {
+      await prefs.setString(_cachedUserKey, jsonEncode(user.toJson()));
+    }
+  }
+
+  bool _isOfflineError(Object error) {
+    return error is SocketException || error is TimeoutException;
   }
 
   Map<String, String> _headers({bool auth = true}) {
@@ -54,16 +78,18 @@ class EvinkaApiService {
     dynamic parsed,
     String path,
   ) {
-    if (response.statusCode == 401) {
-      return Exception('Sesión vencida. Vuelve a iniciar sesión.');
-    }
     if (parsed is Map<String, dynamic>) {
       final message = parsed['error']?.toString().trim();
       if (message != null && message.isNotEmpty) {
         return Exception(message);
       }
     }
-    return Exception('Respuesta inválida del servidor (${response.statusCode}) para $path.');
+    if (response.statusCode == 401) {
+      return Exception('Sesión vencida. Vuelve a iniciar sesión.');
+    }
+    return Exception(
+      'Respuesta inválida del servidor (${response.statusCode}) para $path.',
+    );
   }
 
   Future<Map<String, dynamic>> _jsonRequest(
@@ -148,31 +174,39 @@ class EvinkaApiService {
   }
 
   Future<EvinkaUser?> restoreSession() async {
-    if (_cookie == null || _cookie!.isEmpty) return null;
+    if (_cookie == null || _cookie!.isEmpty) return _cachedUser;
     Map<String, dynamic> data;
     try {
       data = await _jsonRequest('/api/me');
-    } catch (_) {
+    } catch (error) {
+      if (_isOfflineError(error)) {
+        return _cachedUser;
+      }
       _cookie = null;
       await _persistCookie();
+      await _persistCachedUser(null);
       return null;
     }
     final userMap = data['user'];
-    if (userMap == null) return null;
-    return EvinkaUser.fromJson(Map<String, dynamic>.from(userMap as Map));
+    if (userMap == null) return _cachedUser;
+    final user = EvinkaUser.fromJson(Map<String, dynamic>.from(userMap as Map));
+    await _persistCachedUser(user);
+    return user;
   }
 
-  Future<EvinkaUser> login(String email, String password) async {
+  Future<EvinkaUser> login(String identifier, String secret) async {
     final data = await _jsonRequest(
       '/api/login',
       method: 'POST',
       auth: false,
       body: {
-        'email': email.trim(),
-        'password': password,
+        'identifier': identifier.trim(),
+        'secret': secret,
       },
     );
-    return EvinkaUser.fromJson(Map<String, dynamic>.from(data['user'] as Map));
+    final user = EvinkaUser.fromJson(Map<String, dynamic>.from(data['user'] as Map));
+    await _persistCachedUser(user);
+    return user;
   }
 
   Future<String> registerAccessRequest({
@@ -203,6 +237,7 @@ class EvinkaApiService {
     }
     _cookie = null;
     await _persistCookie();
+    await _persistCachedUser(null);
   }
 
   Future<EvinkaConfig> getCatalog() async {

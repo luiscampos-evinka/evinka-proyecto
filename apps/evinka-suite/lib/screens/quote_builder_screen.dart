@@ -39,6 +39,7 @@ class _QuoteBuilderScreenState extends State<QuoteBuilderScreen> {
   final _currentCtrl = TextEditingController(text: '32');
   final _notesCtrl = TextEditingController();
   final _exchangeRateCtrl = TextEditingController(text: '3.75');
+  final _chargerPriceCtrl = TextEditingController();
 
   EvinkaConfig? _config;
   QuoteRecord? _lastQuote;
@@ -55,7 +56,13 @@ class _QuoteBuilderScreenState extends State<QuoteBuilderScreen> {
   String _outOfCity = 'NO';
   String? _selectedProfileId;
   String? _selectedCableId;
-  String _selectedChargerModel = 'minibox';
+  String _chargerIncluded = 'no';
+  String? _chargerModel;
+
+  static const Map<String, String> _chargerModelLabels = {
+    'minibox': 'EVINKA MiniBox',
+    'alien': 'EVINKA Alien X',
+  };
 
   final Map<String, bool> _activeConditionals = {};
   final Map<String, TextEditingController> _conditionalQtyCtrls = {};
@@ -80,6 +87,7 @@ class _QuoteBuilderScreenState extends State<QuoteBuilderScreen> {
     _currentCtrl.dispose();
     _notesCtrl.dispose();
     _exchangeRateCtrl.dispose();
+    _chargerPriceCtrl.dispose();
     for (final ctrl in _conditionalQtyCtrls.values) {
       ctrl.dispose();
     }
@@ -151,6 +159,8 @@ class _QuoteBuilderScreenState extends State<QuoteBuilderScreen> {
         _selectedCableId = config.catalog.cables.isNotEmpty
             ? config.catalog.cables.first.id
             : null;
+        _exchangeRateCtrl.text =
+            config.defaults.chargerExchangeRate.toStringAsFixed(2);
       });
     } catch (e) {
       if (!mounted) return;
@@ -217,9 +227,15 @@ class _QuoteBuilderScreenState extends State<QuoteBuilderScreen> {
         'current': double.tryParse(_currentCtrl.text.trim()) ?? 0,
         'grounding': _grounding,
         'outOfCity': _outOfCity,
-        'chargerModel': _selectedChargerModel,
-        'chargerPriceUsd': _selectedChargerPriceUsd,
-        'exchangeRate': double.tryParse(_exchangeRateCtrl.text.trim()) ?? 3.75,
+        'chargerIncluded': _chargerIncluded == 'si',
+        'chargerModel': _chargerIncluded == 'si' ? _chargerModel : null,
+        'chargerLabel': _chargerIncluded == 'si' ? _selectedChargerLabel : '',
+        'chargerPriceUsd': _showAdminPricing
+            ? double.tryParse(_chargerPriceCtrl.text.trim())
+            : null,
+        'exchangeRate': _showAdminPricing
+            ? (double.tryParse(_exchangeRateCtrl.text.trim()) ?? 3.75)
+            : null,
         'technicianNotes': _notesCtrl.text.trim(),
         'conditionals': config.catalog.conditionals.map((item) {
           return {
@@ -420,27 +436,15 @@ class _QuoteBuilderScreenState extends State<QuoteBuilderScreen> {
     _photos[index] = _photos[index].copyWith(title: title, comment: comment);
   }
 
-  static const Map<String, Map<String, Object>> _chargerCatalog = {
-    'minibox': {
-      'label': 'EVINKA MiniBox',
-      'usd': 700.0,
-    },
-    'alien': {
-      'label': 'EVINKA Alien X',
-      'usd': 900.0,
-    },
-  };
-
   List<CableOption> get _cables => _config?.catalog.cables ?? const [];
   List<CommercialProfile> get _profiles =>
       _config?.commercialProfiles ?? const [];
   List<ConditionalItem> get _conditionals =>
       _config?.catalog.conditionals ?? const [];
+
+  bool get _showAdminPricing => widget.user.hasFullAccess;
   String get _selectedChargerLabel =>
-      (_chargerCatalog[_selectedChargerModel]?['label'] as String?) ??
-      'EVINKA MiniBox';
-  double get _selectedChargerPriceUsd =>
-      (_chargerCatalog[_selectedChargerModel]?['usd'] as double?) ?? 700.0;
+      _chargerModelLabels[_chargerModel] ?? 'Cargador incluido';
 
   bool get _isDark => Theme.of(context).brightness == Brightness.dark;
   Color get _panelColor => _isDark ? const Color(0xFF161616) : Colors.white;
@@ -527,17 +531,24 @@ class _QuoteBuilderScreenState extends State<QuoteBuilderScreen> {
                                                     () => _clientType = v!)),
                                             _dropdown(
                                                 'Cargador incluido',
-                                                _selectedChargerModel,
-                                                _chargerCatalog.keys.toList(),
-                                                (v) => setState(() =>
-                                                    _selectedChargerModel =
-                                                        v ?? 'minibox'),
+                                                _chargerIncluded,
+                                                const ['no', 'si'],
+                                                (v) => setState(() {
+                                                      _chargerIncluded =
+                                                          v ?? 'no';
+                                                      if (_chargerIncluded ==
+                                                          'si') {
+                                                        _chargerModel ??=
+                                                            'minibox';
+                                                      } else {
+                                                        _chargerModel = null;
+                                                        _chargerPriceCtrl
+                                                            .clear();
+                                                      }
+                                                    }),
                                                 labels: {
-                                                  for (final entry
-                                                      in _chargerCatalog
-                                                          .entries)
-                                                    entry.key:
-                                                        '${entry.value['label']} · ${_moneyUsd((entry.value['usd'] as double?) ?? 0)}'
+                                                  'no': 'No',
+                                                  'si': 'Sí',
                                                 }),
                                             _dropdown(
                                                 'Perfil comercial',
@@ -549,17 +560,44 @@ class _QuoteBuilderScreenState extends State<QuoteBuilderScreen> {
                                                     _selectedProfileId = v),
                                                 labels: {
                                                   for (final p in _profiles)
-                                                    p.id:
-                                                        '${p.name} · ${p.marginPercent.toStringAsFixed(0)}%'
+                                                    p.id: _showAdminPricing
+                                                        ? '${p.name} · ${p.marginPercent.toStringAsFixed(0)}%'
+                                                        : p.name
                                                 }),
-                                            _field(_exchangeRateCtrl,
-                                                'Tipo de cambio referencial',
+                                            if (_chargerIncluded == 'si')
+                                              _dropdown(
+                                                'Modelo de cargador',
+                                                _chargerModel,
+                                                const ['minibox', 'alien'],
+                                                (v) => setState(
+                                                    () => _chargerModel = v),
+                                                labels: _chargerModelLabels,
+                                              ),
+                                            if (_showAdminPricing)
+                                              _field(
+                                                  _exchangeRateCtrl,
+                                                  _chargerIncluded == 'si' &&
+                                                          _chargerPriceCtrl.text
+                                                              .trim()
+                                                              .isNotEmpty
+                                                      ? 'Tipo de cambio referencial'
+                                                      : 'Tipo de cambio referencial (solo si cargas precio)',
+                                                  keyboardType:
+                                                      const TextInputType
+                                                          .numberWithOptions(
+                                                          decimal: true)),
+                                            if (_chargerIncluded == 'si' &&
+                                                _showAdminPricing)
+                                              _field(
+                                                _chargerPriceCtrl,
+                                                'Precio referencial US\$ (opcional)',
                                                 keyboardType:
                                                     const TextInputType
                                                         .numberWithOptions(
-                                                        decimal: true)),
-                                            _readOnlyField('Precio cargador',
-                                                '${_selectedChargerLabel} · ${_moneyUsd(_selectedChargerPriceUsd)}'),
+                                                        decimal: true),
+                                                hint:
+                                                    'Déjalo vacío si no quieres mostrar precio',
+                                              ),
                                             _dropdown(
                                                 'Tipo inmueble',
                                                 _propertyType,
@@ -595,8 +633,9 @@ class _QuoteBuilderScreenState extends State<QuoteBuilderScreen> {
                                                     () => _selectedCableId = v),
                                                 labels: {
                                                   for (final c in _cables)
-                                                    c.id:
-                                                        '${c.label} · ${_money(c.pricePerMeter)}/m'
+                                                    c.id: _showAdminPricing
+                                                        ? '${c.label} · ${_money(c.pricePerMeter)}/m'
+                                                        : c.label
                                                 }),
                                             _dropdown(
                                                 'Tipo tubería',
@@ -666,8 +705,9 @@ class _QuoteBuilderScreenState extends State<QuoteBuilderScreen> {
                                                             EdgeInsets.zero,
                                                         title: Text(
                                                             item.description),
-                                                        subtitle: Text(
-                                                            '${item.section} · ${item.unit} · ${_money(item.price)}'),
+                                                        subtitle: Text(_showAdminPricing
+                                                            ? '${item.section} · ${item.unit} · ${_money(item.price)}'
+                                                            : '${item.section} · ${item.unit}'),
                                                       ),
                                                       TextFormField(
                                                         controller:
@@ -1006,9 +1046,11 @@ class _QuoteBuilderScreenState extends State<QuoteBuilderScreen> {
                 _metric('Código', _displayQuoteLabel(quote)),
                 _metric('Perfil', quote.profileName),
                 _metric('Estado', quote.statusLabel),
-                _metric('Subtotal', _money(quote.subtotal)),
-                _metric('IGV', _money(quote.igv)),
-                _metric('Total', _money(quote.total)),
+                if (_showAdminPricing) ...[
+                  _metric('Subtotal', _money(quote.subtotal)),
+                  _metric('IGV', _money(quote.igv)),
+                  _metric('Total', _money(quote.total)),
+                ],
                 _metric(
                     'Correo',
                     quote.emailSent
@@ -1040,10 +1082,11 @@ class _QuoteBuilderScreenState extends State<QuoteBuilderScreen> {
               spacing: 10,
               runSpacing: 10,
               children: [
-                FilledButton.icon(
-                    onPressed: _openPdf,
-                    icon: const Icon(Icons.picture_as_pdf_outlined),
-                    label: const Text('Abrir PDF')),
+                if (_showAdminPricing)
+                  FilledButton.icon(
+                      onPressed: _openPdf,
+                      icon: const Icon(Icons.picture_as_pdf_outlined),
+                      label: const Text('Abrir PDF')),
                 if (quote.canConfirmForSend)
                   FilledButton.tonalIcon(
                     onPressed: _saving ? null : _confirmQuoteOnly,
@@ -1173,11 +1216,11 @@ class _QuoteBuilderScreenState extends State<QuoteBuilderScreen> {
   }
 
   Widget _field(TextEditingController controller, String label,
-      {bool required = false, TextInputType? keyboardType}) {
+      {bool required = false, TextInputType? keyboardType, String? hint}) {
     return TextFormField(
       controller: controller,
       keyboardType: keyboardType,
-      decoration: InputDecoration(labelText: label),
+      decoration: InputDecoration(labelText: label, hintText: hint),
       validator: required
           ? (value) =>
               (value == null || value.trim().isEmpty) ? 'Campo requerido' : null
@@ -1241,9 +1284,6 @@ class _QuoteBuilderScreenState extends State<QuoteBuilderScreen> {
 
   String _money(double value) =>
       NumberFormat.currency(locale: 'es_PE', symbol: 'S/ ').format(value);
-
-  String _moneyUsd(double value) =>
-      NumberFormat.currency(locale: 'en_US', symbol: 'US\$ ').format(value);
 
   String _displayQuoteLabel(QuoteRecord quote) {
     if (quote.pdfFilename.isNotEmpty)

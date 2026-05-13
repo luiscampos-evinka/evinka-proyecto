@@ -2,6 +2,9 @@ const state = {
   user: null,
   config: null,
   quotes: [],
+  techVisits: [],
+  installationOrders: [],
+  conformities: [],
   adminUsers: [],
   selectedTab: 'quote',
   catalogDraft: null,
@@ -25,6 +28,7 @@ function bindUI() {
   el('quoteForm').addEventListener('submit', onGenerateQuote);
   el('resetFormBtn').addEventListener('click', () => {
     el('quoteForm').reset();
+    clearQuotePrefill();
     if (el('sitePhotos')) el('sitePhotos').value = '';
     state.quotePhotos = [];
     renderSelectedPhotosPreview();
@@ -46,11 +50,15 @@ async function loadSession() {
     return;
   }
   showDashboard();
-  await Promise.all([
+  await Promise.allSettled([
     loadCatalog(),
     loadQuotes(),
+    loadTechVisits(),
+    loadInstallationOrders(),
+    loadConformities(),
     state.user.role === 'admin' ? loadAdminUsers() : Promise.resolve(),
   ]);
+  applyAdvisorPrefillFromQuery();
 }
 
 function showLogin() {
@@ -64,18 +72,45 @@ function showDashboard() {
   el('companyName').textContent = state.config?.company?.name || 'EVINKA Cotizador';
   el('companyTagline').textContent = state.config?.company?.tagline || '';
   el('sessionBadge').textContent = `${state.user.role} · ${state.user.name}`;
-  el('adminTabBtn').classList.toggle('hidden', state.user.role !== 'admin');
+  el('adminTabBtn').classList.toggle('hidden', !isAdminUser());
+  el('quoteTabBtn')?.classList.toggle('hidden', !canEditCommercialFlow());
+  el('quotesTabBtn')?.classList.toggle('hidden', !canEditCommercialFlow());
+  el('visitsTabBtn')?.classList.toggle('hidden', !canSeeOperations());
+  el('opsTabBtn')?.classList.toggle('hidden', !canSeeOperations());
+  el('conformitiesTabBtn')?.classList.toggle('hidden', !canSeeOperations());
   el('techName').value = state.user.name;
   if (el('quoteForm').visitDate && !el('quoteForm').visitDate.value) {
     el('quoteForm').visitDate.value = new Date().toISOString().slice(0, 10);
   }
-  setTab('quote');
+  setTab(canEditCommercialFlow() ? 'quote' : 'ops');
 }
 
 function setTab(name) {
   state.selectedTab = name;
   document.querySelectorAll('.tab').forEach((btn) => btn.classList.toggle('active', btn.dataset.tab === name));
-  ['quote', 'quotes', 'admin'].forEach((tab) => el(`tab-${tab}`).classList.toggle('hidden', tab !== name));
+  ['quote', 'quotes', 'visits', 'ops', 'conformities', 'admin'].forEach((tab) => {
+    const panel = el(`tab-${tab}`);
+    if (panel) panel.classList.toggle('hidden', tab !== name);
+  });
+}
+
+function applyAdvisorPrefillFromQuery() {
+  const params = new URLSearchParams(window.location.search);
+  if (params.get('source') !== 'advisor') return;
+  const form = el('quoteForm');
+  if (!form || !canEditCommercialFlow()) return;
+  const map = [
+    ['clientName', 'clientName'],
+    ['email', 'email'],
+    ['city', 'city'],
+    ['visitDate', 'visitDate'],
+    ['technicianNotes', 'technicianNotes'],
+  ];
+  for (const [field, param] of map) {
+    if (form[field] && params.get(param)) form[field].value = params.get(param);
+  }
+  if (params.get('reference')) form.dataset.reference = params.get('reference');
+  setTab('quote');
 }
 
 async function onLogin(event) {
@@ -84,11 +119,11 @@ async function onLogin(event) {
   const res = await fetch('/api/login', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ email: form.get('email'), password: form.get('password') }),
+    body: JSON.stringify({ identifier: form.get('identifier'), secret: form.get('secret') }),
   });
   const data = await res.json().catch(() => ({}));
   if (!res.ok) {
-    return alert(data.error || 'No pude entrar. Revisa correo y contraseña.');
+    return alert(data.error || 'No pude entrar. Revisa tu código/PIN o el acceso admin de respaldo.');
   }
   await loadSession();
 }
@@ -123,6 +158,7 @@ async function onLogout() {
 
 async function loadCatalog() {
   const res = await fetch('/api/catalog');
+  if (!res.ok) return;
   state.catalog = await res.json();
   state.catalogDraft = structuredClone(state.catalog);
   renderQuoteSelects();
@@ -204,9 +240,35 @@ function renderAdminUsers() {
   const pending = users.filter((user) => user.status === 'pending');
   const active = users.filter((user) => user.status === 'active');
   const blocked = users.filter((user) => user.status === 'blocked');
+  const roles = state.config?.roles || ['admin', 'tech', 'tecnico_supervisor'];
   wrap.innerHTML = `
     <h3>Cuentas</h3>
-    <p class="muted">Solicitudes corporativas @evinka.tech con aprobación manual.</p>
+    <p class="muted">El admin crea las cuentas y asigna un código + PIN para entrar directo.</p>
+    <form class="form-grid top-gap-sm" onsubmit="window.createAdminUser(event)">
+      <label>
+        Nombre
+        <input name="name" type="text" placeholder="Julio Campos" required />
+      </label>
+      <label>
+        Correo (opcional)
+        <input name="email" type="email" placeholder="julio.campos@evinka.tech" />
+      </label>
+      <label>
+        Rol
+        <select name="role">
+          ${roles.map((role) => `<option value="${escapeHtml(role)}">${escapeHtml(role)}</option>`).join('')}
+        </select>
+      </label>
+      <label>
+        Código (opcional)
+        <input name="employeeCode" type="text" placeholder="TEC014" />
+      </label>
+      <label>
+        PIN
+        <input name="pin" type="password" inputmode="numeric" pattern="\\d{4,8}" placeholder="1234" required />
+      </label>
+      <button class="primary" type="submit">Crear cuenta</button>
+    </form>
     <div class="result-grid top-gap-sm">
       <div class="metric"><b>Pendientes</b><span>${pending.length}</span></div>
       <div class="metric"><b>Activas</b><span>${active.length}</span></div>
@@ -221,6 +283,7 @@ function renderAdminUsers() {
 function renderAdminUserCard(user) {
   const requested = user.requestedAt ? formatDate(user.requestedAt) : '-';
   const granted = user.accessGrantedAt ? formatDate(user.accessGrantedAt) : '-';
+  const pinStatus = user.hasPin ? 'PIN listo' : 'Sin PIN';
   return `
     <article class="quote-card account-card">
       <div class="row">
@@ -228,11 +291,14 @@ function renderAdminUserCard(user) {
         <span class="pill pill-${escapeHtml(user.status)}">${escapeHtml(labelUserStatus(user.status))}</span>
       </div>
       <div class="row"><span>${escapeHtml(user.email || '-')}</span><span>${escapeHtml(user.role || 'tech')}</span></div>
+      <div class="row"><span>Código</span><span>${escapeHtml(user.employeeCode || '-')}</span></div>
+      <div class="row"><span>PIN</span><span>${escapeHtml(pinStatus)}</span></div>
       <div class="row"><span>Solicitud</span><span>${requested}</span></div>
       <div class="row"><span>Acceso</span><span>${granted}</span></div>
       <div class="row quote-card-actions">
         ${user.status !== 'active' ? `<button class="primary compact-btn" type="button" onclick="window.updateUserAccess('${user.id}','approve')">Dar acceso</button>` : ''}
         ${user.status !== 'blocked' ? `<button class="secondary compact-btn" type="button" onclick="window.updateUserAccess('${user.id}','block')">Quitar acceso</button>` : ''}
+        <button class="secondary compact-btn" type="button" onclick="window.manageUserCredentials('${user.id}')">Código / PIN</button>
       </div>
     </article>
   `;
@@ -261,6 +327,51 @@ async function updateUserAccess(id, action) {
 }
 
 window.updateUserAccess = updateUserAccess;
+
+async function createAdminUser(event) {
+  event.preventDefault();
+  const form = new FormData(event.target);
+  const res = await fetch('/api/admin/users', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      name: form.get('name'),
+      email: form.get('email'),
+      role: form.get('role'),
+      employeeCode: form.get('employeeCode'),
+      pin: form.get('pin'),
+    }),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) return alert(data.error || 'No se pudo crear la cuenta.');
+  event.target.reset();
+  await loadAdminUsers();
+  alert(`Cuenta creada. Código asignado: ${data.user?.employeeCode || '-'}`);
+}
+
+async function manageUserCredentials(id) {
+  const user = (state.adminUsers || []).find((item) => item.id === id);
+  if (!user) return;
+  const employeeCode = window.prompt('Código del usuario', user.employeeCode || '');
+  if (employeeCode === null) return;
+  const pin = window.prompt('Nuevo PIN (4 a 8 dígitos). Déjalo vacío para mantener el actual.', '');
+  if (pin === null) return;
+  const res = await fetch(`/api/admin/users/${encodeURIComponent(id)}/credentials`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      employeeCode,
+      ...(pin ? { pin } : {}),
+    }),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) return alert(data.error || 'No se pudo actualizar el código o PIN.');
+  await loadAdminUsers();
+  alert('Código / PIN actualizado.');
+}
+
+window.createAdminUser = createAdminUser;
+window.manageUserCredentials = manageUserCredentials;
 
 function parametersEditor(defaults = {}) {
   const factors = Array.isArray(defaults.distanceFactors) && defaults.distanceFactors.length
@@ -497,6 +608,8 @@ async function onGenerateQuote(event) {
   event.preventDefault();
   const form = new FormData(event.target);
   const body = Object.fromEntries(form.entries());
+  if (event.target.dataset.visitId) body.visitId = event.target.dataset.visitId;
+  if (event.target.dataset.reference) body.reference = event.target.dataset.reference;
   body.conditionals = (state.catalog.catalog?.conditionals || []).map((item) => ({
     code: item.code,
     active: form.get(`cond_${item.code}_active`) === '1',
@@ -515,7 +628,8 @@ async function onGenerateQuote(event) {
   if (!res.ok) return alert(data.error || 'No pude generar la cotización.');
   const quote = data;
   renderQuoteResult(quote);
-  await loadQuotes();
+  clearQuotePrefill();
+  await Promise.allSettled([loadQuotes(), loadTechVisits(), loadInstallationOrders(), loadConformities()]);
   el('sitePhotos').value = '';
   state.quotePhotos = [];
   renderSelectedPhotosPreview();
@@ -549,26 +663,13 @@ function renderQuoteResult(quote) {
 
 async function loadQuotes() {
   const res = await fetch('/api/quotes');
-  state.quotes = await res.json();
+  if (!res.ok) return;
+  const data = await res.json().catch(() => []);
+  state.quotes = Array.isArray(data) ? data : [];
   el('quotesList').innerHTML = state.quotes.length
-    ? state.quotes.map((quote) => `
-      <article class="quote-card">
-        <div class="row">
-          <strong>${displayQuoteLabel(quote)}</strong>
-          <span class="pill">${quote.status}</span>
-        </div>
-        <div class="row"><span>${quote.clientName || '-'}</span><span>${formatDate(quote.createdAt)}</span></div>
-        <div class="row"><span>${quote.email || '-'}</span><span>${quote.emailDelivery?.ok ? 'Correo enviado' : 'Correo pendiente'}</span></div>
-        <div class="row"><span>${quote.commercialProfile?.name || 'GENERAL'}</span><span>${formatPercent(quote.marginPercent || 0)}</span></div>
-        <div class="row"><span>${quote.installationOrderId || 'Sin orden'}</span><span>${labelQuoteStatus(quote)}</span></div>
-        <div class="row"><span>${quote.installationType || ''} · ${quote.cable?.label || ''}</span><span><strong>${money(quote.total)}</strong></span></div>
-        <div class="row quote-card-actions">
-          <a class="link" href="${quote.pdfPath}" target="_blank" rel="noreferrer">PDF</a>
-          ${state.user.role === 'admin' && quote.status !== 'aceptada' && quote.status !== 'instalada' ? `<button class="secondary compact-btn" type="button" onclick="window.acceptQuote('${quote.id}')">Aceptar</button>` : ''}
-        </div>
-      </article>
-    `).join('')
+    ? state.quotes.map(renderQuoteCard).join('')
     : '<p class="muted">Todavía no hay cotizaciones.</p>';
+  renderOperations();
 }
 
 async function acceptQuote(id) {
@@ -577,20 +678,376 @@ async function acceptQuote(id) {
   const res = await fetch(`/api/quotes/${encodeURIComponent(id)}/accept`, { method: 'POST' });
   const data = await res.json().catch(() => ({}));
   if (!res.ok) return alert(data.error || 'No se pudo aceptar la cotización.');
-  await loadQuotes();
+  await refreshOperationalData();
   alert(`Cotización aceptada. Orden creada: ${data.installationOrder?.id || '-'}`);
 }
 
 window.acceptQuote = acceptQuote;
 
-function labelQuoteStatus(quote) {
-  const quoteStatus = String(quote?.status || 'emitida').toLowerCase();
-  const conformity = String(quote?.conformityStatus || 'not_started').toLowerCase();
-  if (conformity === 'pdf_generated') return 'Conformidad generada';
-  if (quoteStatus === 'instalada') return 'Instalada';
-  if (quoteStatus === 'aceptada') return 'Aceptada';
-  return 'Emitida';
+function renderQuoteCard(rawQuote) {
+  const quote = decorateQuote(rawQuote);
+  const conformity = findConformityByOrderId(quote.installationOrderId);
+  return `
+    <article class="quote-card">
+      <div class="row">
+        <strong>${displayQuoteLabel(quote)}</strong>
+        <span class="pill ${statusPillClass(quote.hasGeneratedConformity ? 'pdf_generated' : quote.normalizedStatus)}">${escapeHtml(quote.statusLabel)}</span>
+      </div>
+      <div class="row"><span>${escapeHtml(quote.clientName || '-')}</span><span>${formatDate(quote.createdAt)}</span></div>
+      <div class="row"><span>${escapeHtml(quote.email || '-')}</span><span>${escapeHtml(quote.emailSent ? 'Correo enviado' : 'Correo pendiente')}</span></div>
+      <div class="row"><span>${escapeHtml(quote.profileName || quote.commercialProfile?.name || 'GENERAL')}</span><span>${formatPercent(quote.marginPercent || 0)}</span></div>
+      <div class="row"><span>${escapeHtml(quote.installationOrderId || 'Sin orden')}</span><span>${escapeHtml(quote.scheduledInstallationWindow || labelQuoteStatus(quote))}</span></div>
+      <div class="row"><span>${escapeHtml(quote.installationType || '')} · ${escapeHtml(quote.cable?.label || '')}</span><span><strong>${money(quote.total)}</strong></span></div>
+      ${quote.scheduledInstallationAt ? `<div class="row"><span>Instalación programada</span><span>${escapeHtml(formatDate(quote.scheduledInstallationAt))}</span></div>` : ''}
+      <div class="row quote-card-actions">
+        <a class="link" href="${quote.pdfPath}" target="_blank" rel="noreferrer">PDF</a>
+        ${quote.canConfirmForSend ? `<button class="secondary compact-btn" type="button" onclick="window.confirmQuote('${quote.id}')">Confirmar</button>` : ''}
+        ${quote.canMarkClientAccepted ? `<button class="secondary compact-btn" type="button" onclick="window.markQuoteAccepted('${quote.id}')">Cliente acepta</button>` : ''}
+        ${quote.canScheduleInstallation ? `<button class="secondary compact-btn" type="button" onclick="window.scheduleInstallation('${quote.id}')">Agendar</button>` : ''}
+        ${quote.canRequestRecotizar ? `<button class="secondary compact-btn" type="button" onclick="window.requestQuoteRecotizar('${quote.id}')">Recotizar</button>` : ''}
+        ${quote.canCancel ? `<button class="secondary compact-btn" type="button" onclick="window.cancelQuote('${quote.id}')">Cancelar</button>` : ''}
+        ${isAdminUser() && quote.normalizedStatus !== 'aceptada_cliente' && quote.normalizedStatus !== 'instalada' && !quote.hasOrder ? `<button class="secondary compact-btn" type="button" onclick="window.acceptQuote('${quote.id}')">Crear orden</button>` : ''}
+        ${conformity ? `<a class="link" href="/api/conformities/${encodeURIComponent(conformity.id)}/pdf" target="_blank" rel="noreferrer">Conformidad</a>` : ''}
+      </div>
+    </article>
+  `;
 }
+
+async function updateQuoteStatusAction(id, status, successMessage) {
+  const res = await fetch(`/api/quotes/${encodeURIComponent(id)}/status`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ status }),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) return alert(data.error || 'No se pudo actualizar la cotización.');
+  await refreshOperationalData();
+  alert(successMessage);
+}
+
+async function confirmQuote(id) {
+  const ok = window.confirm('¿Dejar esta cotización lista para enviarse al cliente?');
+  if (!ok) return;
+  await updateQuoteStatusAction(id, 'lista_envio', 'Cotización confirmada. Ya quedó lista para enviar.');
+}
+
+async function markQuoteAccepted(id) {
+  const ok = window.confirm('¿Registrar que el cliente aceptó la cotización?');
+  if (!ok) return;
+  await updateQuoteStatusAction(id, 'aceptada_cliente', 'Cliente aceptado registrado. Ya puedes agendar la instalación.');
+}
+
+async function requestQuoteRecotizar(id) {
+  const ok = window.confirm('¿Mandar esta cotización a recotizar?');
+  if (!ok) return;
+  await updateQuoteStatusAction(id, 'recotizar', 'La cotización quedó marcada para recotizar.');
+}
+
+async function cancelQuote(id) {
+  const ok = window.confirm('¿Cancelar esta cotización?');
+  if (!ok) return;
+  await updateQuoteStatusAction(id, 'cancelada', 'La cotización quedó cancelada.');
+}
+
+async function scheduleInstallation(id) {
+  const quote = (state.quotes || []).find((item) => item.id === id);
+  if (!quote) return alert('No encontré la cotización.');
+  const date = window.prompt('Fecha de instalación (YYYY-MM-DD)', new Date().toISOString().slice(0, 10));
+  if (!date) return;
+  const exactTime = window.prompt('Hora exacta (HH:MM, 24h)', '10:00');
+  if (!exactTime) return;
+  const timeWindow = window.prompt('Texto visible del horario', exactTime) || exactTime;
+  const address = window.prompt('Dirección de instalación', quote.clientAddress || quote.address || quote.city || '');
+  if (address === null) return;
+  const clientPhone = window.prompt('Teléfono del cliente', quote.clientPhone || '') || '';
+  const notes = window.prompt('Notas de instalación', '') || '';
+  const assignedTechEmail = window.prompt('Correo del técnico asignado', state.user?.email || '');
+  if (!assignedTechEmail) return alert('Necesito el correo del técnico asignado.');
+
+  const scheduledAt = new Date(`${date}T${exactTime}:00`);
+  if (Number.isNaN(scheduledAt.getTime())) {
+    return alert('Fecha u hora inválida.');
+  }
+
+  const res = await fetch(`/api/quotes/${encodeURIComponent(id)}/schedule-installation`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      scheduledAt: scheduledAt.toISOString(),
+      timeWindow,
+      clientAddress: address,
+      clientPhone,
+      notes,
+      assignedTechEmail,
+    }),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) return alert(data.error || 'No se pudo agendar la instalación.');
+  await refreshOperationalData();
+  alert(`Instalación agendada. Orden: ${data.installationOrder?.id || quote.installationOrderId || '-'}`);
+}
+
+window.confirmQuote = confirmQuote;
+window.markQuoteAccepted = markQuoteAccepted;
+window.requestQuoteRecotizar = requestQuoteRecotizar;
+window.cancelQuote = cancelQuote;
+window.scheduleInstallation = scheduleInstallation;
+
+function labelQuoteStatus(quote) {
+  return decorateQuote(quote).statusLabel;
+}
+
+async function loadTechVisits() {
+  const res = await fetch('/api/tech/visits');
+  if (!res.ok) return;
+  const data = await res.json().catch(() => []);
+  state.techVisits = Array.isArray(data) ? data : [];
+  renderVisits();
+  renderOperations();
+}
+
+async function loadInstallationOrders() {
+  const res = await fetch('/api/installation-orders');
+  if (!res.ok) return;
+  const data = await res.json().catch(() => []);
+  state.installationOrders = Array.isArray(data) ? data : [];
+  renderOperations();
+}
+
+async function loadConformities() {
+  const res = await fetch('/api/conformities');
+  if (!res.ok) return;
+  const data = await res.json().catch(() => []);
+  state.conformities = Array.isArray(data) ? data : [];
+  renderConformities();
+  renderOperations();
+}
+
+async function refreshOperationalData() {
+  await Promise.allSettled([
+    loadQuotes(),
+    loadTechVisits(),
+    loadInstallationOrders(),
+    loadConformities(),
+  ]);
+}
+
+function renderVisits() {
+  const summary = el('visitsSummary');
+  const list = el('visitsList');
+  if (!summary || !list) return;
+  const visits = [...(state.techVisits || [])].map(decorateVisit).sort(compareVisits);
+  const today = visits.filter((visit) => visit.isToday && !visit.isClosed);
+  const pending = visits.filter((visit) => !visit.isClosed);
+  const onRoute = visits.filter((visit) => visit.status === 'en_ruta' || visit.status === 'en_visita');
+  summary.innerHTML = `
+    <div class="metric"><b>Hoy</b><span>${today.length}</span></div>
+    <div class="metric"><b>Abiertas</b><span>${pending.length}</span></div>
+    <div class="metric"><b>En movimiento</b><span>${onRoute.length}</span></div>
+    <div class="metric"><b>Cerradas</b><span>${visits.filter((visit) => visit.isClosed).length}</span></div>
+  `;
+  list.innerHTML = visits.length
+    ? visits.map(renderVisitCard).join('')
+    : '<p class="muted">No hay visitas registradas todavía.</p>';
+}
+
+function renderVisitCard(rawVisit, { compact = false } = {}) {
+  const visit = decorateVisit(rawVisit);
+  const actions = [];
+  actions.push(`<button class="secondary compact-btn" type="button" onclick="window.openVisitMaps('${visit.id}')">Ruta</button>`);
+  if (visit.status === 'agendada') {
+    actions.push(`<button class="secondary compact-btn" type="button" onclick="window.updateVisitStatus('${visit.id}','en_ruta')">Ir en ruta</button>`);
+  }
+  if (visit.status === 'en_ruta') {
+    actions.push(`<button class="secondary compact-btn" type="button" onclick="window.updateVisitStatus('${visit.id}','en_visita')">Marcar en visita</button>`);
+  }
+  if (visit.status === 'en_visita') {
+    actions.push(`<button class="secondary compact-btn" type="button" onclick="window.updateVisitStatus('${visit.id}','${visit.isInstallation ? 'pendiente_cierre' : 'visitada'}')">${visit.isInstallation ? 'Pendiente de cierre' : 'Marcar visitada'}</button>`);
+  }
+  if ((visit.status === 'visitada' || visit.status === 'pendiente_cierre') && !visit.isClosed) {
+    actions.push(`<button class="secondary compact-btn" type="button" onclick="window.closeVisit('${visit.id}')">Cerrar</button>`);
+  }
+  if (visit.needsQuote && canEditCommercialFlow()) {
+    actions.push(`<button class="secondary compact-btn" type="button" onclick="window.prefillQuoteFromVisit('${visit.id}')">Cotizar</button>`);
+  }
+  if (visit.installationOrderId) {
+    const conformity = findConformityByOrderId(visit.installationOrderId);
+    if (conformity) {
+      actions.push(`<a class="link" href="/api/conformities/${encodeURIComponent(conformity.id)}/pdf" target="_blank" rel="noreferrer">PDF conformidad</a>`);
+    }
+  }
+  return `
+    <article class="quote-card ${compact ? 'compact-card' : ''}">
+      <div class="row">
+        <strong>${escapeHtml(visit.clientName || visit.reference || visit.id)}</strong>
+        <span class="pill ${statusPillClass(visit.status)}">${escapeHtml(visit.statusLabel)}</span>
+      </div>
+      <div class="row"><span>${escapeHtml(visit.typeLabel)}</span><span>${escapeHtml(formatOptionalDate(visit.scheduledAt, visit.timeWindow || 'Sin hora'))}</span></div>
+      <div class="row"><span>${escapeHtml(visit.clientAddress || '-')}</span><span>${escapeHtml(visit.assignedTechName || visit.assignedTechEmail || '-')}</span></div>
+      <div class="row"><span>${escapeHtml(visit.reference || '-')}</span><span>${escapeHtml(visit.quoteId || visit.installationOrderId || '-')}</span></div>
+      ${visit.notes && !compact ? `<div class="row"><span class="muted">${escapeHtml(visit.notes)}</span></div>` : ''}
+      <div class="row quote-card-actions">${actions.join('')}</div>
+    </article>
+  `;
+}
+
+function renderOperations() {
+  const board = el('opsBoard');
+  if (!board) return;
+  const visits = [...(state.techVisits || [])].map(decorateVisit).sort(compareVisits);
+  const quotes = [...(state.quotes || [])].map(decorateQuote);
+  const orders = [...(state.installationOrders || [])];
+  const conformities = [...(state.conformities || [])];
+  const todayOpen = visits.filter((visit) => visit.isToday && !visit.isClosed);
+  const quotePending = visits.filter((visit) => visit.needsQuote && !visit.isClosed);
+  const closePending = visits.filter((visit) => (visit.isPendingClose || visit.status === 'visitada') && !visit.isClosed);
+  const conformityPending = orders.filter((order) => String(order.conformityStatus || 'not_started').toLowerCase() !== 'pdf_generated');
+  const recentConformities = conformities.slice(0, 5);
+  const quoteFlowPending = quotes.filter((quote) => quote.canConfirmForSend || quote.canMarkClientAccepted || quote.canScheduleInstallation).slice(0, 6);
+
+  board.innerHTML = `
+    <div class="result-grid">
+      <div class="metric"><b>Hoy</b><span>${todayOpen.length}</span></div>
+      <div class="metric"><b>Por cotizar</b><span>${quotePending.length}</span></div>
+      <div class="metric"><b>Por cerrar</b><span>${closePending.length}</span></div>
+      <div class="metric"><b>Sin conformidad</b><span>${conformityPending.length}</span></div>
+    </div>
+    <div class="operations-grid top-gap-sm">
+      <section class="catalog-section">
+        <h3>Para hoy</h3>
+        <p class="muted">Lo más urgente de agenda.</p>
+        <div class="quotes-list top-gap-sm">${todayOpen.length ? todayOpen.slice(0, 5).map((visit) => renderVisitCard(visit, { compact: true })).join('') : '<p class="muted">No hay visitas abiertas para hoy.</p>'}</div>
+      </section>
+      <section class="catalog-section">
+        <h3>Flujo comercial pendiente</h3>
+        <p class="muted">Cotizaciones que todavía necesitan decisión.</p>
+        <div class="quotes-list top-gap-sm">${quoteFlowPending.length ? quoteFlowPending.map(renderQuoteCard).join('') : '<p class="muted">No hay cotizaciones pendientes en este momento.</p>'}</div>
+      </section>
+      <section class="catalog-section">
+        <h3>Órdenes sin conformidad</h3>
+        <p class="muted">Instalaciones que aún no cerraron documentalmente.</p>
+        <div class="quotes-list top-gap-sm">${conformityPending.length ? conformityPending.slice(0, 8).map(renderOrderCard).join('') : '<p class="muted">Todo lo instalado ya tiene conformidad o todavía no existe orden.</p>'}</div>
+      </section>
+      <section class="catalog-section">
+        <h3>Conformidades recientes</h3>
+        <p class="muted">Lo que ya quedó registrado en backend.</p>
+        <div class="quotes-list top-gap-sm">${recentConformities.length ? recentConformities.map(renderConformityCard).join('') : '<p class="muted">Aún no hay conformidades registradas.</p>'}</div>
+      </section>
+    </div>
+  `;
+}
+
+function renderOrderCard(order) {
+  const conformity = findConformityByOrderId(order.id);
+  return `
+    <article class="quote-card compact-card">
+      <div class="row">
+        <strong>${escapeHtml(order.clientName || order.id)}</strong>
+        <span class="pill ${statusPillClass(order.conformityStatus === 'pdf_generated' ? 'cerrada' : 'pendiente_conformidad')}">${escapeHtml(order.conformityStatus === 'pdf_generated' ? 'Conformidad generada' : 'Pendiente de conformidad')}</span>
+      </div>
+      <div class="row"><span>${escapeHtml(order.id)}</span><span>${escapeHtml(formatOptionalDate(order.updatedAt || order.createdAt, order.status || '-'))}</span></div>
+      <div class="row"><span>${escapeHtml(order.address || '-')}</span><span>${escapeHtml(order.assignedTechnician || order.assignedTechEmail || '-')}</span></div>
+      <div class="row quote-card-actions">
+        ${order.quotePdfUrl ? `<a class="link" href="${order.quotePdfUrl}" target="_blank" rel="noreferrer">PDF cotización</a>` : ''}
+        ${conformity ? `<a class="link" href="/api/conformities/${encodeURIComponent(conformity.id)}/pdf" target="_blank" rel="noreferrer">PDF conformidad</a>` : '<span class="muted">Aún sin PDF</span>'}
+      </div>
+    </article>
+  `;
+}
+
+function renderConformities() {
+  const summary = el('conformitiesSummary');
+  const list = el('conformitiesList');
+  if (!summary || !list) return;
+  const conformities = [...(state.conformities || [])];
+  summary.innerHTML = `
+    <div class="metric"><b>Registradas</b><span>${conformities.length}</span></div>
+    <div class="metric"><b>Con PDF</b><span>${conformities.filter((item) => item.hasPdfBase64 || item.pdfUrl).length}</span></div>
+    <div class="metric"><b>Correo OK</b><span>${conformities.filter((item) => item.emailDelivery?.ok).length}</span></div>
+    <div class="metric"><b>Últimas 24h</b><span>${conformities.filter((item) => isWithinHours(item.createdAt, 24)).length}</span></div>
+  `;
+  list.innerHTML = conformities.length
+    ? conformities.map(renderConformityCard).join('')
+    : '<p class="muted">Todavía no hay conformidades sincronizadas en backend.</p>';
+}
+
+function renderConformityCard(item) {
+  const downloadHref = `/api/conformities/${encodeURIComponent(item.id)}/pdf`;
+  return `
+    <article class="quote-card compact-card">
+      <div class="row">
+        <strong>${escapeHtml(item.clientName || item.installationOrderId || item.id)}</strong>
+        <span class="pill ${statusPillClass(item.status || 'pdf_generated')}">${escapeHtml(item.status === 'pdf_generated' ? 'PDF generado' : item.status || 'Conformidad')}</span>
+      </div>
+      <div class="row"><span>${escapeHtml(item.installationOrderId || '-')}</span><span>${escapeHtml(formatOptionalDate(item.createdAt, '-'))}</span></div>
+      <div class="row"><span>${escapeHtml(item.clientEmail || '-')}</span><span>${escapeHtml(item.ruc || '-')}</span></div>
+      <div class="row"><span>${escapeHtml(item.address || '-')}</span><span>${escapeHtml(item.emailDelivery?.ok ? 'Correo enviado' : (item.emailDelivery?.message || 'Sin envío'))}</span></div>
+      <div class="row quote-card-actions">
+        <a class="link" href="${downloadHref}" target="_blank" rel="noreferrer">Abrir PDF</a>
+      </div>
+    </article>
+  `;
+}
+
+async function updateVisitStatus(id, status, extra = {}) {
+  const res = await fetch(`/api/tech/visits/${encodeURIComponent(id)}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ status, ...extra }),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) return alert(data.error || 'No se pudo actualizar la visita.');
+  await refreshOperationalData();
+}
+
+async function closeVisit(id) {
+  const resolution = window.prompt('Resultado / cierre de la visita', 'Visita cerrada desde navegador.');
+  if (resolution === null) return;
+  await updateVisitStatus(id, 'cerrada', { resolution });
+}
+
+function openVisitMaps(id) {
+  const visit = (state.techVisits || []).find((item) => item.id === id);
+  if (!visit) return alert('No encontré la visita.');
+  const target = (visit.clientAddress || visit.reference || '').trim();
+  if (!target) return alert('La visita no tiene una dirección útil todavía.');
+  window.open(`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(target)}`, '_blank', 'noopener');
+}
+
+function prefillQuoteFromVisit(id) {
+  const visit = (state.techVisits || []).find((item) => item.id === id);
+  const form = el('quoteForm');
+  if (!visit || !form) return;
+  if (!canEditCommercialFlow()) {
+    alert('Este usuario no tiene acceso al flujo comercial desde web.');
+    return;
+  }
+  form.clientName.value = visit.clientName || '';
+  form.email.value = visit.clientEmail || '';
+  if (form.city && !form.city.value) form.city.value = 'Lima';
+  if (form.visitDate && visit.scheduledAt) form.visitDate.value = new Date(visit.scheduledAt).toISOString().slice(0, 10);
+  form.technicianNotes.value = [
+    visit.clientAddress ? `Dirección visita: ${visit.clientAddress}` : '',
+    visit.reference ? `Referencia visita: ${visit.reference}` : '',
+    visit.notes ? `Notas previas: ${visit.notes}` : '',
+  ].filter(Boolean).join('\n');
+  form.dataset.visitId = visit.id;
+  form.dataset.reference = visit.reference || '';
+  setTab('quote');
+  window.scrollTo({ top: 0, behavior: 'smooth' });
+}
+
+function clearQuotePrefill() {
+  const form = el('quoteForm');
+  if (!form) return;
+  delete form.dataset.visitId;
+  delete form.dataset.reference;
+}
+
+window.updateVisitStatus = updateVisitStatus;
+window.closeVisit = closeVisit;
+window.openVisitMaps = openVisitMaps;
+window.prefillQuoteFromVisit = prefillQuoteFromVisit;
 
 function displayQuoteLabel(quote) {
   const fromFile = String(quote?.pdfFilename || '').replace(/\.pdf$/i, '');
@@ -739,6 +1196,148 @@ function displayQuoteNumber(id) {
   const match = String(id || '').match(/(\d+)/g);
   const raw = match ? match.join('') : String(id || '').replace(/\D/g, '');
   return String(raw || '1').slice(-12).padStart(6, '0');
+}
+
+function normalizedRoleKey(role = state.user?.role || '') {
+  return String(role || '').trim().toLowerCase().replace(/[\s-]+/g, '_');
+}
+
+function normalizedEmail(value = '') {
+  return String(value || '').trim().toLowerCase();
+}
+
+function isAdminUser() {
+  return normalizedRoleKey() === 'admin';
+}
+
+function isLuisSupervisor() {
+  return normalizedEmail(state.user?.email) === 'luis.campos@evinka.tech';
+}
+
+function isTechSupervisor() {
+  return ['tecnico_supervisor', 'supervisor_tecnico', 'tech_supervisor', 'technical_supervisor', 'supervisor'].includes(normalizedRoleKey());
+}
+
+function canEditCommercialFlow() {
+  return isAdminUser()
+    || isLuisSupervisor()
+    || isTechSupervisor()
+    || ['comercial', 'ventas', 'sales', 'commercial', 'asesor', 'advisor', 'asesor_humano', 'human_advisor'].includes(normalizedRoleKey());
+}
+
+function canSeeOperations() {
+  return Boolean(state.user);
+}
+
+function decorateQuote(quote = {}) {
+  const normalizedStatus = String(quote?.status || 'cotizada').trim().toLowerCase();
+  const normalizedConformityStatus = String(quote?.conformityStatus || 'not_started').trim().toLowerCase();
+  const hasOrder = String(quote?.installationOrderId || '').trim().length > 0;
+  const hasGeneratedConformity = normalizedConformityStatus === 'pdf_generated';
+  const hasScheduledInstallation = String(quote?.scheduledInstallationAt || '').trim().length > 0;
+  return {
+    ...quote,
+    normalizedStatus,
+    normalizedConformityStatus,
+    hasOrder,
+    hasGeneratedConformity,
+    hasScheduledInstallation,
+    emailSent: quote?.emailDelivery?.ok === true,
+    profileName: quote?.commercialProfile?.name || quote?.profileName || 'GENERAL',
+    canConfirmForSend: normalizedStatus === 'cotizada',
+    canMarkClientAccepted: normalizedStatus === 'lista_envio',
+    canRequestRecotizar: normalizedStatus === 'lista_envio',
+    canCancel: ['cotizada', 'lista_envio', 'recotizar'].includes(normalizedStatus),
+    canScheduleInstallation: normalizedStatus === 'aceptada_cliente' && !hasGeneratedConformity && !hasScheduledInstallation,
+    statusLabel: (() => {
+      if (hasGeneratedConformity) return 'Conformidad generada';
+      if (normalizedStatus === 'instalada') return 'Instalada';
+      if (normalizedStatus === 'aceptada_cliente') return 'Aceptada por cliente';
+      if (normalizedStatus === 'lista_envio') return 'Lista para enviar';
+      if (normalizedStatus === 'recotizar') return 'Recotizar';
+      if (normalizedStatus === 'cancelada') return 'Cancelada';
+      return 'Cotizada';
+    })(),
+  };
+}
+
+function decorateVisit(visit = {}) {
+  const status = String(visit?.status || 'pendiente').trim().toLowerCase();
+  const scheduledDate = visit?.scheduledAt ? new Date(visit.scheduledAt) : null;
+  const hasQuote = String(visit?.quoteId || '').trim().length > 0;
+  const hasOrder = String(visit?.installationOrderId || '').trim().length > 0;
+  const isInstallation = String(visit?.type || '').trim().toLowerCase() === 'instalacion';
+  const isClosed = status === 'cerrada';
+  const isPendingClose = status === 'pendiente_cierre';
+  const now = new Date();
+  const isToday = scheduledDate && scheduledDate.getFullYear() === now.getFullYear() && scheduledDate.getMonth() === now.getMonth() && scheduledDate.getDate() === now.getDate();
+  const needsQuote = status === 'recotizar' || (!hasQuote && ['agendada', 'en_ruta', 'en_visita', 'visitada', 'pendiente_cotizacion', 'reprogramada', 'pendiente'].includes(status));
+  return {
+    ...visit,
+    status,
+    scheduledDate,
+    hasQuote,
+    hasOrder,
+    isInstallation,
+    isClosed,
+    isPendingClose,
+    isToday: Boolean(isToday),
+    needsQuote,
+    statusLabel: (() => {
+      switch (status) {
+        case 'agendada': return 'Agendada';
+        case 'en_ruta': return 'En ruta';
+        case 'en_visita': return 'En visita';
+        case 'visitada': return 'Visitada';
+        case 'cotizada': return 'Cotizada';
+        case 'pendiente_cotizacion': return 'Pendiente de cotización';
+        case 'lista_envio': return 'Lista para enviar';
+        case 'aceptada_cliente': return 'Cliente acepta';
+        case 'cancelada': return 'Cotización cancelada';
+        case 'recotizar': return 'Recotizar';
+        case 'pendiente_conformidad': return 'Pendiente de conformidad';
+        case 'pendiente_cierre': return 'Pendiente de cierre';
+        case 'reprogramada': return 'Reprogramada';
+        case 'cerrada': return 'Cerrada';
+        default: return 'Pendiente';
+      }
+    })(),
+    typeLabel: isInstallation ? 'Instalación' : 'Evaluación / visita',
+  };
+}
+
+function compareVisits(a, b) {
+  const rawA = new Date(a?.scheduledAt || a?.createdAt || 0).getTime();
+  const rawB = new Date(b?.scheduledAt || b?.createdAt || 0).getTime();
+  const dateA = Number.isNaN(rawA) ? 0 : rawA;
+  const dateB = Number.isNaN(rawB) ? 0 : rawB;
+  return dateA - dateB;
+}
+
+function statusPillClass(status) {
+  const key = String(status || '').trim().toLowerCase();
+  if (['active', 'cerrada', 'instalada', 'pdf_generated'].includes(key)) return 'pill-active';
+  if (['pending', 'pendiente', 'agendada', 'lista_envio', 'aceptada_cliente', 'pendiente_cierre', 'pendiente_conformidad', 'recotizar'].includes(key)) return 'pill-pending';
+  if (['blocked', 'cancelada'].includes(key)) return 'pill-blocked';
+  return '';
+}
+
+function formatOptionalDate(value, fallback = '-') {
+  if (!value) return fallback;
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return fallback;
+  return formatDate(value);
+}
+
+function findConformityByOrderId(orderId) {
+  return (state.conformities || []).find((item) => String(item.installationOrderId || '').trim() === String(orderId || '').trim()) || null;
+}
+
+function isWithinHours(value, hours) {
+  if (!value) return false;
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return false;
+  return (Date.now() - date.getTime()) <= hours * 60 * 60 * 1000;
 }
 
 function slugPdfPart(value, fallback = 'SIN-DATO') {

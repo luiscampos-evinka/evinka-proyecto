@@ -403,12 +403,14 @@ input:focus, textarea:focus, select:focus {
 }
 .metric span { font-size: 18px; font-weight: 800; color: #fff8ed; }
 .quotes-list { display: grid; gap: 12px; }
+.operations-grid { display: grid; gap: 18px; }
 .quote-card {
   border-radius: 18px;
   padding: 14px;
   display: grid;
   gap: 8px;
 }
+.compact-card { padding: 13px; }
 .quote-card .row { display: flex; justify-content: space-between; gap: 10px; flex-wrap: wrap; }
 .quote-card-actions { align-items: center; }
 .pill {

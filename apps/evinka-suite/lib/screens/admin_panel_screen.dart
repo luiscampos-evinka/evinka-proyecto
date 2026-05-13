@@ -20,6 +20,9 @@ class _AdminPanelScreenState extends State<AdminPanelScreen> {
   final _igvCtrl = TextEditingController();
   final _factorCostsCtrl = TextEditingController();
   final _divisorCtrl = TextEditingController();
+  final _chargerFxCtrl = TextEditingController();
+  final _miniboxPriceCtrl = TextEditingController();
+  final _alienPriceCtrl = TextEditingController();
   final _max6Ctrl = TextEditingController();
   final _max10Ctrl = TextEditingController();
   final _metersCasaCtrl = TextEditingController();
@@ -36,13 +39,33 @@ class _AdminPanelScreenState extends State<AdminPanelScreen> {
   final List<CommercialProfile> _profiles = [];
   final Map<String, TextEditingController> _costCtrls = {};
 
-  bool get _isDark => Theme.of(context).brightness == Brightness.dark;
-  Color get _panelColor => _isDark ? const Color(0xFF161616) : Colors.white;
-  Color get _metricColor =>
-      _isDark ? const Color(0xFF111111) : const Color(0xFFF8F3EC);
-  Color get _mutedText => _isDark ? Colors.white70 : const Color(0xFF6F5B46);
-  Color get _borderColor =>
-      _isDark ? const Color(0x22FFFFFF) : const Color(0x1F5A4632);
+  Color get _panelColor => Colors.white;
+  Color get _metricColor => const Color(0xFFF8F3EC);
+  Color get _fieldFillColor => const Color(0xFFF9F6F1);
+  Color get _mutedText => const Color(0xFF6F5B46);
+  Color get _borderColor => const Color(0x1F5A4632);
+
+  InputDecoration _inputDecoration(String label) {
+    return InputDecoration(
+      labelText: label,
+      filled: true,
+      fillColor: _fieldFillColor,
+      labelStyle: const TextStyle(color: Color(0xFF6B5641)),
+      hintStyle: const TextStyle(color: Color(0xFF8A7764)),
+      border: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(16),
+        borderSide: const BorderSide(color: Color(0x1F1E1A16)),
+      ),
+      enabledBorder: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(16),
+        borderSide: const BorderSide(color: Color(0x1F1E1A16)),
+      ),
+      focusedBorder: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(16),
+        borderSide: const BorderSide(color: Color(0xFF7A4B21)),
+      ),
+    );
+  }
 
   @override
   void initState() {
@@ -57,6 +80,9 @@ class _AdminPanelScreenState extends State<AdminPanelScreen> {
     _igvCtrl.dispose();
     _factorCostsCtrl.dispose();
     _divisorCtrl.dispose();
+    _chargerFxCtrl.dispose();
+    _miniboxPriceCtrl.dispose();
+    _alienPriceCtrl.dispose();
     _max6Ctrl.dispose();
     _max10Ctrl.dispose();
     _metersCasaCtrl.dispose();
@@ -88,6 +114,9 @@ class _AdminPanelScreenState extends State<AdminPanelScreen> {
       _igvCtrl.text = config.defaults.igv.toString();
       _factorCostsCtrl.text = config.defaults.factorGeneralCosts.toString();
       _divisorCtrl.text = config.defaults.divisorMargin.toString();
+      _chargerFxCtrl.text = config.defaults.chargerExchangeRate.toString();
+      _miniboxPriceCtrl.text = config.defaults.miniboxPriceUsd.toString();
+      _alienPriceCtrl.text = config.defaults.alienPriceUsd.toString();
       _max6Ctrl.text = config.defaults.max6mm.toString();
       _max10Ctrl.text = config.defaults.max10mm.toString();
       _metersCasaCtrl.text = config.defaults.includedMetersCasa.toString();
@@ -161,6 +190,12 @@ class _AdminPanelScreenState extends State<AdminPanelScreen> {
               config.defaults.factorGeneralCosts,
           divisorMargin: double.tryParse(_divisorCtrl.text.trim()) ??
               config.defaults.divisorMargin,
+          chargerExchangeRate: double.tryParse(_chargerFxCtrl.text.trim()) ??
+              config.defaults.chargerExchangeRate,
+          miniboxPriceUsd: double.tryParse(_miniboxPriceCtrl.text.trim()) ??
+              config.defaults.miniboxPriceUsd,
+          alienPriceUsd: double.tryParse(_alienPriceCtrl.text.trim()) ??
+              config.defaults.alienPriceUsd,
           max6mm:
               double.tryParse(_max6Ctrl.text.trim()) ?? config.defaults.max6mm,
           max10mm: double.tryParse(_max10Ctrl.text.trim()) ??
@@ -314,6 +349,22 @@ class _AdminPanelScreenState extends State<AdminPanelScreen> {
                             ),
                             const SizedBox(height: 16),
                             _card(
+                              'Cargadores y tipo de cambio',
+                              Icons.ev_station_outlined,
+                              _wrapFields([
+                                _field(_chargerFxCtrl,
+                                    'Tipo de cambio por defecto',
+                                    number: true),
+                                _field(_miniboxPriceCtrl,
+                                    'EVINKA MiniBox · precio US\$',
+                                    number: true),
+                                _field(_alienPriceCtrl,
+                                    'EVINKA Alien X · precio US\$',
+                                    number: true),
+                              ]),
+                            ),
+                            const SizedBox(height: 16),
+                            _card(
                               'Perfiles comerciales',
                               Icons.badge_outlined,
                               Column(
@@ -330,61 +381,109 @@ class _AdminPanelScreenState extends State<AdminPanelScreen> {
                                   ..._profiles.asMap().entries.map((entry) {
                                     final index = entry.key;
                                     final profile = entry.value;
-                                    return Card(
+                                    return Container(
                                       margin: const EdgeInsets.only(bottom: 10),
-                                      color: const Color(0xFF161616),
-                                      child: Padding(
-                                        padding: const EdgeInsets.all(12),
-                                        child: Row(
-                                          children: [
-                                            Expanded(
-                                              child: TextFormField(
-                                                initialValue: profile.name,
-                                                decoration: InputDecoration(
-                                                    labelText:
-                                                        'Perfil ${index + 1}'),
-                                                onChanged: (value) =>
-                                                    _profiles[index] =
-                                                        _profiles[index]
-                                                            .copyWith(
-                                                                name: value),
+                                      padding: const EdgeInsets.all(14),
+                                      decoration: BoxDecoration(
+                                        color: _panelColor,
+                                        borderRadius: BorderRadius.circular(18),
+                                        border: Border.all(color: _borderColor),
+                                      ),
+                                      child: Column(
+                                        children: [
+                                          Row(
+                                            children: [
+                                              Expanded(
+                                                child: Text(
+                                                  'Perfil ${index + 1}',
+                                                  style: TextStyle(
+                                                    fontSize: 12,
+                                                    fontWeight: FontWeight.w700,
+                                                    color: _mutedText,
+                                                  ),
+                                                ),
                                               ),
-                                            ),
-                                            const SizedBox(width: 12),
-                                            SizedBox(
-                                              width: 120,
-                                              child: TextFormField(
-                                                initialValue: profile
-                                                    .marginPercent
-                                                    .toString(),
-                                                keyboardType:
-                                                    const TextInputType
-                                                        .numberWithOptions(
-                                                        decimal: true),
-                                                decoration:
-                                                    const InputDecoration(
-                                                        labelText: 'Margen %'),
-                                                onChanged: (value) => _profiles[
-                                                        index] =
-                                                    _profiles[index].copyWith(
-                                                        marginPercent: double
-                                                                .tryParse(
-                                                                    value) ??
-                                                            profile
-                                                                .marginPercent),
+                                              if (index == 0)
+                                                Container(
+                                                  padding: const EdgeInsets
+                                                      .symmetric(
+                                                      horizontal: 10,
+                                                      vertical: 5),
+                                                  decoration: BoxDecoration(
+                                                    color:
+                                                        const Color(0xFFEDE3D3),
+                                                    borderRadius:
+                                                        BorderRadius.circular(
+                                                            999),
+                                                  ),
+                                                  child: const Text(
+                                                    'Default',
+                                                    style: TextStyle(
+                                                      fontSize: 11,
+                                                      fontWeight:
+                                                          FontWeight.w700,
+                                                      color: Color(0xFF6B533B),
+                                                    ),
+                                                  ),
+                                                )
+                                              else
+                                                IconButton(
+                                                  onPressed: () =>
+                                                      _removeProfile(index),
+                                                  icon: const Icon(
+                                                    Icons.delete_outline,
+                                                    color: Color(0xFF7A4B21),
+                                                  ),
+                                                ),
+                                            ],
+                                          ),
+                                          const SizedBox(height: 10),
+                                          Row(
+                                            crossAxisAlignment:
+                                                CrossAxisAlignment.start,
+                                            children: [
+                                              Expanded(
+                                                child: TextFormField(
+                                                  initialValue: profile.name,
+                                                  style: const TextStyle(
+                                                      color: Color(0xFF241A12)),
+                                                  decoration: _inputDecoration(
+                                                      'Nombre del perfil'),
+                                                  onChanged: (value) =>
+                                                      _profiles[index] =
+                                                          _profiles[index]
+                                                              .copyWith(
+                                                                  name: value),
+                                                ),
                                               ),
-                                            ),
-                                            const SizedBox(width: 12),
-                                            Text(index == 0 ? 'Default' : ''),
-                                            IconButton(
-                                              onPressed: index == 0
-                                                  ? null
-                                                  : () => _removeProfile(index),
-                                              icon: const Icon(
-                                                  Icons.delete_outline),
-                                            ),
-                                          ],
-                                        ),
+                                              const SizedBox(width: 12),
+                                              SizedBox(
+                                                width: 150,
+                                                child: TextFormField(
+                                                  initialValue: profile
+                                                      .marginPercent
+                                                      .toString(),
+                                                  style: const TextStyle(
+                                                      color: Color(0xFF241A12)),
+                                                  keyboardType:
+                                                      const TextInputType
+                                                          .numberWithOptions(
+                                                          decimal: true),
+                                                  decoration: _inputDecoration(
+                                                      'Margen %'),
+                                                  onChanged: (value) =>
+                                                      _profiles[index] =
+                                                          _profiles[index]
+                                                              .copyWith(
+                                                    marginPercent: double
+                                                            .tryParse(value) ??
+                                                        profile.marginPercent,
+                                                  ),
+                                                ),
+                                              ),
+                                            ],
+                                          ),
+                                        ],
                                       ),
                                     );
                                   }),
@@ -485,6 +584,8 @@ class _AdminPanelScreenState extends State<AdminPanelScreen> {
 
   Widget _card(String title, IconData icon, Widget child) {
     return Card(
+      color: Colors.white,
+      surfaceTintColor: Colors.transparent,
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
       child: Padding(
         padding: const EdgeInsets.all(18),
@@ -533,7 +634,8 @@ class _AdminPanelScreenState extends State<AdminPanelScreen> {
       keyboardType: number
           ? const TextInputType.numberWithOptions(decimal: true)
           : TextInputType.text,
-      decoration: InputDecoration(labelText: label),
+      style: const TextStyle(color: Color(0xFF241A12)),
+      decoration: _inputDecoration(label),
     );
   }
 
