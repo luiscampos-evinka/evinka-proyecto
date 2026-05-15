@@ -16,9 +16,10 @@ import '../widgets/firma_widget.dart';
 import 'scanner_screen.dart';
 
 class FormScreen extends StatefulWidget {
-  const FormScreen({super.key, this.initialOrderCode});
+  const FormScreen({super.key, this.initialOrderCode, this.initialDraftId});
 
   final String? initialOrderCode;
+  final String? initialDraftId;
 
   @override
   State<FormScreen> createState() => _FormScreenState();
@@ -47,6 +48,7 @@ class _FormScreenState extends State<FormScreen> {
   bool _generando = false;
   bool _cargandoOrden = false;
   String _estadoSync = '';
+  String? _draftEntryId;
   InstallationOrderModel? _ordenActual;
   Uint8List? _foto1;
   Uint8List? _foto2;
@@ -65,12 +67,35 @@ class _FormScreenState extends State<FormScreen> {
   void initState() {
     super.initState();
     _data.fecha = DateFormat('dd/MM/yyyy').format(DateTime.now());
-    final initialOrderCode = widget.initialOrderCode?.trim() ?? '';
-    if (initialOrderCode.isNotEmpty) {
-      _ordenCtrl.text = initialOrderCode;
+    final initialDraftId = widget.initialDraftId?.trim() ?? '';
+    if (initialDraftId.isNotEmpty) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (mounted) {
-          _cargarOrden(silent: true);
+          _cargarBorrador(initialDraftId);
+        }
+      });
+    } else {
+      final initialOrderCode = widget.initialOrderCode?.trim() ?? '';
+      if (initialOrderCode.isNotEmpty) {
+        _ordenCtrl.text = initialOrderCode;
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (mounted) {
+            _cargarOrden(silent: true);
+          }
+        });
+      }
+    }
+  }
+
+  @override
+  void didUpdateWidget(covariant FormScreen oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    final newDraftId = widget.initialDraftId?.trim() ?? '';
+    final oldDraftId = oldWidget.initialDraftId?.trim() ?? '';
+    if (newDraftId.isNotEmpty && newDraftId != oldDraftId) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) {
+          _cargarBorrador(newDraftId);
         }
       });
     }
@@ -151,6 +176,116 @@ class _FormScreenState extends State<FormScreen> {
       _data.commercialProfileName = order.commercialProfileName;
       _estadoSync = 'Orden vinculada: ${order.id}';
     });
+  }
+
+  InstallationOrderModel _ordenDesdeData(ProtocoloModel data) {
+    return InstallationOrderModel(
+      id: data.installationOrderId,
+      quoteId: data.quoteId,
+      quoteNumber: data.quoteId,
+      clientName: data.cliente,
+      clientEmail: data.clientEmail,
+      clientPhone: '',
+      clientDocument: data.ruc,
+      city: data.direccion,
+      address: data.direccion,
+      installationType: '',
+      propertyType: '',
+      commercialProfileName: data.commercialProfileName,
+      advisorName: '',
+      assignedTechnician: '',
+      quotePdfUrl: '',
+      chargerBrand: data.marca,
+      voltage: data.voltaje,
+      amperage: data.amperaje,
+      powerKw: data.potenciaKw,
+      status: 'borrador',
+    );
+  }
+
+  void _aplicarDataAlFormulario(ProtocoloModel data) {
+    _ordenCtrl.text = data.installationOrderId;
+    _clienteCtrl.text = data.cliente;
+    _emailCtrl.text = data.clientEmail;
+    _rucCtrl.text = data.ruc;
+    _direccionCtrl.text = data.direccion;
+    _obsCtrl.text = data.observaciones;
+    _marcaCtrl.text = data.marca;
+    _nsCtrl.text = data.numeroSerie;
+    _voltCtrl.text = data.voltaje;
+    _ampCtrl.text = data.amperaje;
+    _otroCtrl.text = data.otro;
+    _kwCtrl.text = data.potenciaKw;
+    _adicionalDescCtrl.text = data.adicionalDesc;
+    _data.fecha = data.fecha.isNotEmpty
+        ? data.fecha
+        : DateFormat('dd/MM/yyyy').format(DateTime.now());
+    _data.quoteId = data.quoteId;
+    _data.installationOrderId = data.installationOrderId;
+    _data.commercialProfileName = data.commercialProfileName;
+    _data.cliente = data.cliente;
+    _data.clientEmail = data.clientEmail;
+    _data.ruc = data.ruc;
+    _data.direccion = data.direccion;
+    _data.observaciones = data.observaciones;
+    _data.marca = data.marca;
+    _data.numeroSerie = data.numeroSerie;
+    _data.voltaje = data.voltaje;
+    _data.amperaje = data.amperaje;
+    _data.otro = data.otro;
+    _data.potenciaKw = data.potenciaKw;
+    _data.cajaCargador = data.cajaCargador;
+    _data.cargadorEvinka = data.cargadorEvinka;
+    _data.manualCargador = data.manualCargador;
+    _data.tarjetasCargador = data.tarjetasCargador;
+    _data.adicional = data.adicional;
+    _data.adicionalDesc = data.adicionalDesc;
+    _data.firmaInstalador = data.firmaInstalador;
+    _data.firmaCliente = data.firmaCliente;
+    _data.foto1 = data.foto1;
+    _data.foto2 = data.foto2;
+    _firmaInstaladorOk = data.firmaInstalador != null;
+    _firmaClienteOk = data.firmaCliente != null;
+    _foto1 = data.foto1 != null ? Uint8List.fromList(data.foto1!) : null;
+    _foto2 = data.foto2 != null ? Uint8List.fromList(data.foto2!) : null;
+  }
+
+  Future<void> _cargarBorrador(String draftId) async {
+    setState(() => _cargandoOrden = true);
+    try {
+      final entry = await HistorialService.cargarPorId(draftId);
+      if (entry == null) {
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('No encontré ese borrador.')),
+        );
+        return;
+      }
+      final payloadRaw = entry.syncPayload.trim();
+      if (payloadRaw.isEmpty) {
+        throw Exception('El borrador no tiene datos guardados.');
+      }
+      final payload = jsonDecode(payloadRaw) as Map<String, dynamic>;
+      final protocolo = ProtocoloModel.fromJson(
+        Map<String, dynamic>.from(payload['protocolo'] as Map? ?? {}),
+      );
+      if (!mounted) return;
+      setState(() {
+        _draftEntryId = entry.id;
+        _ordenActual = protocolo.installationOrderId.isNotEmpty
+            ? _ordenDesdeData(protocolo)
+            : null;
+        _aplicarDataAlFormulario(protocolo);
+        _estadoSync = 'Borrador cargado: ${entry.cliente}';
+      });
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('No pude abrir el borrador: $e')),
+      );
+    } finally {
+      if (mounted) setState(() => _cargandoOrden = false);
+    }
   }
 
   Future<void> _tomarFoto(int numero) async {
@@ -268,6 +403,42 @@ class _FormScreenState extends State<FormScreen> {
     _data.foto2 = _foto2 != null ? List<int>.from(_foto2!) : null;
   }
 
+  Future<void> _guardarBorrador() async {
+    _cargarDataDesdeFormulario();
+    final id = _draftEntryId ??
+        'BOR-${DateTime.now().millisecondsSinceEpoch}-${_data.installationOrderId.isNotEmpty ? _data.installationOrderId : 'local'}';
+    final nombreArchivo = 'Borrador_$id.json';
+    final entry = HistorialEntry(
+      id: id,
+      cliente: _data.cliente.isNotEmpty ? _data.cliente : 'Borrador sin nombre',
+      ruc: _data.ruc,
+      fecha: _data.fecha,
+      fechaGenerado: DateFormat('dd/MM/yyyy HH:mm').format(DateTime.now()),
+      archivo: nombreArchivo,
+      installationOrderId: _data.installationOrderId,
+      quoteId: _data.quoteId,
+      clientEmail: _data.clientEmail,
+      documentType: 'conformity',
+      documentState: 'draft',
+      syncPayload: jsonEncode({
+        'documentType': 'draft',
+        'protocolo': _data.toJson(),
+      }),
+      syncStatus: 'local',
+      syncMessage: 'Borrador guardado. Puedes reabrirlo para completarlo.',
+    );
+
+    setState(() {
+      _draftEntryId = id;
+      _estadoSync = 'Borrador guardado.';
+    });
+    await HistorialService.guardarBorrador(entry);
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('Borrador guardado correctamente.')),
+    );
+  }
+
   Future<void> _generarPdf() async {
     String etapa = 'validación del formulario';
     String? advertenciaFirebase;
@@ -304,7 +475,8 @@ class _FormScreenState extends State<FormScreen> {
       final idBase = _data.installationOrderId.isNotEmpty
           ? _data.installationOrderId
           : DateTime.now().millisecondsSinceEpoch.toString();
-      final id = '$idBase-${DateTime.now().millisecondsSinceEpoch}';
+      final id =
+          _draftEntryId ?? '$idBase-${DateTime.now().millisecondsSinceEpoch}';
       final nombreArchivo = _data.installationOrderId.isNotEmpty
           ? 'Conformidad_${_data.installationOrderId}.pdf'
           : 'Protocolo_${_data.cliente.replaceAll(' ', '_')}_${_data.fecha.replaceAll('/', '-')}.pdf';
@@ -319,6 +491,7 @@ class _FormScreenState extends State<FormScreen> {
         quoteId: _data.quoteId,
         clientEmail: _data.clientEmail,
         documentType: 'conformity',
+        documentState: 'final',
         syncPayload: jsonEncode({
           'documentType': 'conformity',
           'protocolo': _data.toJson(),
@@ -896,6 +1069,28 @@ class _FormScreenState extends State<FormScreen> {
               ),
             SizedBox(
               height: 56,
+              child: OutlinedButton.icon(
+                onPressed: _generando ? null : _guardarBorrador,
+                icon: const Icon(Icons.save_outlined),
+                label: Text(
+                  _draftEntryId == null
+                      ? 'GUARDAR BORRADOR'
+                      : 'ACTUALIZAR BORRADOR',
+                  style: const TextStyle(
+                      fontSize: 16, fontWeight: FontWeight.bold),
+                ),
+                style: OutlinedButton.styleFrom(
+                  foregroundColor: _accent,
+                  side: BorderSide(color: _accent, width: 1.5),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                ),
+              ),
+            ),
+            const SizedBox(height: 12),
+            SizedBox(
+              height: 56,
               child: ElevatedButton.icon(
                 onPressed: _generando ? null : _generarPdf,
                 icon: _generando
@@ -909,7 +1104,9 @@ class _FormScreenState extends State<FormScreen> {
                 label: Text(
                   _generando
                       ? 'GENERANDO...'
-                      : 'GENERAR Y COMPARTIR CONFORMIDAD',
+                      : (_draftEntryId == null
+                          ? 'GENERAR Y COMPARTIR CONFORMIDAD'
+                          : 'FINALIZAR Y COMPARTIR CONFORMIDAD'),
                   style: const TextStyle(
                       fontSize: 16, fontWeight: FontWeight.bold),
                 ),
@@ -971,9 +1168,11 @@ class _FormScreenState extends State<FormScreen> {
             ),
             const SizedBox(height: 6),
             Text(
-              linked
-                  ? 'Orden vinculada. Completa los pasos y luego genera el PDF.'
-                  : 'Primero vincula la orden y luego completa los pasos en orden.',
+              _draftEntryId != null
+                  ? 'Borrador cargado. Completa lo que falta y luego genera el PDF final.'
+                  : linked
+                      ? 'Orden vinculada. Completa los pasos y luego genera el PDF.'
+                      : 'Primero vincula la orden y luego completa los pasos en orden.',
               style: TextStyle(color: _mutedText),
             ),
             const SizedBox(height: 12),
@@ -992,6 +1191,7 @@ class _FormScreenState extends State<FormScreen> {
                         ? 'Firma cliente OK'
                         : 'Falta firma cliente',
                     _firmaClienteOk),
+                if (_draftEntryId != null) _estadoChip('Borrador', true),
                 _estadoChip(
                     missing.isEmpty
                         ? 'Listo para generar'

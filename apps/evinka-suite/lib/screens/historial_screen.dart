@@ -5,7 +5,9 @@ import 'package:printing/printing.dart';
 import '../services/historial_service.dart';
 
 class HistorialScreen extends StatefulWidget {
-  const HistorialScreen({super.key});
+  const HistorialScreen({super.key, this.onResumeDraft});
+
+  final ValueChanged<String>? onResumeDraft;
 
   @override
   State<HistorialScreen> createState() => _HistorialScreenState();
@@ -227,6 +229,18 @@ class _HistorialScreenState extends State<HistorialScreen> {
   }
 
   Widget _tarjeta(HistorialEntry entry, int index) {
+    final onTap = entry.isDraft
+        ? (widget.onResumeDraft == null
+            ? () {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(
+                    content: Text(
+                        'Este borrador se reanuda desde el módulo de conformidad.'),
+                  ),
+                );
+              }
+            : () => widget.onResumeDraft!(entry.id))
+        : () => _abrirPdf(entry);
     return Dismissible(
       key: Key(entry.id),
       direction: DismissDirection.endToStart,
@@ -249,13 +263,13 @@ class _HistorialScreenState extends State<HistorialScreen> {
         elevation: 2,
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
         child: InkWell(
-          onTap: () => _abrirPdf(entry),
+          onTap: onTap,
           borderRadius: BorderRadius.circular(12),
           child: Padding(
             padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
             child: Row(
               children: [
-                _iconoPdf(),
+                _iconoDocumento(entry),
                 const SizedBox(width: 14),
                 Expanded(child: _infoEntry(entry)),
                 _botonesAccion(entry),
@@ -322,7 +336,7 @@ class _HistorialScreenState extends State<HistorialScreen> {
     );
   }
 
-  Widget _iconoPdf() {
+  Widget _iconoDocumento(HistorialEntry entry) {
     return Container(
       width: 50,
       height: 50,
@@ -330,7 +344,11 @@ class _HistorialScreenState extends State<HistorialScreen> {
         color: _accent.withValues(alpha: 0.1),
         borderRadius: BorderRadius.circular(12),
       ),
-      child: Icon(Icons.picture_as_pdf, color: _accent, size: 28),
+      child: Icon(
+        entry.isDraft ? Icons.edit_note : Icons.picture_as_pdf,
+        color: _accent,
+        size: 28,
+      ),
     );
   }
 
@@ -344,6 +362,14 @@ class _HistorialScreenState extends State<HistorialScreen> {
           maxLines: 1,
           overflow: TextOverflow.ellipsis,
         ),
+        if (entry.isDraft)
+          Padding(
+            padding: const EdgeInsets.only(bottom: 2),
+            child: Text(
+              'Borrador editable',
+              style: TextStyle(fontSize: 12, color: Colors.orange[700]),
+            ),
+          ),
         const SizedBox(height: 3),
         if (entry.ruc.isNotEmpty)
           Padding(
@@ -424,6 +450,18 @@ class _HistorialScreenState extends State<HistorialScreen> {
     return Column(
       mainAxisSize: MainAxisSize.min,
       children: [
+        if (entry.isDraft)
+          IconButton(
+            icon:
+                const Icon(Icons.edit_note, color: Color(0xFF9C6A33), size: 22),
+            onPressed: widget.onResumeDraft == null
+                ? null
+                : () => widget.onResumeDraft!(entry.id),
+            tooltip: 'Reanudar borrador',
+            padding: const EdgeInsets.all(6),
+            constraints: const BoxConstraints(),
+          ),
+        if (entry.isDraft) const SizedBox(height: 4),
         if (entry.needsSync)
           IconButton(
             icon: const Icon(Icons.sync, color: Color(0xFF9C6A33), size: 22),

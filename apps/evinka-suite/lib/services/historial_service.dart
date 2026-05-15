@@ -22,6 +22,7 @@ class HistorialEntry {
   final String quoteId;
   final String clientEmail;
   final String documentType;
+  final String documentState;
   final String syncPayload;
   final String syncStatus;
   final String syncMessage;
@@ -41,6 +42,7 @@ class HistorialEntry {
     this.quoteId = '',
     this.clientEmail = '',
     this.documentType = 'conformity',
+    this.documentState = 'final',
     this.syncPayload = '',
     this.syncStatus = 'local',
     this.syncMessage = '',
@@ -51,6 +53,8 @@ class HistorialEntry {
   });
 
   bool get needsSync => syncStatus == 'pending' || syncStatus == 'error';
+
+  bool get isDraft => documentState == 'draft';
 
   DateTime? get syncNextAttemptDate =>
       syncNextAttemptAt.isEmpty ? null : DateTime.tryParse(syncNextAttemptAt);
@@ -71,6 +75,7 @@ class HistorialEntry {
         'quoteId': quoteId,
         'clientEmail': clientEmail,
         'documentType': documentType,
+        'documentState': documentState,
         'syncPayload': syncPayload,
         'syncStatus': syncStatus,
         'syncMessage': syncMessage,
@@ -91,6 +96,7 @@ class HistorialEntry {
         quoteId: json['quoteId'] as String? ?? '',
         clientEmail: json['clientEmail'] as String? ?? '',
         documentType: json['documentType'] as String? ?? 'conformity',
+        documentState: json['documentState'] as String? ?? 'final',
         syncPayload: json['syncPayload'] as String? ?? '',
         syncStatus: json['syncStatus'] as String? ?? 'local',
         syncMessage: json['syncMessage'] as String? ?? '',
@@ -183,11 +189,11 @@ class HistorialService {
   static Future<void> guardar(Uint8List pdfBytes, HistorialEntry entry) async {
     final dir = await _protocolosDir;
     await File('${dir.path}/${entry.archivo}').writeAsBytes(pdfBytes);
-    final lista = await _cargarLista();
-    lista.removeWhere((item) => item.id == entry.id);
-    lista.add(entry);
-    final file = await _indexFile;
-    await file.writeAsString(jsonEncode(lista.map((e) => e.toJson()).toList()));
+    await _upsertEntry(entry);
+  }
+
+  static Future<void> guardarBorrador(HistorialEntry entry) async {
+    await _upsertEntry(entry);
   }
 
   static Future<void> startAutoQueueRunner(
@@ -239,6 +245,7 @@ class HistorialService {
       quoteId: current.quoteId,
       clientEmail: current.clientEmail,
       documentType: current.documentType,
+      documentState: current.documentState,
       syncPayload: current.syncPayload,
       syncStatus: syncStatus ?? current.syncStatus,
       syncMessage: syncMessage ?? current.syncMessage,
@@ -250,12 +257,28 @@ class HistorialService {
   }
 
   static Future<void> _persistEntry(HistorialEntry updated) async {
+    await _upsertEntry(updated);
+  }
+
+  static Future<void> _upsertEntry(HistorialEntry entry) async {
     final lista = await _cargarLista();
-    final index = lista.indexWhere((e) => e.id == updated.id);
-    if (index < 0) return;
-    lista[index] = updated;
+    final index = lista.indexWhere((item) => item.id == entry.id);
+    if (index >= 0) {
+      lista[index] = entry;
+    } else {
+      lista.add(entry);
+    }
     final file = await _indexFile;
     await file.writeAsString(jsonEncode(lista.map((e) => e.toJson()).toList()));
+  }
+
+  static Future<HistorialEntry?> cargarPorId(String id) async {
+    final lista = await _cargarLista();
+    try {
+      return lista.firstWhere((e) => e.id == id);
+    } catch (_) {
+      return null;
+    }
   }
 
   static Future<void> actualizarEstadoSync(
