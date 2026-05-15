@@ -3,7 +3,7 @@
 Este directorio queda listo para la integración GitHub ↔ Supabase.
 
 ## Proyecto
-- Project ref: `wyovrtpunncuryvhghjx`
+- Project ref: `lzveyvrdvtflywrdanis`
 
 ## Qué va aquí
 - `migrations/`: migraciones SQL versionadas.
