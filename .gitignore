@@ -45,6 +45,9 @@ memory/
 *.traineddata
 tmp_*.mjs
 tmp/
+tmp-copy.json
+.venv-excel/
+apps/cotizador-web/*.pdf
 
 # Python / Android local
 **/__pycache__/
