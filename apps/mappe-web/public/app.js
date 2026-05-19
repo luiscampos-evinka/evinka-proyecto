@@ -12,6 +12,7 @@ const state = {
   infoWindow: null,
   renderedMapRows: [],
   selectedRowId: '',
+  analysisCache: new Map(),
   auth: {
     checked: false,
     authenticated: false,
@@ -700,8 +701,8 @@ function buildFocusPanelContent(row, analysis) {
     </div>
     <div class="focus-grid">
       <div class="focus-metric">
-        <strong>Índice estratégico</strong>
-        <span>${escapeHtml(String(analysis.strategicIndex))}/100</span>
+        <strong>Score KIO / EVINKA</strong>
+        <span>${escapeHtml(String(analysis.kioStrategicScore))}/100</span>
         <small>${escapeHtml(analysis.bandReason)}</small>
       </div>
       <div class="focus-metric">
@@ -718,6 +719,16 @@ function buildFocusPanelContent(row, analysis) {
         <strong>Demanda cercana</strong>
         <span>${escapeHtml(String(analysis.priorityNodes3km))}</span>
         <small>nodos fuertes en 3 km · NSE AB/B ${escapeHtml(String(analysis.highNseNodes3km))}</small>
+      </div>
+      <div class="focus-metric">
+        <strong>Flujo proxy</strong>
+        <span>${escapeHtml(String(analysis.trafficProxyScore))}</span>
+        <small>${escapeHtml(analysis.trafficNarrative)}</small>
+      </div>
+      <div class="focus-metric">
+        <strong>NSE / demanda premium</strong>
+        <span>${escapeHtml(String(analysis.socioeconomicScore))}</span>
+        <small>${escapeHtml(analysis.nseNarrative)}</small>
       </div>
     </div>
     <div class="focus-body">
@@ -744,6 +755,7 @@ function buildFocusPanelContent(row, analysis) {
 }
 
 function buildStrategicAnalysis(row) {
+  if (state.analysisCache.has(row.id)) return state.analysisCache.get(row.id);
   const baseRows = state.rows.filter((item) => item.id !== row.id && Number.isFinite(Number(item.lat)) && Number.isFinite(Number(item.lng)));
   const nearby = baseRows.map((item) => ({ row: item, distanceMeters: haversineMeters(row.lat, row.lng, item.lat, item.lng) })).sort((a, b) => a.distanceMeters - b.distanceMeters);
   const sameGroup = nearby.find((item) => item.row.brandGroup === row.brandGroup);
@@ -757,16 +769,28 @@ function buildStrategicAnalysis(row) {
   }));
   const priorityNodes3km = demandNodes.filter((item) => item.distanceMeters <= 3000).length;
   const highNseNodes3km = nearby.filter((item) => item.distanceMeters <= 3000 && ['AB', 'B'].includes(item.row.nivel_socioeconomico)).length;
+  const highNseNodes5km = nearby.filter((item) => item.distanceMeters <= 5000 && ['AB', 'B'].includes(item.row.nivel_socioeconomico)).length;
+  const peopleProxy1km = nearby.filter((item) => item.distanceMeters <= 1000).length;
+  const peopleProxy3km = nearby.filter((item) => item.distanceMeters <= 3000).length;
+  const destinationNodes3km = nearby.filter((item) => item.distanceMeters <= 3000 && isDestinationAnchor(item.row)).length;
   const competingStations5km = nearby.filter((item) => item.distanceMeters <= 5000 && item.row.category === 'Grifo / estación de servicio' && item.row.brandGroup !== row.brandGroup).length;
   const sameGroupDistanceKm = sameGroup ? sameGroup.distanceMeters / 1000 : null;
   const territorial = territorialScore(row);
   const coverageScore = sameGroupDistanceKm == null ? 100 : Math.max(0, Math.min(100, Math.round((sameGroupDistanceKm / 8) * 100)));
   const densityScore = Math.max(0, Math.min(100, priorityNodes3km * 11 + highNseNodes3km * 7));
   const competitionScore = Math.max(0, 100 - (competingStations5km * 9));
+  const trafficBase = Math.min(100, Math.round((peopleProxy1km * 3) + (peopleProxy3km * 0.7) + (destinationNodes3km * 8) + (row.category === 'Grifo / estación de servicio' ? 18 : 0)));
+  const trafficProxyScore = Math.max(20, trafficBase);
+  const socioeconomicBase = row.nivel_socioeconomico === 'AB' ? 95 : row.nivel_socioeconomico === 'B' ? 82 : row.nivel_socioeconomico === 'C' ? 62 : row.nivel_socioeconomico === 'D' ? 38 : row.nivel_socioeconomico === 'E' ? 20 : 45;
+  const socioeconomicScore = Math.max(18, Math.min(100, Math.round((socioeconomicBase * 0.65) + (highNseNodes3km * 6) + (highNseNodes5km * 2.5))));
+  const fitBase = (row.publicChargingCandidate ? 42 : 16) + (row.evinkaPremiumCandidate ? 18 : 0) + (row.parkingProbability === 'high' ? 18 : row.parkingProbability === 'medium' ? 11 : 5) + (row.googleMapsUri ? 6 : 0) + (row.category === 'Grifo / estación de servicio' ? 12 : 0) + (row.commercialScale === 'grande' ? 8 : row.commercialScale === 'mediano' ? 5 : 2);
+  const fitScore = Math.max(20, Math.min(100, fitBase));
+  const nodeScore = Math.max(12, Math.min(100, Math.round((priorityNodes3km * 10) + (destinationNodes3km * 7) + (highNseNodes3km * 4))));
   const strategicIndex = Math.max(35, Math.min(99, Math.round((territorial * 0.46) + (coverageScore * 0.24) + (densityScore * 0.20) + (competitionScore * 0.10))));
-  const band = strategicIndex >= 82
+  const kioStrategicScore = Math.max(28, Math.min(99, Math.round((trafficProxyScore * 0.35) + (coverageScore * 0.20) + (fitScore * 0.20) + (nodeScore * 0.15) + (socioeconomicScore * 0.10))));
+  const band = kioStrategicScore >= 82
     ? { label: 'Muy estratégico', className: 'A', reason: 'cubre red y demanda fuerte' }
-    : strategicIndex >= 68
+    : kioStrategicScore >= 68
       ? { label: 'Estratégico', className: 'B', reason: 'buena mezcla de cobertura y demanda' }
       : { label: 'Táctico', className: 'C', reason: 'útil, pero con menor holgura' };
   const coverageNarrative = sameGroupDistanceKm == null
@@ -782,10 +806,11 @@ function buildStrategicAnalysis(row) {
     `nodos prioritarios en 3 km: ${priorityNodes3km}`,
   ].join(' · ');
   const summary = row.brandGroup === 'KIO'
-    ? `KIO ${row.officialDivisionName || row.city}: ${band.label.toLowerCase()} para EVINKA. Puntúa ${strategicIndex}/100 por ${coverageNarrative.toLowerCase()} y porque concentra ${priorityNodes3km} nodos fuertes en un radio de 3 km.`
-    : `${row.canonicalName || row.name} marca ${strategicIndex}/100. ${coverageNarrative} En su entorno inmediato suma ${priorityNodes3km} nodos fuertes y ${highNseNodes3km} señales NSE AB/B.`;
-  return {
+    ? `KIO ${row.officialDivisionName || row.city}: ${band.label.toLowerCase()} para EVINKA. Marca ${kioStrategicScore}/100 porque mezcla flujo proxy, ${coverageNarrative.toLowerCase()} y ${priorityNodes3km} nodos fuertes en 3 km.`
+    : `${row.canonicalName || row.name} marca ${kioStrategicScore}/100. ${coverageNarrative} En su entorno inmediato suma ${priorityNodes3km} nodos fuertes y ${highNseNodes3km} señales NSE AB/B.`;
+  const result = {
     strategicIndex,
+    kioStrategicScore,
     bandLabel: band.label,
     bandClass: band.className,
     bandReason: band.reason,
@@ -793,12 +818,25 @@ function buildStrategicAnalysis(row) {
     nearestSameGroupText: sameGroup ? `${sameGroup.row.canonicalName || sameGroup.row.name}` : `No aparece otro ${row.brandGroup}`,
     priorityNodes3km,
     highNseNodes3km,
+    highNseNodes5km,
+    peopleProxy1km,
+    peopleProxy3km,
+    destinationNodes3km,
     competingStations5km,
+    trafficProxyScore,
+    socioeconomicScore,
+    fitScore,
+    nodeScore,
+    coverageScore,
     coverageNarrative,
     distanceNarrative,
+    trafficNarrative: `${peopleProxy1km} señales en 1 km · ${destinationNodes3km} anclas destino en 3 km`,
+    nseNarrative: `${highNseNodes3km} nodos AB/B en 3 km · entorno ${labelNse(row.nivel_socioeconomico) || 'sin dato'}`,
     summary,
     hotspots,
   };
+  state.analysisCache.set(row.id, result);
+  return result;
 }
 
 function buildStrategicHeroImage(row, analysis) {
@@ -832,8 +870,8 @@ function buildStrategicHeroImage(row, analysis) {
       <text x="58" y="218" fill="#d8dfeb" font-family="Inter,Arial,sans-serif" font-size="28">${operator} · red ${network}</text>
       <text x="58" y="264" fill="#b5bfd0" font-family="Inter,Arial,sans-serif" font-size="26">${district} · ${xmlEscape(formatDistanceLabel(row))}</text>
       <rect x="58" y="334" width="350" height="132" rx="26" fill="#ffffff" fill-opacity="0.04" stroke="#ffffff" stroke-opacity="0.08"/>
-      <text x="92" y="382" fill="#b5bfd0" font-family="Inter,Arial,sans-serif" font-size="22">ÍNDICE ESTRATÉGICO</text>
-      <text x="92" y="436" fill="#ffffff" font-family="Inter,Arial,sans-serif" font-size="64" font-weight="800">${analysis.strategicIndex}/100</text>
+      <text x="92" y="382" fill="#b5bfd0" font-family="Inter,Arial,sans-serif" font-size="22">SCORE KIO / EVINKA</text>
+      <text x="92" y="436" fill="#ffffff" font-family="Inter,Arial,sans-serif" font-size="64" font-weight="800">${analysis.kioStrategicScore}/100</text>
       <text x="92" y="468" fill="${accent}" font-family="Inter,Arial,sans-serif" font-size="24">${xmlEscape(analysis.bandLabel)}</text>
       <rect x="440" y="334" width="290" height="132" rx="26" fill="#ffffff" fill-opacity="0.04" stroke="#ffffff" stroke-opacity="0.08"/>
       <text x="474" y="382" fill="#b5bfd0" font-family="Inter,Arial,sans-serif" font-size="22">SIGUIENTE ${xmlEscape((row.brandGroup || 'GRUPO').toUpperCase())}</text>
@@ -899,7 +937,7 @@ function buildMarketStudyWorkbook(rows) {
   workbook.created = generatedAt;
   workbook.modified = generatedAt;
   workbook.subject = 'MapPe · Estudio de mercado';
-  workbook.title = 'MapCo Estudio de mercado';
+  workbook.title = 'MapPe Estudio de mercado';
 
   const summary = workbook.addWorksheet('Resumen ejecutivo', { properties: { tabColor: { argb: 'FFC7A06A' } } });
   summary.mergeCells('A1:F1');
@@ -916,14 +954,15 @@ function buildMarketStudyWorkbook(rows) {
     { key: 'value', width: 20 },
     { key: 'metric2', width: 6 },
     { key: 'filter', width: 28 },
-    { key: 'filterValue', width: 42 },
-    { key: 'spacer', width: 4 },
+    { key: 'filterValue', width: 28 },
+    { key: 'filterExplain', width: 42 },
   ];
 
   summary.getCell('A4').value = 'Métrica';
   summary.getCell('B4').value = 'Valor';
   summary.getCell('D4').value = 'Filtro';
   summary.getCell('E4').value = 'Valor aplicado';
+  summary.getCell('F4').value = 'Qué significa';
   styleSheetHeader(summary.getRow(4));
 
   const maxRows = Math.max(metrics.length, Math.max(filters.length, 1));
@@ -938,9 +977,11 @@ function buildMarketStudyWorkbook(rows) {
     if (filter) {
       row.getCell(4).value = filter.label;
       row.getCell(5).value = filter.value;
+      row.getCell(6).value = filter.description || '';
     } else if (i === 0) {
       row.getCell(4).value = 'Filtros';
       row.getCell(5).value = 'Sin filtros activos';
+      row.getCell(6).value = 'El Excel salió con toda la base visible del mapa, sin recortes adicionales.';
     }
     styleDataRow(row, i);
   }
@@ -973,6 +1014,7 @@ function buildMarketStudyWorkbook(rows) {
     { header: 'Rank', key: 'rank', width: 10 },
     { header: 'Marca / grupo', key: 'brandGroup', width: 28 },
     { header: 'Oportunidades', key: 'count', width: 16 },
+    { header: 'Score KIO / EVINKA', key: 'kioScore', width: 18 },
     { header: 'Territorial alta', key: 'superA', width: 16 },
     { header: 'Leads listos', key: 'premium', width: 14 },
     { header: 'Carga pública', key: 'publicCharging', width: 14 },
@@ -986,6 +1028,7 @@ function buildMarketStudyWorkbook(rows) {
       rank: index + 1,
       brandGroup: item.brandGroup,
       count: item.count,
+      kioScore: item.kioScore,
       superA: item.superA,
       premium: item.premium,
       publicCharging: item.publicCharging,
@@ -1009,6 +1052,12 @@ function buildMarketStudyWorkbook(rows) {
     { header: 'Escala comercial', key: 'scale', width: 18 },
     { header: 'Prioridad territorial', key: 'superTier', width: 18 },
     { header: 'Puntaje territorial', key: 'superScore', width: 16 },
+    { header: 'Score KIO / EVINKA', key: 'kioScore', width: 16 },
+    { header: 'Flujo proxy', key: 'trafficProxy', width: 14 },
+    { header: 'Cobertura red', key: 'coverageScore', width: 14 },
+    { header: 'Factibilidad sitio', key: 'fitScore', width: 14 },
+    { header: 'Nodos cercanos', key: 'nodeScore', width: 14 },
+    { header: 'NSE / premium', key: 'socioeconomicScore', width: 14 },
     { header: 'Estado comercial', key: 'priority', width: 16 },
     { header: 'Potencial', key: 'viability', width: 14 },
     { header: 'Carga pública', key: 'publicCharging', width: 14 },
@@ -1029,6 +1078,7 @@ function buildMarketStudyWorkbook(rows) {
   ];
   styleSheetHeader(sheet.getRow(1));
   sortedRows.forEach((row, index) => {
+    const analysis = buildStrategicAnalysis(row);
     sheet.addRow({
       rank: index + 1,
       name: row.canonicalName || row.name,
@@ -1041,6 +1091,12 @@ function buildMarketStudyWorkbook(rows) {
       scale: row.commercialScaleLabel || '',
       superTier: labelSuper(territorialTier(row)),
       superScore: territorialScore(row),
+      kioScore: analysis.kioStrategicScore,
+      trafficProxy: analysis.trafficProxyScore,
+      coverageScore: analysis.coverageScore,
+      fitScore: analysis.fitScore,
+      nodeScore: analysis.nodeScore,
+      socioeconomicScore: analysis.socioeconomicScore,
       priority: labelPremium(row.evinkaPriority),
       viability: labelTier(row.viabilityTier),
       publicCharging: row.publicChargingCandidate ? 'Sí' : 'No',
@@ -1061,6 +1117,12 @@ function buildMarketStudyWorkbook(rows) {
     });
   });
   sheet.getColumn('superScore').numFmt = '#,##0';
+  sheet.getColumn('kioScore').numFmt = '#,##0';
+  sheet.getColumn('trafficProxy').numFmt = '#,##0';
+  sheet.getColumn('coverageScore').numFmt = '#,##0';
+  sheet.getColumn('fitScore').numFmt = '#,##0';
+  sheet.getColumn('nodeScore').numFmt = '#,##0';
+  sheet.getColumn('socioeconomicScore').numFmt = '#,##0';
   sheet.getColumn('lat').numFmt = '0.000000';
   sheet.getColumn('lng').numFmt = '0.000000';
   finalizeDataSheet(sheet);
@@ -1114,10 +1176,12 @@ function styleDataRow(row, index = 0) {
 }
 
 function buildExportMetrics(rows) {
+  const kioScores = rows.map((row) => buildStrategicAnalysis(row).kioStrategicScore);
   return [
     { label: 'Oportunidades filtradas', value: rows.length },
     { label: 'Marcas / grupos', value: unique(rows.map((row) => row.brandGroup)).length },
     { label: 'Ciudades cubiertas', value: unique(rows.map((row) => row.city)).length },
+    { label: 'Score KIO / EVINKA promedio', value: kioScores.length ? Math.round(kioScores.reduce((acc, value) => acc + value, 0) / kioScores.length) : 0 },
     { label: 'Territorial alta', value: rows.filter((row) => territorialTier(row) === 'A').length },
     { label: 'Leads listos', value: rows.filter((row) => row.evinkaPremiumCandidate).length },
     { label: 'Listos para carga pública', value: rows.filter((row) => row.publicChargingCandidate).length },
@@ -1132,26 +1196,28 @@ function buildExportMetrics(rows) {
 function buildBrandRankingRows(rows) {
   const groups = new Map();
   rows.forEach((row) => {
+    const analysis = buildStrategicAnalysis(row);
     const key = row.brandGroup || row.operator || 'Sin grupo';
-    const item = groups.get(key) || { brandGroup: key, count: 0, superA: 0, premium: 0, publicCharging: 0, mapsReal: 0, scoreSum: 0, cities: new Set() };
+    const item = groups.get(key) || { brandGroup: key, count: 0, superA: 0, premium: 0, publicCharging: 0, mapsReal: 0, scoreSum: 0, kioScoreSum: 0, cities: new Set() };
     item.count += 1;
     if (territorialTier(row) === 'A') item.superA += 1;
     if (row.evinkaPremiumCandidate) item.premium += 1;
     if (row.publicChargingCandidate) item.publicCharging += 1;
     if (row.googleMapsUri) item.mapsReal += 1;
     item.scoreSum += territorialScore(row);
+    item.kioScoreSum += analysis.kioStrategicScore;
     if (row.city) item.cities.add(row.city);
     groups.set(key, item);
   });
   return [...groups.values()]
-    .map((item) => ({ ...item, avgScore: Math.round(item.scoreSum / Math.max(1, item.count)), cities: [...item.cities].sort((a, b) => String(a).localeCompare(String(b), 'es')).join(', ') }))
-    .sort((a, b) => b.count - a.count || b.avgScore - a.avgScore || a.brandGroup.localeCompare(b.brandGroup, 'es'));
+    .map((item) => ({ ...item, avgScore: Math.round(item.scoreSum / Math.max(1, item.count)), kioScore: Math.round(item.kioScoreSum / Math.max(1, item.count)), cities: [...item.cities].sort((a, b) => String(a).localeCompare(String(b), 'es')).join(', ') }))
+    .sort((a, b) => b.kioScore - a.kioScore || b.count - a.count || b.avgScore - a.avgScore || a.brandGroup.localeCompare(b.brandGroup, 'es'));
 }
 
 function describeActiveFilters() {
   const filters = [];
-  const add = (label, value, isDefault = false) => {
-    if (!isDefault && value) filters.push({ label, value });
+  const add = (label, value, isDefault = false, description = '') => {
+    if (!isDefault && value) filters.push({ label, value, description });
   };
   const city = document.getElementById('cityFilter')?.value || 'Todos';
   const zone = document.getElementById('provinceFilter')?.value || 'Todos';
@@ -1166,34 +1232,39 @@ function describeActiveFilters() {
   const premium = document.getElementById('premiumFilter')?.value || 'all';
   const superTier = document.getElementById('superFilter')?.value || 'all';
 
-  add('Ciudad (dónde están los puntos)', city, city === 'Todos');
-  add('Zona (subárea dentro de la ciudad)', zone, zone === 'Todos');
-  add('Tipo de lugar (clase de negocio o sitio)', labelCommercialBranchDetail(category, 'filter'), category === 'Todos');
-  add('Estado del dato (calidad general del registro)', ({ validated_any: 'Validado', with_real_link: 'Con link real', pending: 'Pendiente' }[dataState] || ''), dataState === 'all');
-  add('Nivel socioeconómico (entorno del punto)', labelNse(nse), nse === 'all');
-  add('Buscar', search, !search);
-  add('UBIGEO / distrito (código o referencia territorial del punto)', ubigeo, ubigeo === 'Todos');
-  add('Calidad interna (revisión manual del dato)', ({ approved_auto: 'Dato limpio', review_light: 'Dato con duda' }[review] || ''), review === 'all');
-  add('Estado Google (validación contra Google Places)', ({ validated: 'Validado', validated_auto: 'Validado auto', ambiguous: 'Ambiguo', not_found: 'No encontrado', no_match: 'Sin match', with_real_link: 'Con link real Maps' }[google] || ''), google === 'all');
-  add('Potencial (qué tan prometedor se ve el sitio)', ({ high: 'Potencial alto', medium: 'Potencial medio', low: 'Potencial bajo', discard: 'Sin potencial' }[viability] || ''), viability === 'all');
-  add('Estado comercial / premium (prioridad para ventas)', ({ atacar_ya: 'Lead listo', revisar: 'Validar', descartar: 'No priorizar' }[premium] || ''), premium === 'all');
-  add('Prioridad territorial (qué tan estratégica es la zona)', ({ A: 'Alta', B: 'Media', C: 'Baja', descartar: 'Sin prioridad' }[superTier] || ''), superTier === 'all');
-  add('Solo aptos carga pública (mejor encaje para cargador público)', 'Sí', !document.getElementById('publicOnlyFilter')?.checked);
-  add('Solo leads listos (sitios más accionables)', 'Sí', !document.getElementById('premiumOnlyFilter')?.checked);
-  add('Solo con parking probable (más chance de estacionamiento)', 'Sí', !document.getElementById('parkingFilter')?.checked);
-  add('Solo con link real Maps (enlace exacto validado)', 'Sí', !document.getElementById('mapsUriOnlyFilter')?.checked);
-  add('Grupo filtrado (marca o cadena)', state.activeGroup, !state.activeGroup);
+  add('Ciudad (dónde están los puntos)', city, city === 'Todos', 'Recorta el mapa a una ciudad o deja toda la base visible.');
+  add('Zona (subárea dentro de la ciudad)', zone, zone === 'Todos', 'Sirve para enfocar el análisis en un distrito o territorio puntual.');
+  add('Tipo de lugar (clase de negocio o sitio)', labelCommercialBranchDetail(category, 'filter'), category === 'Todos', 'Limita la exportación a una familia comercial específica.');
+  add('Estado del dato (calidad general del registro)', ({ validated_any: 'Validado', with_real_link: 'Con link real', pending: 'Pendiente' }[dataState] || ''), dataState === 'all', 'Aclara si pediste solo datos más limpios o también pendientes de depurar.');
+  add('Nivel socioeconómico (entorno del punto)', labelNse(nse), nse === 'all', 'Filtra por perfil socioeconómico del entorno usando proxy APEIM cuando aplica.');
+  add('Buscar', search, !search, 'Busca cadenas, operadores, distritos, direcciones o palabras clave.');
+  add('UBIGEO / distrito (código o referencia territorial del punto)', ubigeo, ubigeo === 'Todos', 'Ayuda a bajar el análisis a un distrito concreto.');
+  add('Calidad interna (revisión manual del dato)', ({ approved_auto: 'Dato limpio', review_light: 'Dato con duda' }[review] || ''), review === 'all', 'Separa registros listos de los que aún requieren ojo humano.');
+  add('Estado Google (validación contra Google Places)', ({ validated: 'Validado', validated_auto: 'Validado auto', ambiguous: 'Ambiguo', not_found: 'No encontrado', no_match: 'Sin match', with_real_link: 'Con link real Maps' }[google] || ''), google === 'all', 'Asegura qué tan aterrizado está el punto respecto a Google Maps.');
+  add('Potencial (qué tan prometedor se ve el sitio)', ({ high: 'Potencial alto', medium: 'Potencial medio', low: 'Potencial bajo', discard: 'Sin potencial' }[viability] || ''), viability === 'all', 'Filtra por la lectura comercial general del sitio.');
+  add('Estado comercial / premium (prioridad para ventas)', ({ atacar_ya: 'Lead listo', revisar: 'Validar', descartar: 'No priorizar' }[premium] || ''), premium === 'all', 'Deja solo sitios más accionables para prospección comercial.');
+  add('Prioridad territorial (qué tan estratégica es la zona)', ({ A: 'Alta', B: 'Media', C: 'Baja', descartar: 'Sin prioridad' }[superTier] || ''), superTier === 'all', 'Ordena por peso territorial del entorno.');
+  add('Solo aptos carga pública (mejor encaje para cargador público)', 'Sí', !document.getElementById('publicOnlyFilter')?.checked, 'Deja solo sitios que hoy muestran mejor encaje para infraestructura pública.');
+  add('Solo leads listos (sitios más accionables)', 'Sí', !document.getElementById('premiumOnlyFilter')?.checked, 'Reduce la lista a puntos más accionables comercialmente.');
+  add('Solo con parking probable (más chance de estacionamiento)', 'Sí', !document.getElementById('parkingFilter')?.checked, 'Excluye puntos con baja señal de estacionamiento útil.');
+  add('Solo con link real Maps (enlace exacto validado)', 'Sí', !document.getElementById('mapsUriOnlyFilter')?.checked, 'Conserva solo puntos con ubicación abrible y concreta.');
+  add('Grupo filtrado (marca o cadena)', state.activeGroup, !state.activeGroup, 'Fija la exportación en una red o cadena específica, como KIO.');
   return filters;
 }
 
 function buildExportGlossary() {
   return [
+    { label: 'Score KIO / EVINKA', description: 'Score compuesto para priorizar sitios como lo hacen operadores serios: mezcla flujo proxy, cobertura de red, factibilidad del sitio, nodos cercanos y NSE.' },
+    { label: 'Flujo proxy', description: 'Señal indirecta de movimiento útil alrededor del punto. No es tráfico oficial, pero usa densidad de nodos y destinos cercanos para aproximarlo.' },
+    { label: 'Cobertura red', description: 'Qué tanto ayuda el punto a abrir o coser cobertura respecto al siguiente punto del mismo grupo.' },
+    { label: 'Factibilidad sitio', description: 'Resume encaje operativo del lugar: parking, viabilidad para carga pública, condición comercial y tipo de sitio.' },
+    { label: 'Nodos cercanos', description: 'Cuenta y pondera anclas alrededor del punto como retail, salud, educación, hoteles o puntos premium.' },
     { label: 'Estado del dato', description: 'Resume la calidad general del registro. “Validado” significa que ya pasó por una verificación fuerte; “Con link real” que tiene enlace exacto a Google Maps; “Pendiente” que todavía necesita depuración.' },
     { label: 'Premium / estado comercial', description: 'Indica prioridad para ventas. “Lead listo” es un punto más accionable; “Validar” requiere revisión comercial; “No priorizar” hoy no es foco.' },
     { label: 'Potencial', description: 'Qué tan prometedor se ve el sitio para el negocio, combinando señales de demanda, ubicación y encaje comercial.' },
     { label: 'Prioridad territorial', description: 'Qué tan estratégica se ve la zona. A = alta, B = media, C = baja.' },
     { label: 'Estado Google', description: 'Muestra el nivel de validación contra Google Places y Google Maps.' },
-    { label: 'Nivel socioeconómico', description: 'Clasificación del entorno del punto cuando exista fuente oficial de estrato. Si no hay fuente, aparece como “Sin dato”.' },
+    { label: 'Nivel socioeconómico', description: 'Clasificación del entorno del punto usando proxy APEIM para Lima cuando aplica. Si no hay señal suficiente, aparece como “Sin dato”.' },
     { label: 'Parking probable', description: 'Señal estimada de que el sitio podría tener estacionamiento útil para instalación o uso.' },
     { label: 'Carga pública', description: 'Marca los puntos con mejor encaje estimado para infraestructura de carga pública.' },
   ];
@@ -1211,7 +1282,8 @@ function labelNse(value) {
 
 function compareRowsForExport(a, b) {
   const superRank = { A: 4, B: 3, C: 2, descartar: 1 };
-  return (superRank[territorialTier(b)] || 0) - (superRank[territorialTier(a)] || 0)
+  return buildStrategicAnalysis(b).kioStrategicScore - buildStrategicAnalysis(a).kioStrategicScore
+    || (superRank[territorialTier(b)] || 0) - (superRank[territorialTier(a)] || 0)
     || priorityRankValue(b.evinkaPriority) - priorityRankValue(a.evinkaPriority)
     || territorialScore(b) - territorialScore(a)
     || String(a.city || '').localeCompare(String(b.city || ''), 'es')
@@ -1318,7 +1390,7 @@ function buildPopupContent(row) {
     `<div class="popup-title">${escapeHtml(row.canonicalName || row.name)}</div>`,
     `<div class="popup-subtitle">${escapeHtml(labelCommercialBranchDetail(row.commercialBranchDetail || labelCategory(row.category)))} · ${escapeHtml(row.operator)}${row.networkBrand ? ` · red ${escapeHtml(row.networkBrand)}` : ''}</div>`,
     `<div class="popup-address">${escapeHtml(row.address)}</div>`,
-    `<div class="popup-line"><strong>Índice estratégico</strong><span>${escapeHtml(String(analysis.strategicIndex))}/100 · ${escapeHtml(analysis.bandLabel)}</span></div>`,
+    `<div class="popup-line"><strong>Score KIO / EVINKA</strong><span>${escapeHtml(String(analysis.kioStrategicScore))}/100 · ${escapeHtml(analysis.bandLabel)}</span></div>`,
     `<div class="popup-line"><strong>Distancia red</strong><span>${escapeHtml(analysis.nearestSameGroupDistanceLabel)} · ${escapeHtml(analysis.nearestSameGroupText)}</span></div>`,
     `<div class="popup-line"><strong>Puntaje</strong><span>territorial ${escapeHtml(String(territorialScore(row)))} · ${escapeHtml(territorialAction(row))}</span></div>`,
     `<div class="popup-line"><strong>Señales</strong><span>demanda ${escapeHtml(String(row.populationDemandScore || 0))} · actividad ${escapeHtml(String(row.activityDensityScore || 0))} · EV ${escapeHtml(String(row.evAffinityAdvancedScore || 0))} · noticias ${escapeHtml(String(row.newsSignalScore || 0))}</span></div>`,
@@ -1503,6 +1575,19 @@ function formatDistanceLabel(row) {
 }
 function inferFuelBrand(row) {
   return row.networkBrand || row.fuelNetwork || row.brandReference || row.brandGroup || row.operator || '';
+}
+function isDestinationAnchor(row) {
+  return [
+    'Centro comercial / strip mall',
+    'Supermercado',
+    'Cadena comida rápida',
+    'Cadena café/restaurante',
+    'Clínica / hospital',
+    'Universidad',
+    'Hotel',
+    'Parqueadero público',
+    'Concesionario',
+  ].includes(row.category);
 }
 function isPriorityDemandNode(row) {
   return !!(row.publicChargingCandidate || row.evinkaPremiumCandidate || ['A', 'B'].includes(territorialTier(row)) || ['AB', 'B'].includes(row.nivel_socioeconomico));
