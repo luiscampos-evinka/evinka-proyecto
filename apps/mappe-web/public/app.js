@@ -129,7 +129,8 @@ function getNseCoverage(city = 'Todos') {
 function updateNseFilterNote() {
   const el = document.getElementById('nseFilterNote');
   if (!el) return;
-  el.textContent = 'Por ahora el nivel socioeconómico no está enriquecido para Lima. El mapa ya funciona y este filtro queda reservado para una capa futura.';
+  const covered = state.rows.filter((row) => row.nivel_socioeconomico).length;
+  el.textContent = `Usa proxy distrital APEIM para Lima Metropolitana. Cobertura actual: ${covered}/${state.rows.length} puntos con NSE PE.`;
 }
 
 function rebuildUbigeoSelect() {
@@ -239,12 +240,30 @@ function rebuildNseSelect() {
   const el = document.getElementById('nseFilter');
   const current = el.value || 'all';
   const rows = filterRowsExcept('nseFilter');
+  const counts = {
+    all: rows.length,
+    AB: rows.filter((r) => r.nivel_socioeconomico === 'AB').length,
+    B: rows.filter((r) => r.nivel_socioeconomico === 'B').length,
+    C: rows.filter((r) => r.nivel_socioeconomico === 'C').length,
+    D: rows.filter((r) => r.nivel_socioeconomico === 'D').length,
+    E: rows.filter((r) => r.nivel_socioeconomico === 'E').length,
+    sin_dato: rows.filter((r) => !r.nivel_socioeconomico).length,
+  };
   const values = [
-    ['all', `Todos (${rows.length})`],
-    ['sin_dato', `Sin dato (${rows.length})`],
+    ['all', 'Todos'],
+    ['AB', 'NSE AB'],
+    ['B', 'NSE B'],
+    ['C', 'NSE C'],
+    ['D', 'NSE D'],
+    ['E', 'NSE E'],
+    ['sin_dato', 'Sin dato'],
   ];
-  el.innerHTML = values.map(([value, label]) => `<option value="${escapeHtml(value)}">${escapeHtml(label)}</option>`).join('');
-  el.value = ['all','sin_dato'].includes(current) ? current : 'all';
+  el.innerHTML = values.map(([value, label]) => {
+    const count = counts[value] || 0;
+    const disabled = value !== 'all' && count === 0 && current !== value;
+    return `<option value="${escapeHtml(value)}"${disabled ? ' disabled' : ''}>${escapeHtml(`${label} (${count})`)}</option>`;
+  }).join('');
+  el.value = values.some(([value]) => value === current) ? current : 'all';
 }
 
 function rebuildGoogleValidationSelect() {
@@ -323,7 +342,7 @@ function createMap() {
     fadeAnimation: true,
     markerZoomAnimation: true,
     worldCopyJump: false,
-  }).setView([4.6486, -74.2479], 10);
+  }).setView([-12.0464, -77.0428], 11);
 
   L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png', {
     attribution: '&copy; OpenStreetMap &copy; CARTO',
@@ -364,8 +383,8 @@ function applyFilters() {
     if (dataStateFilter === 'validated_any' && !['validated', 'validated_auto'].includes(row.googleValidationStatus)) return false;
     if (dataStateFilter === 'with_real_link' && !row.googleMapsUri) return false;
     if (dataStateFilter === 'pending' && (['validated', 'validated_auto'].includes(row.googleValidationStatus) || row.googleMapsUri)) return false;
-    if (nseFilter === 'sin_dato' && row.estrato_entorno != null && row.estrato_entorno !== '') return false;
-    if (nseFilter !== 'all' && nseFilter !== 'sin_dato' && Number(row.estrato_entorno) !== Number(nseFilter)) return false;
+    if (nseFilter === 'sin_dato' && row.nivel_socioeconomico) return false;
+    if (nseFilter !== 'all' && nseFilter !== 'sin_dato' && row.nivel_socioeconomico !== nseFilter) return false;
     if (parkingOnly && row.parkingProbability === 'low') return false;
     if (reviewFilter !== 'all' && row.reviewStatus !== reviewFilter) return false;
     if (googleValidationFilter === 'with_real_link' && !row.googleMapsUri) return false;
@@ -378,7 +397,7 @@ function applyFilters() {
     if (mapsUriOnly && !row.googleMapsUri) return false;
     if (state.activeGroup && row.brandGroup !== state.activeGroup) return false;
     if (search) {
-      const haystack = [row.operator, row.name, row.address, row.category, row.commercialBranch, row.commercialBranchDetail, row.zone, row.city, row.officialDivisionName, row.localityName, row.upzName].join(' ').toLowerCase();
+      const haystack = [row.operator, row.operatorGroup, row.networkBrand, row.fuelNetwork, row.name, row.address, row.category, row.commercialBranch, row.commercialBranchDetail, row.zone, row.city, row.officialDivisionName, row.localityName, row.upzName].join(' ').toLowerCase();
       if (!haystack.includes(search)) return false;
     }
     return true;
@@ -425,8 +444,8 @@ function filterRowsExcept(skipId) {
       if (dataStateFilter === 'pending' && (['validated', 'validated_auto'].includes(row.googleValidationStatus) || row.googleMapsUri)) return false;
     }
     if (skipId !== 'nseFilter') {
-      if (nseFilter === 'sin_dato' && row.estrato_entorno != null && row.estrato_entorno !== '') return false;
-      if (nseFilter !== 'all' && nseFilter !== 'sin_dato' && Number(row.estrato_entorno) !== Number(nseFilter)) return false;
+      if (nseFilter === 'sin_dato' && row.nivel_socioeconomico) return false;
+      if (nseFilter !== 'all' && nseFilter !== 'sin_dato' && row.nivel_socioeconomico !== nseFilter) return false;
     }
     if (parkingOnly && row.parkingProbability === 'low') return false;
     if (reviewFilter !== 'all' && row.reviewStatus !== reviewFilter) return false;
@@ -442,7 +461,7 @@ function filterRowsExcept(skipId) {
     if (mapsUriOnly && !row.googleMapsUri) return false;
     if (state.activeGroup && row.brandGroup !== state.activeGroup) return false;
     if (search) {
-      const haystack = [row.operator, row.name, row.address, row.category, row.commercialBranch, row.commercialBranchDetail, row.zone, row.city, row.officialDivisionName, row.localityName, row.upzName].join(' ').toLowerCase();
+      const haystack = [row.operator, row.operatorGroup, row.networkBrand, row.fuelNetwork, row.name, row.address, row.category, row.commercialBranch, row.commercialBranchDetail, row.zone, row.city, row.officialDivisionName, row.localityName, row.upzName].join(' ').toLowerCase();
       if (!haystack.includes(search)) return false;
     }
     return true;
@@ -590,12 +609,12 @@ function renderLocations() {
   const city = document.getElementById('cityFilter').value;
   const province = document.getElementById('provinceFilter').value;
   const nseCovered = state.filtered.filter((row) => row.nivel_socioeconomico).length;
-  const officialNse = state.filtered.filter((row) => row.estrato_fuente === 'medellin_oficial').length;
-  document.getElementById('resultsSummary').textContent = `${state.filtered.length} oportunidades · ${superA} territorial alta · ${premium} leads listos · ${viable} listos para carga pública · ${googleValidated} validados Google · ${mapsReal} con link real · NSE cubierto ${nseCovered} · fuente puntual oficial ${officialNse} · base raw ${rawTotal} registros · lista ${visibleRows.length} · mapa ${mapRows.length}` + (city !== 'Todos' ? ` · ciudad: ${city}` : '') + (province !== 'Todos' ? ` · territorio: ${province}` : '') + (publicOnly ? ' · filtro: solo listos para carga pública' : '') + (premiumOnly ? ' · filtro: solo leads listos' : '') + (mapsUriOnly ? ' · filtro: solo con link real' : '') + (state.activeGroup ? ` · grupo: ${state.activeGroup}` : '') + (state.filtered.length > visibleRows.length ? ' · usa filtros para afinar' : '');
+  const apeimNse = state.filtered.filter((row) => row.estrato_fuente === 'apeim_zone_lima_2020_proxy').length;
+  document.getElementById('resultsSummary').textContent = `${state.filtered.length} oportunidades · ${superA} territorial alta · ${premium} leads listos · ${viable} listos para carga pública · ${googleValidated} validados Google · ${mapsReal} con link Maps · NSE cubierto ${nseCovered} · NSE proxy APEIM ${apeimNse} · base raw ${rawTotal} registros · lista ${visibleRows.length} · mapa ${mapRows.length}` + (city !== 'Todos' ? ` · ciudad: ${city}` : '') + (province !== 'Todos' ? ` · territorio: ${province}` : '') + (publicOnly ? ' · filtro: solo listos para carga pública' : '') + (premiumOnly ? ' · filtro: solo leads listos' : '') + (mapsUriOnly ? ' · filtro: solo con link Maps' : '') + (state.activeGroup ? ` · grupo: ${state.activeGroup}` : '') + (state.filtered.length > visibleRows.length ? ' · usa filtros para afinar' : '');
   wrap.innerHTML = visibleRows.length ? visibleRows.map((row) => `
     <div class="location-card" data-id="${escapeHtml(row.id)}">
       <h3>${escapeHtml(row.name)}</h3>
-      <p>${escapeHtml(labelCommercialBranchDetail(row.commercialBranchDetail || labelCategory(row.category)))} · ${escapeHtml(row.operator)}</p>
+      <p>${escapeHtml(labelCommercialBranchDetail(row.commercialBranchDetail || labelCategory(row.category)))} · ${escapeHtml(row.operator)}${row.networkBrand ? ` · red ${escapeHtml(row.networkBrand)}` : ''}</p>
       <p>${escapeHtml(row.address)}</p>
       <p>${row.rawCount > 1 ? `${row.rawCount} registros consolidados · ${row.aliasCount} alias detectados` : '1 registro limpio'}</p>
       <p>Puntaje territorial ${escapeHtml(String(territorialScore(row)))} · ${escapeHtml(territorialAction(row))}</p>
@@ -917,7 +936,7 @@ function buildExportMetrics(rows) {
     { label: 'Links reales Maps', value: rows.filter((row) => row.googleMapsUri).length },
     { label: 'Google validado', value: rows.filter((row) => ['validated', 'validated_auto'].includes(row.googleValidationStatus)).length },
     { label: 'Parking probable alto', value: rows.filter((row) => row.parkingProbability === 'high').length },
-    { label: 'Con estrato oficial', value: rows.filter((row) => row.estrato_entorno != null).length },
+    { label: 'Con NSE Perú', value: rows.filter((row) => row.nivel_socioeconomico).length },
     { label: 'Puntaje territorial promedio', value: rows.length ? Math.round(rows.reduce((acc, row) => acc + territorialScore(row), 0) / rows.length) : 0 },
   ];
 }
@@ -965,7 +984,7 @@ function describeActiveFilters() {
   add('Estado del dato (calidad general del registro)', ({ validated_any: 'Validado', with_real_link: 'Con link real', pending: 'Pendiente' }[dataState] || ''), dataState === 'all');
   add('Nivel socioeconómico (entorno del punto)', labelNse(nse), nse === 'all');
   add('Buscar', search, !search);
-  add('Municipio DANE (código oficial del municipio)', ubigeo, ubigeo === 'Todos');
+  add('UBIGEO / distrito (código o referencia territorial del punto)', ubigeo, ubigeo === 'Todos');
   add('Calidad interna (revisión manual del dato)', ({ approved_auto: 'Dato limpio', review_light: 'Dato con duda' }[review] || ''), review === 'all');
   add('Estado Google (validación contra Google Places)', ({ validated: 'Validado', validated_auto: 'Validado auto', ambiguous: 'Ambiguo', not_found: 'No encontrado', no_match: 'Sin match', with_real_link: 'Con link real Maps' }[google] || ''), google === 'all');
   add('Potencial (qué tan prometedor se ve el sitio)', ({ high: 'Potencial alto', medium: 'Potencial medio', low: 'Potencial bajo', discard: 'Sin potencial' }[viability] || ''), viability === 'all');
@@ -993,9 +1012,11 @@ function buildExportGlossary() {
 }
 
 function labelNse(value) {
-  if (value === 'alto') return 'Alto';
-  if (value === 'medio') return 'Medio';
-  if (value === 'bajo') return 'Bajo';
+  if (value === 'AB') return 'NSE AB';
+  if (value === 'B') return 'NSE B';
+  if (value === 'C') return 'NSE C';
+  if (value === 'D') return 'NSE D';
+  if (value === 'E') return 'NSE E';
   if (value === 'sin_dato') return 'Sin dato';
   return value || '';
 }
@@ -1012,8 +1033,8 @@ function compareRowsForExport(a, b) {
 function buildExportFileName(city, total) {
   const now = new Date();
   const stamp = `${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, '0')}${String(now.getDate()).padStart(2, '0')}-${String(now.getHours()).padStart(2, '0')}${String(now.getMinutes()).padStart(2, '0')}`;
-  const scope = city && city !== 'Todos' ? city.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-z0-9]+/g, '-') : 'colombia';
-  return `mapco-estudio-mercado-${scope}-${total}-${stamp}.xlsx`;
+  const scope = city && city !== 'Todos' ? city.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-z0-9]+/g, '-') : 'lima';
+  return `mappe-estudio-mercado-${scope}-${total}-${stamp}.xlsx`;
 }
 
 function downloadWorkbook(buffer, filename) {

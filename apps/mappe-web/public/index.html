@@ -92,18 +92,17 @@
         </select>
       </label>
       <label>
-        Nivel socioeconómico
+        Nivel socioeconómico (Perú)
         <select id="nseFilter">
           <option value="all">Todos</option>
-          <option value="1">Estrato 1</option>
-          <option value="2">Estrato 2</option>
-          <option value="3">Estrato 3</option>
-          <option value="4">Estrato 4</option>
-          <option value="5">Estrato 5</option>
-          <option value="6">Estrato 6</option>
+          <option value="AB">NSE AB</option>
+          <option value="B">NSE B</option>
+          <option value="C">NSE C</option>
+          <option value="D">NSE D</option>
+          <option value="E">NSE E</option>
           <option value="sin_dato">Sin dato</option>
         </select>
-        <span class="filter-note" id="nseFilterNote">Se activa con capa oficial de estrato del entorno. Por ahora puede aparecer sin datos hasta terminar la carga por ciudad.</span>
+        <span class="filter-note" id="nseFilterNote">Se calcula con proxy distrital APEIM para Lima Metropolitana.</span>
       </label>
       <label>
         Potencial
@@ -134,7 +133,7 @@
           <label>
             Distrito (UBIGEO)
             <select id="ubigeoFilter"></select>
-            <span class="filter-note">Aquí este campo identifica el distrito del punto en Lima Metropolitana mediante referencia territorial/UBIGEO cuando esté disponible.</span>
+            <span class="filter-note">Aquí identifica el distrito del punto y usa UBIGEO cuando logramos inferirlo con suficiente señal.</span>
           </label>
           <label>
             Calidad interna

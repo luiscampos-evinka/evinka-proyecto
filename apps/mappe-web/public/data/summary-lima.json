@@ -1,14 +1,14 @@
 {
-  "generatedAt": "2026-05-19T16:50:37.044Z",
-  "total": 9163,
+  "generatedAt": "2026-05-19T17:19:26.628872Z",
+  "total": 9167,
   "cities": [
     "Lima"
   ],
   "country": "Perú",
   "methodology": {
-    "extraction": "Extracción OSM/Overpass sobre Lima Metropolitana con categorías base de MapCo.",
-    "territory": "Asignación territorial preliminar por distritos OSM dentro de bbox metropolitana.",
-    "scoring": "Scoring inicial heredando la lógica comercial general de MapCo, ajustado como baseline para Lima."
+    "extraction": "Extracción OSM/Overpass sobre Lima Metropolitana más curaduría oficial KIO.",
+    "territory": "Distrito inferido por dirección + zonas APEIM Lima para NSE Perú.",
+    "scoring": "Scoring base MapPe con priorización manual del grupo KIO oficial y links de Google Maps operativos."
   },
   "extractionSummary": [
     {
@@ -74,21 +74,23 @@
   ],
   "counts": {
     "super": {
-      "A": 0,
+      "A": 9,
       "B": 2183,
-      "C": 1023,
+      "C": 1018,
       "descartar": 5957
     },
     "premium": {
-      "atacar_ya": 1822,
-      "revisar": 1384,
+      "atacar_ya": 1831,
+      "revisar": 1379,
       "descartar": 5957
     },
     "viability": {
-      "high": 1822,
-      "medium": 1384,
+      "high": 1831,
+      "medium": 1379,
       "low": 5957,
       "discard": 0
     }
-  }
+  },
+  "nseSource": "APEIM Lima Metropolitana 2020 por zonas (proxy distrital para filtros PE)",
+  "officialKioStations": 9
 }
