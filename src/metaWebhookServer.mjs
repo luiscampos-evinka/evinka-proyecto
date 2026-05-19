@@ -7,8 +7,10 @@ import { ChatbotEngine } from './chatbotEngine.mjs';
 import { WhatsAppMetaClient } from './whatsappMeta.mjs';
 import { extractReceiptDataFromBuffer } from './receiptOcr.mjs';
 import { MicrosoftGraphClient } from './microsoftGraph.mjs';
-import { patchAdvisorConversation } from './advisorInboxState.mjs';
+import { ClickUpCalendarClient } from './clickupCalendar.mjs';
+import { getAdvisorConversationState, patchAdvisorConversation } from './advisorInboxState.mjs';
 import { saveConversationMedia } from './advisorMediaStore.mjs';
+import { SupabaseStorage } from './supabaseStorage.mjs';
 
 loadEnv();
 
@@ -21,13 +23,389 @@ const sb = new SupabaseRest({
   key: requiredEnv('SUPABASE_SERVICE_ROLE_KEY'),
 });
 
-const calendar = process.env.MICROSOFT_CLIENT_ID && process.env.MICROSOFT_CLIENT_SECRET
+function extractTicketFromCalendarBody(body = '') {
+  const text = String(body || '');
+  const match = text.match(/(?:Código|Codigo)\s*:\s*([^\n\r]+)/i);
+  return String(match?.[1] || '').trim();
+}
+
+class HybridCalendarClient {
+  constructor({ clickup = null, microsoft = null } = {}) {
+    this.clickup = clickup;
+    this.microsoft = microsoft;
+    this.provider = 'hybrid';
+  }
+
+  async listEvents(options = {}) {
+    if (this.clickup) return this.clickup.listEvents(options);
+    if (this.microsoft) return this.microsoft.listEvents(options);
+    return [];
+  }
+
+  async createEvent(payload = {}) {
+    let microsoftEvent = null;
+    let clickupResult = null;
+    if (this.microsoft) {
+      microsoftEvent = await this.microsoft.createEvent(payload);
+    }
+    if (this.clickup) {
+      try {
+        clickupResult = await this.clickup.createEvent(payload);
+      } catch (error) {
+        console.error('HybridCalendarClient clickup.createEvent failed:', error);
+      }
+    }
+    return {
+      ...(microsoftEvent || clickupResult || {}),
+      id: microsoftEvent?.id || clickupResult?.id || null,
+      clickupTaskId: clickupResult?.id || null,
+    };
+  }
+
+  async updateEvent(eventId, patch = {}) {
+    let ticket = '';
+    if (this.microsoft && eventId) {
+      try {
+        const current = await this.microsoft.getEvent(eventId);
+        ticket = extractTicketFromCalendarBody(current?.body?.content || '');
+      } catch (error) {
+        console.error('HybridCalendarClient microsoft.getEvent failed before update:', error);
+      }
+      await this.microsoft.updateEvent(eventId, patch);
+    }
+    if (this.clickup && ticket) {
+      try {
+        const task = await this.clickup.findTaskByTicket(ticket);
+        if (task?.id) await this.clickup.updateEvent(task.id, patch);
+      } catch (error) {
+        console.error('HybridCalendarClient clickup.updateEvent failed:', error);
+      }
+    }
+    return { ok: true, ticket };
+  }
+
+  async cancelEvent(eventId, comment = 'Cancelada desde EVINKABOT.') {
+    let ticket = '';
+    if (this.microsoft && eventId) {
+      try {
+        const current = await this.microsoft.getEvent(eventId);
+        ticket = extractTicketFromCalendarBody(current?.body?.content || '');
+      } catch (error) {
+        console.error('HybridCalendarClient microsoft.getEvent failed before cancel:', error);
+      }
+      await this.microsoft.cancelEvent(eventId, comment);
+    }
+    if (this.clickup && ticket) {
+      try {
+        const task = await this.clickup.findTaskByTicket(ticket);
+        if (task?.id) await this.clickup.cancelEvent(task.id, comment);
+      } catch (error) {
+        console.error('HybridCalendarClient clickup.cancelEvent failed:', error);
+      }
+    }
+    return { ok: true, ticket };
+  }
+}
+
+const calendarProvider = String(process.env.CHATBOT_CALENDAR_PROVIDER || '').trim().toLowerCase();
+const clickupCalendar = process.env.CLICKUP_API_TOKEN && process.env.CLICKUP_B2C_LIST_ID
+  ? new ClickUpCalendarClient()
+  : null;
+const microsoftCalendar = process.env.MICROSOFT_CLIENT_ID && process.env.MICROSOFT_CLIENT_SECRET
   ? new MicrosoftGraphClient()
   : null;
+const calendar = ['hybrid', 'dual', 'clickup+microsoft', 'clickup+ms'].includes(calendarProvider)
+  ? new HybridCalendarClient({ clickup: clickupCalendar, microsoft: microsoftCalendar })
+  : calendarProvider === 'clickup'
+    ? clickupCalendar
+    : microsoftCalendar;
+const storage = new SupabaseStorage({
+  url: requiredEnv('SUPABASE_URL'),
+  key: requiredEnv('SUPABASE_SERVICE_ROLE_KEY'),
+});
 
 const reminderTimers = new Map();
+const handoffTimers = new Map();
+const handoffAdvisorReminderTimers = new Map();
 const STATUS_PREFS_PATH = path.resolve(process.cwd(), 'data/status-notification-prefs.json');
+const STATUS_OVERVIEW_DATA_PATH = process.env.STATUS_OVERVIEW_DATA_PATH || '/var/www/status.evinka.net/data/overview-data.json';
 const WHATSAPP_ROLE_MAP_PATH = path.resolve(process.cwd(), 'data/whatsapp-role-map.json');
+const USERS_PATH = path.resolve(process.cwd(), 'apps/cotizador-web/data/users.json');
+const ADVISOR_INBOX_URL = process.env.ADVISOR_INBOX_URL || 'https://asesor.evinka.net/';
+const CLIENT_FILES_BUCKET = process.env.CLIENT_FILES_BUCKET || 'evinka-client-files';
+const BOT_EXCLUDED_PHONES = new Set(
+  String(process.env.BOT_EXCLUDED_PHONES || '+51 939 882 508')
+    .split(',')
+    .map((item) => String(item || '').replace(/\D+/g, ''))
+    .filter(Boolean),
+);
+const HANDOFF_TIMEOUT_MINUTES = Number(process.env.HANDOFF_TIMEOUT_MINUTES || 30);
+const HANDOFF_TIMEOUT_MS = Math.max(1, (Number.isFinite(HANDOFF_TIMEOUT_MINUTES) ? HANDOFF_TIMEOUT_MINUTES : 30) * 60 * 1000);
+const HANDOFF_ADVISOR_REMINDER_MINUTES = Number(process.env.HANDOFF_ADVISOR_REMINDER_MINUTES || 60);
+const HANDOFF_ADVISOR_REMINDER_MS = Math.max(1, (Number.isFinite(HANDOFF_ADVISOR_REMINDER_MINUTES) ? HANDOFF_ADVISOR_REMINDER_MINUTES : 60) * 60 * 1000);
+
+function buildAdvisorCaseUrl(conversationId = '', countryCode = null) {
+  const url = new URL(ADVISOR_INBOX_URL);
+  if (conversationId) url.searchParams.set('conversation', String(conversationId || '').trim());
+  if (countryCode) url.searchParams.set('country', String(countryCode || '').trim().toUpperCase());
+  return url.toString();
+}
+
+function safeStorageFileName(value = 'archivo') {
+  const clean = String(value || 'archivo')
+    .normalize('NFKD')
+    .replace(/[^a-zA-Z0-9._-]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 120);
+  return clean || 'archivo';
+}
+
+function normalizeStoragePhone(value = '') {
+  const digits = String(value || '').replace(/\D+/g, '');
+  return digits || 'desconocido';
+}
+
+function isBotExcludedPhone(value = '') {
+  const digits = String(value || '').replace(/\D+/g, '');
+  return digits ? BOT_EXCLUDED_PHONES.has(digits) : false;
+}
+
+function extensionFromMimeType(mimeType = '') {
+  const lower = String(mimeType || '').toLowerCase();
+  return {
+    'application/pdf': '.pdf',
+    'image/jpeg': '.jpg',
+    'image/png': '.png',
+    'image/webp': '.webp',
+    'audio/ogg': '.ogg',
+    'audio/mpeg': '.mp3',
+    'video/mp4': '.mp4',
+  }[lower] || '';
+}
+
+function classifyClientFileFolder({ fileName = '', mimeType = '', caption = '' } = {}) {
+  const source = `${fileName} ${caption}`.toLowerCase();
+  if (String(mimeType || '').startsWith('image/')) return 'fotos';
+  if (/comprobante|voucher|pago|deposito|depósito|transferencia/.test(source)) return 'comprobantes';
+  if (/cotizacion|cotización|quote|propuesta/.test(source)) return 'cotizaciones';
+  return 'documentos';
+}
+
+function buildClientStoragePath({ phone = '', fileName = 'archivo', mimeType = '', caption = '', createdAt = new Date() } = {}) {
+  const folder = classifyClientFileFolder({ fileName, mimeType, caption });
+  const safePhone = normalizeStoragePhone(phone);
+  const ext = path.extname(fileName || '') || extensionFromMimeType(mimeType);
+  const base = safeStorageFileName(path.basename(fileName || 'archivo', path.extname(fileName || '')) || 'archivo');
+  const stamp = new Date(createdAt).toISOString().replace(/[:.]/g, '-');
+  return `clientes/${safePhone}/${folder}/${stamp}-${base}${ext}`;
+}
+
+function buildStoredMediaUrl(bucket = '', objectPath = '') {
+  const encodedPath = String(objectPath || '')
+    .split('/')
+    .filter(Boolean)
+    .map((part) => encodeURIComponent(part))
+    .join('/');
+  return `/api/inbox/storage-media/${encodeURIComponent(String(bucket || '').trim())}/${encodedPath}`;
+}
+
+function isMissingClientFilesTable(error) {
+  const message = String(error?.message || error || '');
+  return message.includes("public.client_files")
+    || message.includes("table 'public.client_files'")
+    || message.includes('relation "public.client_files" does not exist')
+    || message.includes('PGRST205');
+}
+
+async function insertClientFileRecord(record = {}) {
+  try {
+    return await sb.insert('client_files', record);
+  } catch (error) {
+    if (isMissingClientFilesTable(error)) {
+      console.warn('client_files table missing, skipping insert');
+      return null;
+    }
+    throw error;
+  }
+}
+
+function isMissingClientArtifactsTable(error) {
+  const message = String(error?.message || error || '');
+  return message.includes('public.client_artifacts')
+    || message.includes("table 'public.client_artifacts'")
+    || message.includes('relation "public.client_artifacts" does not exist')
+    || message.includes('PGRST205');
+}
+
+async function insertClientArtifactRecord(record = {}) {
+  try {
+    return await sb.insert('client_artifacts', record);
+  } catch (error) {
+    if (isMissingClientArtifactsTable(error)) {
+      console.warn('client_artifacts table missing, skipping insert');
+      return null;
+    }
+    throw error;
+  }
+}
+
+async function persistInboundClientArtifact({ message, conversation = null, user = null, customerPhone = '', customerName = '', countryCode = null }) {
+  const type = String(message?.type || '').trim().toLowerCase();
+  if (!['contacts', 'location'].includes(type)) return null;
+  const raw = message?.raw || {};
+  let title = null;
+  let summary = null;
+  let payload = null;
+
+  if (type === 'contacts') {
+    const contacts = Array.isArray(raw.contacts) ? raw.contacts : [];
+    const first = contacts[0] || {};
+    const name = String(first?.name?.formatted_name || [first?.name?.first_name, first?.name?.last_name].filter(Boolean).join(' ') || '').trim();
+    const phone = String(first?.phones?.[0]?.phone || first?.phones?.[0]?.wa_id || '').trim();
+    title = name || 'Contacto compartido';
+    summary = ['Contacto compartido', name, phone].filter(Boolean).join(' · ');
+    payload = { contacts };
+  }
+
+  if (type === 'location') {
+    const location = raw.location || {};
+    const name = String(location.name || '').trim();
+    const address = String(location.address || '').trim();
+    title = name || 'Ubicación compartida';
+    summary = ['Ubicación compartida', name, address].filter(Boolean).join(' · ');
+    payload = { location };
+  }
+
+  const normalizedPhone = normalizeStoragePhone(customerPhone || message?.from || user?.telefono_principal || '');
+  await insertClientArtifactRecord({
+    client_id: user?.id_usuario || null,
+    client_name: customerName || null,
+    phone: normalizedPhone,
+    ticket_id: conversation?.codigo_ticket_solicitado || null,
+    message_id: message?.id || null,
+    conversation_id: conversation?.id_conversacion || null,
+    country_code: String(countryCode || '').trim().toUpperCase() || null,
+    artifact_type: type,
+    title,
+    summary,
+    payload,
+    source_platform: 'whatsapp',
+  }).catch((error) => {
+    console.error('client_artifacts insert failed:', error);
+  });
+
+  return { artifactType: type, artifactTitle: title, artifactSummary: summary };
+}
+
+function isMissingSupportTicketsTable(error) {
+  const message = String(error?.message || error || '');
+  return message.includes('public.support_tickets')
+    || message.includes("table 'public.support_tickets'")
+    || message.includes('relation "public.support_tickets" does not exist')
+    || message.includes('PGRST205');
+}
+
+async function upsertSupportTicket({ conversation = null, user = null, phone = '', patch = {} } = {}) {
+  const normalizedPhone = normalizeStoragePhone(phone || user?.telefono_principal || '');
+  const conversationId = conversation?.id_conversacion || null;
+  if (!normalizedPhone && !conversationId) return null;
+  try {
+    const clauses = [];
+    if (conversationId) clauses.push(`conversation_id.eq.${conversationId}`);
+    if (normalizedPhone) clauses.push(`phone.eq.${normalizedPhone}`);
+    const query = clauses.length > 1
+      ? `or=(${clauses.join(',')})&select=*` : `${clauses[0]}&select=*`;
+    const rows = await sb.select('support_tickets', query);
+    const existing = Array.isArray(rows) ? rows[0] : null;
+    const payload = {
+      conversation_id: conversationId,
+      client_id: user?.id_usuario || existing?.client_id || null,
+      phone: normalizedPhone || existing?.phone || '',
+      ...patch,
+    };
+    if (existing?.id) {
+      const updated = await sb.update('support_tickets', `id=eq.${existing.id}`, payload);
+      return updated?.[0] || existing;
+    }
+    const inserted = await sb.insert('support_tickets', payload);
+    return inserted?.[0] || null;
+  } catch (error) {
+    if (isMissingSupportTicketsTable(error)) {
+      console.warn('support_tickets table missing, skipping upsert');
+      return null;
+    }
+    throw error;
+  }
+}
+
+async function persistInboundClientMedia({ message, conversation = null, user = null, profile = null, customerPhone = '', customerName = '', downloaded = null, countryCode = null }) {
+  if (!message?.media?.id || !downloaded?.buffer?.length) return null;
+  const fileName = safeStorageFileName(message.media.fileName || `archivo${extensionFromMimeType(downloaded.mimeType || message.media.mimeType)}`);
+  const mimeType = downloaded.mimeType || message.media.mimeType || 'application/octet-stream';
+  const objectPath = buildClientStoragePath({
+    phone: customerPhone,
+    fileName,
+    mimeType,
+    caption: message.text || message.media.caption || '',
+    createdAt: new Date(),
+  });
+
+  let payload = null;
+  try {
+    await storage.uploadObject(CLIENT_FILES_BUCKET, objectPath, downloaded.buffer, { contentType: mimeType, upsert: true });
+    payload = {
+      mediaUrl: buildStoredMediaUrl(CLIENT_FILES_BUCKET, objectPath),
+      storageBucket: CLIENT_FILES_BUCKET,
+      storagePath: objectPath,
+      mimeType,
+      fileName,
+      fileSize: downloaded.fileSize || downloaded.buffer.length,
+      whatsappMediaId: message.media.id,
+      sourcePlatform: 'whatsapp',
+    };
+  } catch (error) {
+    console.error('supabase media upload failed:', error);
+    const local = saveConversationMedia({
+      conversationId: conversation?.id_conversacion || 'orphan',
+      direction: 'inbound',
+      fileName,
+      mimeType,
+      buffer: downloaded.buffer,
+    });
+    payload = {
+      mediaUrl: local.urlPath,
+      localMediaPath: local.relativePath,
+      mimeType,
+      fileName,
+      fileSize: downloaded.fileSize || downloaded.buffer.length,
+      whatsappMediaId: message.media.id,
+      sourcePlatform: 'whatsapp',
+    };
+  }
+
+  await insertClientFileRecord({
+    client_id: user?.id_usuario || null,
+    client_name: customerName || profile?.nombre_receptor || profile?.nombre_cliente || null,
+    phone: normalizeStoragePhone(customerPhone),
+    ticket_id: conversation?.codigo_ticket_solicitado || null,
+    message_id: message.id || null,
+    file_name: fileName,
+    file_type: classifyClientFileFolder({ fileName, mimeType, caption: message.text || '' }),
+    mime_type: mimeType,
+    file_size: downloaded.fileSize || downloaded.buffer.length,
+    storage_bucket: payload.storageBucket || null,
+    storage_path: payload.storagePath || null,
+    public_url: null,
+    signed_url: null,
+    source_platform: 'whatsapp',
+    conversation_id: conversation?.id_conversacion || null,
+    country_code: String(countryCode || '').trim().toUpperCase() || null,
+  }).catch((error) => {
+    console.error('client_files insert failed:', error);
+  });
+
+  return payload;
+}
 
 function ensureStatusPrefsFile() {
   fs.mkdirSync(path.dirname(STATUS_PREFS_PATH), { recursive: true });
@@ -60,6 +438,239 @@ function loadWhatsAppRoleMap() {
   }
 }
 
+function readJsonFile(filePath, fallback) {
+  try {
+    if (!fs.existsSync(filePath)) return fallback;
+    const raw = fs.readFileSync(filePath, 'utf8');
+    return raw ? JSON.parse(raw) : fallback;
+  } catch (error) {
+    console.error(`readJsonFile failed (${filePath}):`, error);
+    return fallback;
+  }
+}
+
+function normalizeEmail(value = '') {
+  return String(value || '').trim().toLowerCase();
+}
+
+function normalizeNotificationPhone(value = '') {
+  const raw = String(value || '').trim();
+  if (!raw) return '';
+  const cleaned = raw.replace(/[^\d+]/g, '').replace(/(?!^)\+/g, '');
+  const digits = cleaned.replace(/^\+/, '').replace(/\D/g, '');
+  if (/^9\d{8}$/.test(digits)) return `51${digits}`;
+  if (/^3\d{9}$/.test(digits)) return `57${digits}`;
+  if (/^(51\d{9}|57\d{10})$/.test(digits)) return digits;
+  if (/^\d{8,15}$/.test(digits)) return digits;
+  return '';
+}
+
+function normalizeCountryList(value) {
+  return Array.isArray(value)
+    ? [...new Set(value.map((item) => String(item || '').trim().toUpperCase()).filter(Boolean))]
+    : [];
+}
+
+function normalizeLooseText(value = '') {
+  return String(value || '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/[^a-z0-9\s]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function loadOperationalUsers() {
+  const users = readJsonFile(USERS_PATH, []);
+  return Array.isArray(users)
+    ? users.map((user) => ({
+        ...user,
+        email: normalizeEmail(user.email || ''),
+        role: String(user.role || '').trim().toLowerCase(),
+        status: String(user.status || 'active').trim().toLowerCase(),
+        notificationPhone: normalizeNotificationPhone(user.notificationPhone || user.phone || ''),
+        allowedCountries: normalizeCountryList(user.allowedCountries),
+      }))
+    : [];
+}
+
+function isAdvisorAlertRole(user = {}) {
+  const role = String(user.role || '').trim().toLowerCase();
+  return role === 'admin' || role === 'supervisor' || role.startsWith('asesor');
+}
+
+function advisorNameSignals() {
+  const users = loadOperationalUsers().filter((user) => user.status === 'active' && isAdvisorAlertRole(user));
+  const names = new Set();
+  for (const user of users) {
+    const full = normalizeLooseText(user.name || '');
+    if (!full) continue;
+    names.add(full);
+    const parts = full.split(' ').filter(Boolean);
+    if (parts[0] && parts[0].length >= 4) names.add(parts[0]);
+  }
+  return names;
+}
+
+function detectPreviousAdvisorSignal(text = '') {
+  const normalized = normalizeLooseText(text);
+  if (!normalized) return false;
+  const greetings = ['hola', 'buenas', 'buenos dias', 'buenas tardes', 'buenas noches'];
+  for (const name of advisorNameSignals()) {
+    if (normalized === name) return true;
+    for (const greeting of greetings) {
+      if (normalized === `${greeting} ${name}`) return true;
+      if (normalized.startsWith(`${greeting} ${name} `)) return true;
+    }
+  }
+  return false;
+}
+
+function userAllowsCountry(user = {}, countryCode = null) {
+  const allowed = normalizeCountryList(user.allowedCountries);
+  if (!countryCode || !allowed.length || allowed.includes('ALL')) return true;
+  return allowed.includes(String(countryCode || '').trim().toUpperCase());
+}
+
+function advisorChannelForCountry(countryCode = null) {
+  if (String(countryCode || '').trim().toUpperCase() === 'CO') {
+    return whatsappChannels.find((channel) => channel.key === 'co') || defaultWhatsAppChannel;
+  }
+  return defaultWhatsAppChannel;
+}
+
+function buildAdvisorAlertText({ conversation, profile = null, customerPhone = '', customerName = '', countryCode = null }) {
+  const countryLabel = String(countryCode || '').trim().toUpperCase() === 'CO' ? 'Colombia' : 'Perú';
+  const clientName = String(
+    customerName
+    || profile?.nombre_receptor
+    || profile?.nombre_cliente
+    || profile?.nombre_visible
+    || 'Cliente'
+  ).trim();
+  const reason = String(conversation?.motivo_handoff || 'Solicitud de asesor').trim();
+  const inboxUrl = buildAdvisorCaseUrl(conversation?.id_conversacion, countryCode);
+  return [
+    'Nuevo cliente solicitando asesor EVINKA ⚡',
+    '',
+    `País: ${countryLabel}`,
+    `Cliente: ${clientName}`,
+    `Teléfono: ${customerPhone || '-'}`,
+    `Motivo: ${reason}`,
+    `Caso: ${conversation?.id_conversacion || '-'}`,
+    '',
+    'Ingresa y responde aquí:',
+    inboxUrl,
+  ].join('\n');
+}
+
+async function notifyAdvisorRecipients({ conversation, customerPhone, customerName = '', countryCode = null }) {
+  const recipients = loadOperationalUsers().filter((user) => (
+    user.status === 'active'
+    && isAdvisorAlertRole(user)
+    && userAllowsCountry(user, countryCode)
+    && user.notificationPhone
+  ));
+  if (!recipients.length) return { ok: false, skipped: true, reason: 'no_recipients' };
+
+  const profileRows = await sb.select('perfiles_cliente', `id_conversacion=eq.${conversation.id_conversacion}&select=*`);
+  const profile = profileRows[0] || null;
+  const text = buildAdvisorAlertText({
+    conversation,
+    profile,
+    customerPhone,
+    customerName,
+    countryCode,
+  });
+  const channel = advisorChannelForCountry(countryCode);
+  const metaClient = resolveMetaClient(channel.phoneNumberId);
+
+  const results = await Promise.allSettled(recipients.map(async (user) => {
+    const delivered = { userId: user.id, name: user.name, whatsapp: null };
+    if (user.notificationPhone) {
+      try {
+        await metaClient.sendText(user.notificationPhone, text);
+        delivered.whatsapp = { ok: true, to: user.notificationPhone };
+      } catch (error) {
+        delivered.whatsapp = { ok: false, to: user.notificationPhone, error: error.message };
+      }
+    }
+    return delivered;
+  }));
+
+  return {
+    ok: true,
+    recipients: results.map((item) => item.status === 'fulfilled' ? item.value : { ok: false, error: item.reason?.message || String(item.reason || 'unknown') }),
+  };
+}
+
+function buildAdvisorReminderText({ conversation, profile = null, customerPhone = '', customerName = '', countryCode = null, waitingMinutes = 60, reminderCount = 1 }) {
+  const countryLabel = String(countryCode || '').trim().toUpperCase() === 'CO' ? 'Colombia' : 'Perú';
+  const clientName = String(
+    customerName
+    || profile?.nombre_receptor
+    || profile?.nombre_cliente
+    || profile?.nombre_visible
+    || 'Cliente'
+  ).trim();
+  const reason = String(conversation?.motivo_handoff || 'Solicitud de asesor').trim();
+  const inboxUrl = buildAdvisorCaseUrl(conversation?.id_conversacion, countryCode);
+  return [
+    `Recordatorio EVINKA ${reminderCount > 1 ? `#${reminderCount}` : ''} ⏰`,
+    '',
+    `Cliente esperando asesor hace ${waitingMinutes} min.`,
+    `País: ${countryLabel}`,
+    `Cliente: ${clientName}`,
+    `Teléfono: ${customerPhone || '-'}`,
+    `Motivo: ${reason}`,
+    `Caso: ${conversation?.id_conversacion || '-'}`,
+    '',
+    'Responder desde el inbox:',
+    inboxUrl,
+  ].join('\n');
+}
+
+async function notifyAdvisorReminder({ conversation, customerPhone, customerName = '', countryCode = null, waitingMinutes = 60, reminderCount = 1 }) {
+  const recipients = loadOperationalUsers().filter((user) => (
+    user.status === 'active'
+    && isAdvisorAlertRole(user)
+    && userAllowsCountry(user, countryCode)
+    && user.notificationPhone
+  ));
+  if (!recipients.length) return { ok: false, skipped: true, reason: 'no_recipients' };
+
+  const profileRows = await sb.select('perfiles_cliente', `id_conversacion=eq.${conversation.id_conversacion}&select=*`);
+  const profile = profileRows[0] || null;
+  const text = buildAdvisorReminderText({
+    conversation,
+    profile,
+    customerPhone,
+    customerName,
+    countryCode,
+    waitingMinutes,
+    reminderCount,
+  });
+  const channel = advisorChannelForCountry(countryCode);
+  const metaClient = resolveMetaClient(channel.phoneNumberId);
+
+  const results = await Promise.allSettled(recipients.map(async (user) => {
+    const delivered = { userId: user.id, name: user.name, whatsapp: null };
+    try {
+      await metaClient.sendText(user.notificationPhone, text);
+      delivered.whatsapp = { ok: true, to: user.notificationPhone };
+    } catch (error) {
+      delivered.whatsapp = { ok: false, to: user.notificationPhone, error: error.message };
+    }
+    return delivered;
+  }));
+
+  return {
+    ok: true,
+    recipients: results.map((item) => item.status === 'fulfilled' ? item.value : { ok: false, error: item.reason?.message || String(item.reason || 'unknown') }),
+  };
+}
+
 function detectSenderRole(phone = '') {
   const normalized = String(phone || '').replace(/[^+\d]/g, '');
   const roleMap = loadWhatsAppRoleMap();
@@ -75,7 +686,10 @@ function roleSourceFor(role) {
 async function resolveInboundRole(phone, userScope = 'default') {
   const user = await engine.ensureUser(phone, userScope);
   const persistedRole = engine.normalizeUserRole(user?.rol_usuario);
-  const inferredRole = persistedRole || detectSenderRole(phone);
+  const mappedRole = detectSenderRole(phone);
+  const inferredRole = mappedRole === 'tecnico'
+    ? 'tecnico'
+    : (persistedRole || mappedRole);
   if (inferredRole && persistedRole !== inferredRole) {
     const updated = await engine.syncUserRole(user.id_usuario, inferredRole, roleSourceFor(inferredRole));
     return { user: updated || user, role: inferredRole };
@@ -122,6 +736,185 @@ function statusPrefsReply(action, phone) {
   return null;
 }
 
+function formatStatusSnapshotTime(value) {
+  if (!value) return 'Sin dato';
+  const d = new Date(value);
+  if (Number.isNaN(d.getTime())) return String(value);
+  return new Intl.DateTimeFormat('es-PE', {
+    timeZone: 'America/Lima',
+    dateStyle: 'short',
+    timeStyle: 'short',
+  }).format(d);
+}
+
+const EXCLUDED_STATUS_PATTERN = /\b(?:test|prueba|demo|qa|sandbox|lab)\b/i;
+
+function matchesExcludedStatusPattern(...values) {
+  const haystack = values.filter((value) => value != null).map((value) => String(value)).join(' ').trim();
+  return haystack ? EXCLUDED_STATUS_PATTERN.test(haystack) : false;
+}
+
+function isExcludedStatusStation(station = {}) {
+  return matchesExcludedStatusPattern(
+    station?.name,
+    station?.merchantName,
+    station?.merchantId,
+    station?.plazaName,
+    station?.address,
+    station?.locationText,
+    station?.summaryStatus,
+  );
+}
+
+function sanitizeStatusSnapshot(data = {}) {
+  const stations = Array.isArray(data?.stations) ? data.stations.filter((station) => !isExcludedStatusStation(station)) : [];
+  const stationIds = new Set(stations.map((station) => String(station?.id || '')).filter(Boolean));
+  const totals = {
+    stations: stations.length,
+    connectors: stations.reduce((sum, station) => sum + (Array.isArray(station?.connectors) ? station.connectors.length : 0), 0),
+    available: stations.filter((station) => station?.tone === 'available').length,
+    offline: stations.filter((station) => station?.tone === 'offline').length,
+    charging: stations.filter((station) => station?.tone === 'charging').length,
+    preparing: stations.filter((station) => station?.tone === 'preparing').length,
+    faulted: stations.filter((station) => station?.tone === 'faulted').length,
+  };
+  const alerts = Array.isArray(data?.alerts)
+    ? data.alerts.filter((alert) => {
+      const stationId = String(alert?.stationId || '');
+      if (stationId && !stationIds.has(stationId)) return false;
+      return !matchesExcludedStatusPattern(alert?.title, alert?.detail, alert?.stationName);
+    })
+    : [];
+  return { ...data, stations, alerts, totals };
+}
+
+function loadStatusOverviewSnapshot() {
+  return sanitizeStatusSnapshot(readJsonFile(STATUS_OVERVIEW_DATA_PATH, {}));
+}
+
+function statusStationLine(station) {
+  const place = station?.plazaName || station?.address || station?.locationText || 'Ubicación por confirmar';
+  const heartbeat = station?.heartbeatLabel || formatStatusSnapshotTime(station?.lastHeartbeatTime);
+  return `• ${station?.name || 'Estación'} — ${place} · ${heartbeat}`;
+}
+
+function buildTechnicianSummaryMessage(data = {}) {
+  const totals = data?.totals || {};
+  const stations = Array.isArray(data?.stations) ? data.stations : [];
+  const offline = stations.filter((station) => station?.tone === 'offline');
+  const faulted = stations.filter((station) => station?.tone === 'faulted');
+  const available = stations.filter((station) => station?.tone === 'available');
+  const highlight = offline.slice(0, 4).map((station) => station?.name).filter(Boolean);
+  return [
+    '📊 EVINKA RESUMEN',
+    `Actualizado: ${formatStatusSnapshotTime(data?.generatedAt)}`,
+    `Red: ${totals.stations || stations.length || 0} estaciones · ${totals.connectors || 0} conectores`,
+    `Operativas: ${totals.available || available.length || 0}`,
+    `Offline: ${totals.offline || offline.length || 0}`,
+    `Falla activa: ${totals.faulted || faulted.length || 0}`,
+    highlight.length ? `Offline clave: ${highlight.join(', ')}` : 'Offline clave: ninguna estación caída en este snapshot.',
+  ].join('\n');
+}
+
+function buildTechnicianOfflineMessage(data = {}) {
+  const stations = Array.isArray(data?.stations) ? data.stations : [];
+  const offline = stations.filter((station) => station?.tone === 'offline');
+  if (!offline.length) {
+    return [
+      '✅ EVINKA OFFLINE',
+      `Actualizado: ${formatStatusSnapshotTime(data?.generatedAt)}`,
+      'No hay estaciones offline en este momento.',
+    ].join('\n');
+  }
+  return [
+    '🚨 EVINKA OFFLINE',
+    `Actualizado: ${formatStatusSnapshotTime(data?.generatedAt)}`,
+    ...offline.slice(0, 8).map(statusStationLine),
+    offline.length > 8 ? `Y ${offline.length - 8} más...` : '',
+  ].filter(Boolean).join('\n');
+}
+
+function buildTechnicianAvailableMessage(data = {}) {
+  const stations = Array.isArray(data?.stations) ? data.stations : [];
+  const available = stations.filter((station) => station?.tone === 'available');
+  if (!available.length) {
+    return [
+      '⚠️ EVINKA OPERATIVAS',
+      `Actualizado: ${formatStatusSnapshotTime(data?.generatedAt)}`,
+      'No encuentro estaciones marcadas como operativas en este snapshot.',
+    ].join('\n');
+  }
+  return [
+    '✅ EVINKA OPERATIVAS',
+    `Actualizado: ${formatStatusSnapshotTime(data?.generatedAt)}`,
+    ...available.slice(0, 8).map(statusStationLine),
+    available.length > 8 ? `Y ${available.length - 8} más...` : '',
+  ].filter(Boolean).join('\n');
+}
+
+function buildTechnicianHelpMessage() {
+  return [
+    '🛠️ EVINKA ALERTAS',
+    'Puedes usar los botones o escribir:',
+    '• RESUMEN',
+    '• OFFLINE',
+    '• OPERATIVAS',
+    '• AYUDA',
+  ].join('\n');
+}
+
+function resolveTechnicianStatusCommand(message) {
+  const action = message?.type === 'interactive' ? message?.interactive?.id || '' : '';
+  if (action === 'tech_status_summary') return 'summary';
+  if (action === 'tech_status_offline') return 'offline';
+  if (action === 'tech_status_available') return 'available';
+  const text = String(message?.text || '').trim().toLowerCase();
+  if (!text) return 'menu';
+  if (/(^|\b)(resumen|estado|status)(\b|$)/.test(text)) return 'summary';
+  if (/(^|\b)(offline|caidos|caídos|desconectados)(\b|$)/.test(text)) return 'offline';
+  if (/(^|\b)(operativas|funcionales|disponibles)(\b|$)/.test(text)) return 'available';
+  if (/(^|\b)(ayuda|menu|menú|opciones)(\b|$)/.test(text)) return 'menu';
+  return 'menu';
+}
+
+async function sendTechnicianStatusMenu(metaClient, to, body = null) {
+  const text = body || 'EVINKA Alertas ⚡\n¿Qué deseas revisar?';
+  await metaClient.sendButtons(to, {
+    body: text,
+    footer: 'Bot técnico EVINKA',
+    buttons: [
+      { id: 'tech_status_summary', title: 'Resumen' },
+      { id: 'tech_status_offline', title: 'Ver offline' },
+      { id: 'tech_status_available', title: 'Operativas' },
+    ],
+  });
+}
+
+async function handleTechnicianInbound(metaClient, message) {
+  const action = message?.type === 'interactive' ? message?.interactive?.id || '' : '';
+  const prefReply = action ? statusPrefsReply(action, message.from) : null;
+  if (prefReply) {
+    await sendTechnicianStatusMenu(metaClient, message.from, `${prefReply}\n\n¿Qué deseas revisar ahora?`);
+    return true;
+  }
+  const snapshot = loadStatusOverviewSnapshot();
+  const command = resolveTechnicianStatusCommand(message);
+  if (command === 'summary') {
+    await sendTechnicianStatusMenu(metaClient, message.from, buildTechnicianSummaryMessage(snapshot));
+    return true;
+  }
+  if (command === 'offline') {
+    await sendTechnicianStatusMenu(metaClient, message.from, buildTechnicianOfflineMessage(snapshot));
+    return true;
+  }
+  if (command === 'available') {
+    await sendTechnicianStatusMenu(metaClient, message.from, buildTechnicianAvailableMessage(snapshot));
+    return true;
+  }
+  await sendTechnicianStatusMenu(metaClient, message.from, buildTechnicianHelpMessage());
+  return true;
+}
+
 function bookingReminderText({ ticket, dateLabel, hourLabel, address }) {
   return `Recordatorio de cita EVINKA ⏰\n\nTicket: ${ticket}\nFecha: ${dateLabel}\nHora: ${hourLabel}\nDirección: ${address}\n\n¿Qué deseas hacer con esta cita?`;
 }
@@ -157,6 +950,150 @@ function scheduleReminder({ to, ticket, dateLabel, hourLabel, address, userScope
   return { ok: true, delayMs };
 }
 
+function handoffTimeoutText() {
+  return `Parece que nuestros asesores se encuentran ocupados en este momento.\n\nPuedes elegir una opción:\nA. Seguir esperando atención humana\nB. Volver al menú principal\n\nResponde A o B.`;
+}
+
+function clearHandoffTimer(conversationId = '') {
+  const key = String(conversationId || '').trim();
+  if (!key) return;
+  const timer = handoffTimers.get(key);
+  if (timer) clearTimeout(timer);
+  handoffTimers.delete(key);
+}
+
+function clearHandoffAdvisorReminder(conversationId = '') {
+  const key = String(conversationId || '').trim();
+  if (!key) return;
+  const timer = handoffAdvisorReminderTimers.get(key);
+  if (timer) clearTimeout(timer);
+  handoffAdvisorReminderTimers.delete(key);
+}
+
+function scheduleHandoffAdvisorReminder({ conversationId = '', phone = '', userScope = 'default', countryCode = null, customerName = '' } = {}) {
+  const key = String(conversationId || '').trim();
+  if (!key || !phone) return null;
+  clearHandoffAdvisorReminder(key);
+  const timer = setTimeout(async () => {
+    try {
+      const rows = await sb.select('conversaciones', `id_conversacion=eq.${encodeURIComponent(key)}&select=*`);
+      const conversation = rows[0] || null;
+      const state = getAdvisorConversationState(key) || {};
+      if (!conversation || !(conversation.estado_conversacion === 'handoff' || conversation.requiere_handoff === true || conversation.paso_actual === 'handoff_asesor' || conversation.paso_actual === 'esperando_timeout_asesor')) return;
+      const lastCustomerAtMs = new Date(state.lastCustomerMessageAt || conversation.ultimo_mensaje_en || conversation.actualizado_en || conversation.creado_en || Date.now()).getTime();
+      const lastAgentAtMs = new Date(state.lastAgentMessageAt || 0).getTime();
+      if (!Number.isFinite(lastCustomerAtMs) || lastAgentAtMs >= lastCustomerAtMs) return;
+
+      const waitedMs = Date.now() - lastCustomerAtMs;
+      if (waitedMs < HANDOFF_ADVISOR_REMINDER_MS) {
+        scheduleHandoffAdvisorReminder({ conversationId: key, phone, userScope, countryCode, customerName });
+        return;
+      }
+      const reminderCount = Number(state.advisorReminderCount || 0) + 1;
+      const waitingMinutes = Math.max(HANDOFF_ADVISOR_REMINDER_MINUTES, Math.round(waitedMs / 60000));
+      const alertResult = await notifyAdvisorReminder({
+        conversation,
+        customerPhone: phone,
+        customerName,
+        countryCode,
+        waitingMinutes,
+        reminderCount,
+      });
+
+      patchAdvisorConversation(key, (current) => ({
+        ...current,
+        handoffActive: true,
+        supportStatus: current.assignedTo ? 'tomado' : (current.supportStatus || 'esperando_asesor'),
+        advisorReminderCount: reminderCount,
+        lastAdvisorReminderAt: new Date().toISOString(),
+        advisorReminderSummary: alertResult,
+      }));
+      await upsertSupportTicket({
+        conversation,
+        phone,
+        patch: {
+          status: state.assignedTo ? 'tomado' : (state.supportStatus || 'esperando_asesor'),
+          handoff_active: true,
+          timeout_checked_at: new Date().toISOString(),
+          last_customer_message_at: new Date(lastCustomerAtMs).toISOString(),
+        },
+      });
+    } catch (error) {
+      console.error('handoff advisor reminder failed:', error);
+    } finally {
+      handoffAdvisorReminderTimers.delete(key);
+      const state = getAdvisorConversationState(key) || {};
+      const lastCustomerAtMs = new Date(state.lastCustomerMessageAt || 0).getTime();
+      const lastAgentAtMs = new Date(state.lastAgentMessageAt || 0).getTime();
+      if (lastCustomerAtMs && lastCustomerAtMs > lastAgentAtMs) {
+        scheduleHandoffAdvisorReminder({ conversationId: key, phone, userScope, countryCode, customerName });
+      }
+    }
+  }, HANDOFF_ADVISOR_REMINDER_MS);
+  handoffAdvisorReminderTimers.set(key, timer);
+  return { ok: true, delayMs: HANDOFF_ADVISOR_REMINDER_MS };
+}
+
+function scheduleHandoffTimeout({ conversationId = '', phone = '', userScope = 'default', countryCode = null } = {}) {
+  const key = String(conversationId || '').trim();
+  if (!key || !phone) return null;
+  clearHandoffTimer(key);
+  const timer = setTimeout(async () => {
+    try {
+      const rows = await sb.select('conversaciones', `id_conversacion=eq.${encodeURIComponent(key)}&select=*`);
+      const conversation = rows[0] || null;
+      const state = getAdvisorConversationState(key) || {};
+      if (!conversation || !(conversation.estado_conversacion === 'handoff' || conversation.requiere_handoff === true || conversation.paso_actual === 'handoff_asesor')) return;
+      const lastCustomerAt = new Date(state.lastCustomerMessageAt || conversation.ultimo_mensaje_en || conversation.actualizado_en || conversation.creado_en || Date.now()).getTime();
+      const lastAgentAt = new Date(state.lastAgentMessageAt || 0).getTime();
+      const timeoutPromptedAt = new Date(state.timeoutPromptedAt || 0).getTime();
+      if (!Number.isFinite(lastCustomerAt) || lastAgentAt >= lastCustomerAt || timeoutPromptedAt >= lastCustomerAt) return;
+
+      const channel = whatsappChannels.find((item) => item.key === userScope) || advisorChannelForCountry(countryCode) || defaultWhatsAppChannel;
+      const metaClient = metaByPhoneNumberId.get(channel.phoneNumberId) || meta;
+      await metaClient.sendButtons(phone, {
+        body: handoffTimeoutText(),
+        footer: 'EVINKA',
+        buttons: [
+          { id: 'timeout_wait', title: 'Seguir esperando' },
+          { id: 'timeout_menu', title: 'Menú principal' },
+        ],
+      });
+
+      await sb.update('conversaciones', `id_conversacion=eq.${encodeURIComponent(key)}`, {
+        estado_conversacion: 'handoff',
+        requiere_handoff: true,
+        paso_actual: 'esperando_timeout_asesor',
+        subestado_flujo: 'timeout_asesor_30m',
+        ultimo_mensaje_en: new Date().toISOString(),
+      });
+      await upsertSupportTicket({
+        conversation,
+        phone,
+        patch: {
+          status: 'cliente_esperando',
+          handoff_active: true,
+          timeout_checked_at: new Date().toISOString(),
+          last_customer_message_at: new Date(lastCustomerAt).toISOString(),
+        },
+      });
+
+      patchAdvisorConversation(key, (current) => ({
+        ...current,
+        handoffActive: true,
+        supportStatus: 'cliente_esperando',
+        timeoutPromptedAt: new Date().toISOString(),
+      }));
+    } catch (error) {
+      console.error('handoff timeout failed:', error);
+    } finally {
+      clearHandoffTimer(key);
+    }
+  }, HANDOFF_TIMEOUT_MS);
+  handoffTimers.set(key, timer);
+  return { ok: true, delayMs: HANDOFF_TIMEOUT_MS };
+}
+
 async function publishTechVisit(payload) {
   const baseUrl = (process.env.TECH_VISITS_BASE_URL || 'http://127.0.0.1:3008').replace(/\/$/, '');
   const apiKey = process.env.EVINKA_BOT_VISITS_API_KEY || 'EvinkaBotVisits#2026';
@@ -175,7 +1112,58 @@ async function publishTechVisit(payload) {
   return data;
 }
 
-const engine = new ChatbotEngine({ sb, calendar, reminderScheduler: scheduleReminder, visitPublisher: publishTechVisit });
+function buildSupportCaseCode({ ticketId = '', conversationId = '' } = {}) {
+  const raw = String(ticketId || conversationId || '').replace(/[^a-z0-9]/gi, '').toUpperCase();
+  return `ST-${(raw || Date.now().toString(36).toUpperCase()).slice(0, 8)}`;
+}
+
+async function publishSupportCase({ conversation, profile = null, caseData = {}, countryCode = null, customerPhone = '', userScope = 'default' }) {
+  const now = new Date().toISOString();
+  const priority = caseData?.mode === 'emergency' ? 'urgente' : 'normal';
+  const ticket = await upsertSupportTicket({
+    conversation,
+    phone: customerPhone,
+    patch: {
+      status: 'nuevo',
+      priority,
+      handoff_active: false,
+      last_customer_message_at: now,
+      closed_at: null,
+      close_reason: null,
+    },
+  }).catch((error) => {
+    console.error('support ticket upsert failed:', error);
+    return null;
+  });
+
+  let alertResult = null;
+  if (caseData?.mode === 'emergency' && conversation?.id_conversacion) {
+    try {
+      alertResult = await notifyAdvisorRecipients({
+        conversation: {
+          ...conversation,
+          motivo_handoff: 'Emergencia técnica reportada por cliente',
+        },
+        customerPhone,
+        customerName: caseData?.name || profile?.nombre_receptor || '',
+        countryCode,
+      });
+    } catch (error) {
+      console.error('support emergency alert failed:', error);
+    }
+  }
+
+  return {
+    ok: true,
+    ticketId: ticket?.id || null,
+    caseCode: buildSupportCaseCode({ ticketId: ticket?.id, conversationId: conversation?.id_conversacion }),
+    priority,
+    alerted: alertResult,
+    userScope,
+  };
+}
+
+const engine = new ChatbotEngine({ sb, calendar, reminderScheduler: scheduleReminder, visitPublisher: publishTechVisit, supportCasePublisher: publishSupportCase });
 
 function buildWhatsAppChannels() {
   const channels = [];
@@ -277,9 +1265,166 @@ function rememberMessage(id) {
   return false;
 }
 
+function normalizeInboundCommand(text = '') {
+  return String(text || '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, ' ');
+}
+
 function isResumeBotCommand(text = '') {
-  const normalized = String(text || '').trim().toLowerCase();
-  return ['menu', 'bot', 'reiniciar', 'volver al bot'].includes(normalized);
+  const normalized = normalizeInboundCommand(text);
+  return [
+    'menu',
+    'menu principal',
+    'menu_main',
+    'bot',
+    'resume_bot',
+    'retomar con bot',
+    'volver al bot',
+    'reiniciar',
+    'volver',
+    'salir',
+  ].includes(normalized);
+}
+
+function isMissingSchemaError(error) {
+  const message = String(error?.message || error || '');
+  return message.includes("Could not find the table 'public.usuarios'")
+    || message.includes("Could not find the table 'public.conversaciones'")
+    || message.includes("Could not find the table 'public.perfiles_cliente'")
+    || message.includes('PGRST205')
+    || message.includes('schema cache');
+}
+
+function fallbackBotReply(message = {}) {
+  const raw = message.type === 'interactive'
+    ? String(message.interactive?.id || message.interactive?.title || message.text || '')
+    : String(message.text || '');
+  const text = raw.trim().toLowerCase();
+
+  if (!text || ['hola', 'buenas', 'buenos dias', 'buenos días', 'menu', 'bot', 'reiniciar'].includes(text)) {
+    return '¡Hola! 👋\n\nActualmente en EVINKA estamos probando una nueva automatización para atenderte más rápido.\n\nSi ya habías conversado antes con un asesor de EVINKA, o tienes una cotización / caso pendiente de seguimiento, solo escribe *ASESOR* y te derivaremos para revisar tu caso directamente.\n\nTe puedo ayudar con una de estas opciones:\n\nA. Instalar un cargador\nB. Reprogramar visita\nC. Cancelar visita\nD. Asistencia técnica\nE. Soporte humano\n\nPor favor responde con la letra de la opción que deseas.';
+  }
+
+  if (/\b(soy|somos|hablo|te escribo)\b.*\bde\b.*\b(telemundo|grupo pana|astara|geely|ipesa|empresa|corporativo|grifo)\b/i.test(text)) {
+    return 'Gracias por escribirnos 👍\n\nVeo que tu consulta parece corresponder a una empresa o cuenta corporativa.\n\nEste canal está orientado a atención B2C, así que te derivaremos con un asesor de EVINKA para una atención personalizada.';
+  }
+
+  if (text === 'a' || text.includes('instalar')) {
+    return 'Perfecto 👍\n\nPara instalar un cargador, necesito validar tu caso. Envíame tu nombre, distrito, dirección y número de contacto, y seguimos.';
+  }
+
+  if (text === 'b' || text.includes('reprogramar')) {
+    return 'Perfecto 👍\n\nPara reprogramar tu visita, envíame el código de la cita y te ayudo con eso.';
+  }
+
+  if (text === 'c' || text.includes('cancelar')) {
+    return 'Perfecto 👍\n\nPara cancelar tu visita, envíame el código de la cita y te ayudo con eso.';
+  }
+
+  if (text === 'd' || text.includes('asistencia') || text.includes('falla') || text.includes('emergencia')) {
+    return 'Perfecto 👍\n\nPuedo ayudarte a registrar un caso de soporte técnico o una emergencia. Responde D desde el menú principal para empezar.';
+  }
+
+  if (text === 'e' || text.includes('asesor') || text.includes('humano')) {
+    return 'Listo 👍\n\nSi ya tenías una cotización o un caso pendiente, te derivo con un asesor para revisar tu seguimiento.';
+  }
+
+  return 'Gracias. Escríbeme *hola* para ver el menú principal, responde con A, B, C, D o E, o escribe *ASESOR* si ya tenías un seguimiento previo.';
+}
+
+function summarizeInboundMessage(message = {}) {
+  const type = String(message.type || '').trim().toLowerCase();
+  const raw = message.raw || {};
+
+  if (type === 'text') {
+    return {
+      text: String(message.text || '').trim(),
+      messageType: 'text',
+      extraPayload: {},
+    };
+  }
+
+  if (type === 'interactive') {
+    const title = String(message.interactive?.title || message.text || '').trim();
+    const id = String(message.interactive?.id || '').trim();
+    return {
+      text: title || '[opción interactiva]',
+      messageType: 'interactive',
+      extraPayload: {
+        interactiveTitle: title || null,
+        interactiveId: id || null,
+      },
+    };
+  }
+
+  if (type === 'contacts') {
+    const contacts = Array.isArray(raw.contacts) ? raw.contacts : [];
+    const first = contacts[0] || {};
+    const formattedName = String(first?.name?.formatted_name || [first?.name?.first_name, first?.name?.last_name].filter(Boolean).join(' ') || '').trim();
+    const phone = String(first?.phones?.[0]?.phone || first?.phones?.[0]?.wa_id || '').trim();
+    return {
+      text: ['Contacto compartido', formattedName, phone].filter(Boolean).join('\n'),
+      messageType: 'contacts',
+      extraPayload: {
+        sharedContacts: contacts,
+        contactName: formattedName || null,
+        contactPhone: phone || null,
+      },
+    };
+  }
+
+  if (type === 'location') {
+    const location = raw.location || {};
+    const name = String(location.name || '').trim();
+    const address = String(location.address || '').trim();
+    const latitude = location.latitude ?? null;
+    const longitude = location.longitude ?? null;
+    return {
+      text: ['Ubicación compartida', name, address, latitude != null && longitude != null ? `${latitude}, ${longitude}` : ''].filter(Boolean).join('\n'),
+      messageType: 'location',
+      extraPayload: {
+        locationName: name || null,
+        locationAddress: address || null,
+        latitude,
+        longitude,
+      },
+    };
+  }
+
+  if (type === 'audio') {
+    return {
+      text: '[audio]',
+      messageType: 'audio',
+      extraPayload: {},
+    };
+  }
+
+  if (type === 'video') {
+    const caption = String(raw.video?.caption || message.text || '').trim();
+    return {
+      text: caption ? `[video]\n${caption}` : '[video]',
+      messageType: 'video',
+      extraPayload: {},
+    };
+  }
+
+  if (type === 'sticker') {
+    return {
+      text: '[sticker]',
+      messageType: 'sticker',
+      extraPayload: {},
+    };
+  }
+
+  return {
+    text: String(message.text || `[${type || 'mensaje'}]`).trim(),
+    messageType: type || 'text',
+    extraPayload: {},
+  };
 }
 
 const server = http.createServer(async (req, res) => {
@@ -315,9 +1460,28 @@ const server = http.createServer(async (req, res) => {
         const channel = resolveWhatsAppChannel(message.channelPhoneNumberId);
         const metaClient = resolveMetaClient(message.channelPhoneNumberId);
         if (rememberMessage(message.id)) continue;
-        const { user, role } = await resolveInboundRole(message.from, channel.key);
+        if (isBotExcludedPhone(message.from)) {
+          console.log(`Bot ignorado para número excluido ${message.from}`);
+          continue;
+        }
+        let user = null;
+        let role = 'cliente';
+        try {
+          ({ user, role } = await resolveInboundRole(message.from, channel.key));
+        } catch (error) {
+          if (isMissingSchemaError(error)) {
+            role = detectSenderRole(message.from);
+            if (role === 'tecnico') {
+              await metaClient.sendText(message.from, 'Tu número está registrado como técnico EVINKA. Para no mezclar clientes con alertas técnicas, el flujo comercial ya no se ejecuta en este chat.');
+            } else {
+              await metaClient.sendText(message.from, fallbackBotReply(message));
+            }
+            continue;
+          }
+          throw error;
+        }
         if (role === 'tecnico') {
-          await metaClient.sendText(message.from, 'Tu número está registrado como técnico EVINKA. Para no mezclar clientes con alertas técnicas, el flujo comercial ya no se ejecuta en este chat.');
+          await handleTechnicianInbound(metaClient, message);
           continue;
         }
         let reply = null;
@@ -335,31 +1499,31 @@ const server = http.createServer(async (req, res) => {
         const inboundText = message.type === 'interactive' && message.interactive?.id
           ? (message.interactive.id || message.text || '')
           : (message.text || '');
+        const previousAdvisorSignal = message.type === 'text' && detectPreviousAdvisorSignal(inboundText);
         const inboundTitle = message.type === 'interactive'
           ? (message.interactive?.title || message.text || '')
           : (message.text || '');
         const wantsResumeBot = isResumeBotCommand(inboundText) || isResumeBotCommand(inboundTitle);
+        const handoffDecisionPending = latestConversation?.paso_actual === 'esperando_timeout_asesor';
 
-        if (!reply && handoffActive && !wantsResumeBot) {
+        if (!reply && handoffActive && !wantsResumeBot && !handoffDecisionPending) {
           let mediaPayload = null;
-          let messageText = message.text || '[mensaje interactivo]';
-          let messageType = message.type === 'interactive' ? 'interactive' : 'text';
+          let artifactPayload = null;
+          const summary = summarizeInboundMessage(message);
+          let messageText = summary.text || '';
+          let messageType = summary.messageType || 'text';
           if (message.media?.id) {
             try {
               const downloaded = await metaClient.downloadMedia(message.media.id);
-              const stored = saveConversationMedia({
-                conversationId: latestConversation.id_conversacion,
-                direction: 'inbound',
-                fileName: message.media.fileName || 'archivo',
-                mimeType: message.media.mimeType || downloaded.mimeType || 'application/octet-stream',
-                buffer: downloaded.buffer,
+              mediaPayload = await persistInboundClientMedia({
+                message,
+                conversation: latestConversation,
+                user,
+                customerPhone: message.from,
+                customerName: message.profileName || '',
+                downloaded,
+                countryCode: channel.defaultCountry || (channel.key === 'co' ? 'CO' : 'PE'),
               });
-              mediaPayload = {
-                mediaUrl: stored.urlPath,
-                mimeType: stored.mimeType,
-                fileName: stored.fileName,
-                fileSize: stored.size,
-              };
               messageText = `[${mediaPayload.fileName}] ${message.text || ''}`.trim();
               messageType = (mediaPayload.mimeType || '').startsWith('image/') ? 'image' : 'document';
             } catch (error) {
@@ -368,6 +1532,14 @@ const server = http.createServer(async (req, res) => {
               messageType = (message.media.mimeType || '').startsWith('image/') ? 'image' : 'document';
             }
           }
+          artifactPayload = await persistInboundClientArtifact({
+            message,
+            conversation: latestConversation,
+            user,
+            customerPhone: message.from,
+            customerName: message.profileName || user?.nombre_visible || user?.nombre_usuario || '',
+            countryCode: channel.defaultCountry || (channel.key === 'co' ? 'CO' : 'PE'),
+          });
           await engine.logMessage(
             latestConversation.id_conversacion,
             latestConversation.id_usuario,
@@ -375,84 +1547,214 @@ const server = http.createServer(async (req, res) => {
             messageText,
             {
               tipo_mensaje: messageType,
-              payload_crudo: { ...message.raw, ...(mediaPayload || {}) },
+              payload_crudo: {
+                ...message.raw,
+                ...(mediaPayload || {}),
+                ...(artifactPayload || {}),
+                ...(summary.extraPayload || {}),
+              },
             },
           );
           patchAdvisorConversation(latestConversation.id_conversacion, (current) => ({
             ...current,
             internalStatus: current.internalStatus === 'resolved' ? 'open' : (current.internalStatus || 'open'),
+            handoffActive: true,
+            supportStatus: current.assignedTo ? 'tomado' : 'esperando_asesor',
             unreadCount: Number(current.unreadCount || 0) + 1,
             lastIncomingAt: new Date().toISOString(),
+            lastCustomerMessageAt: new Date().toISOString(),
           }));
+          await upsertSupportTicket({
+            conversation: latestConversation,
+            user,
+            phone: message.from,
+            patch: {
+              status: getAdvisorConversationState(latestConversation.id_conversacion)?.assignedTo ? 'tomado' : 'esperando_asesor',
+              priority: 'normal',
+              handoff_active: true,
+              last_customer_message_at: new Date().toISOString(),
+            },
+          });
+          scheduleHandoffTimeout({
+            conversationId: latestConversation.id_conversacion,
+            phone: message.from,
+            userScope: channel.key,
+            countryCode: channel.defaultCountry || (channel.key === 'co' ? 'CO' : 'PE'),
+          });
+          scheduleHandoffAdvisorReminder({
+            conversationId: latestConversation.id_conversacion,
+            phone: message.from,
+            userScope: channel.key,
+            countryCode: channel.defaultCountry || (channel.key === 'co' ? 'CO' : 'PE'),
+            customerName: message.profileName || '',
+          });
           continue;
         }
 
-        if (!reply && message.type === 'interactive' && message.interactive?.id) {
-          reply = await engine.handleIncoming({
-            phone: message.from,
-            text: message.interactive.id,
-            payloadCrudo: message.raw,
-            defaultCountry: channel.defaultCountry,
-            userScope: channel.key,
-          });
-        }
-
-        if (!reply && message.type === 'text' && message.text) {
-          reply = await engine.handleIncoming({
-            phone: message.from,
-            text: message.text,
-            payloadCrudo: message.raw,
-            defaultCountry: channel.defaultCountry,
-            userScope: channel.key,
-          });
-        }
-
-        if (!reply && (message.type === 'image' || message.type === 'document') && message.media?.id) {
-          let mediaResult = null;
-          try {
-            const downloaded = await metaClient.downloadMedia(message.media.id);
-            mediaResult = await extractReceiptDataFromBuffer({
-              buffer: downloaded.buffer,
-              mimeType: message.media.mimeType || downloaded.mimeType,
-              fileName: message.media.fileName,
-            });
+        try {
+          if (!reply && message.type === 'interactive' && message.interactive?.id) {
             reply = await engine.handleIncoming({
               phone: message.from,
-              text: message.text || '',
-              media: {
-                ...message.media,
-                ...downloaded,
-                ocr: mediaResult,
-              },
-              payloadCrudo: message.raw,
+              text: message.interactive.id,
+              payloadCrudo: { ...message.raw, profileName: message.profileName || null },
               defaultCountry: channel.defaultCountry,
               userScope: channel.key,
+              profileName: message.profileName || '',
             });
-          } catch (error) {
-            console.error(error);
+          }
+
+          if (!reply && message.type === 'text' && message.text) {
             reply = await engine.handleIncoming({
               phone: message.from,
-              text: message.text || '',
-              media: {
-                ...message.media,
-                error: error.message,
-              },
-              payloadCrudo: message.raw,
+              text: previousAdvisorSignal ? 'ASESOR' : message.text,
+              payloadCrudo: { ...message.raw, profileName: message.profileName || null, previousAdvisorSignal: previousAdvisorSignal || null },
               defaultCountry: channel.defaultCountry,
               userScope: channel.key,
+              profileName: message.profileName || '',
             });
+          }
+
+          if (!reply && (message.type === 'image' || message.type === 'document') && message.media?.id) {
+            let mediaResult = null;
+            try {
+              const downloaded = await metaClient.downloadMedia(message.media.id);
+              const mediaPayload = await persistInboundClientMedia({
+                message,
+                conversation: latestConversation,
+                user,
+                customerPhone: message.from,
+                customerName: message.profileName || '',
+                downloaded,
+                countryCode: channel.defaultCountry || (channel.key === 'co' ? 'CO' : 'PE'),
+              });
+              mediaResult = await extractReceiptDataFromBuffer({
+                buffer: downloaded.buffer,
+                mimeType: message.media.mimeType || downloaded.mimeType,
+                fileName: message.media.fileName,
+              });
+              reply = await engine.handleIncoming({
+                phone: message.from,
+                text: message.text || '',
+                media: {
+                  ...message.media,
+                  ...downloaded,
+                  ocr: mediaResult,
+                },
+                payloadCrudo: { ...message.raw, profileName: message.profileName || null, ...(mediaPayload || {}) },
+                defaultCountry: channel.defaultCountry,
+                userScope: channel.key,
+                profileName: message.profileName || '',
+              });
+            } catch (error) {
+              console.error(error);
+              reply = await engine.handleIncoming({
+                phone: message.from,
+                text: message.text || '',
+                media: {
+                  ...message.media,
+                  error: error.message,
+                },
+                payloadCrudo: { ...message.raw, profileName: message.profileName || null },
+                defaultCountry: channel.defaultCountry,
+                userScope: channel.key,
+                profileName: message.profileName || '',
+              });
+            }
+          }
+        } catch (error) {
+          if (isMissingSchemaError(error)) {
+            reply = fallbackBotReply(message);
+          } else {
+            throw error;
           }
         }
 
         if (!reply) continue;
 
         const latestAfterReply = await engine.getLatestConversation(user);
+        if (latestAfterReply) {
+          await persistInboundClientArtifact({
+            message,
+            conversation: latestAfterReply,
+            user,
+            customerPhone: message.from,
+            customerName: message.profileName || user?.nombre_visible || user?.nombre_usuario || '',
+            countryCode: channel.defaultCountry || (channel.key === 'co' ? 'CO' : 'PE'),
+          });
+        }
         if (latestAfterReply && (latestAfterReply.estado_conversacion === 'handoff' || latestAfterReply.requiere_handoff)) {
           patchAdvisorConversation(latestAfterReply.id_conversacion, (current) => ({
             ...current,
             internalStatus: current.internalStatus === 'resolved' ? 'new' : (current.internalStatus || 'new'),
+            handoffActive: true,
+            supportStatus: current.assignedTo
+              ? 'tomado'
+              : (latestAfterReply.subestado_flujo === 'cliente_esperando' ? 'cliente_esperando' : 'esperando_asesor'),
+            ticketOpenedAt: current.ticketOpenedAt || new Date().toISOString(),
+            lastCustomerMessageAt: current.lastCustomerMessageAt || new Date().toISOString(),
             lastIncomingAt: new Date().toISOString(),
           }));
+          await upsertSupportTicket({
+            conversation: latestAfterReply,
+            user,
+            phone: message.from,
+            patch: {
+              status: 'esperando_asesor',
+              priority: 'normal',
+              handoff_active: true,
+              last_customer_message_at: new Date().toISOString(),
+            },
+          });
+          scheduleHandoffTimeout({
+            conversationId: latestAfterReply.id_conversacion,
+            phone: message.from,
+            userScope: channel.key,
+            countryCode: channel.defaultCountry || (channel.key === 'co' ? 'CO' : 'PE'),
+          });
+          scheduleHandoffAdvisorReminder({
+            conversationId: latestAfterReply.id_conversacion,
+            phone: message.from,
+            userScope: channel.key,
+            countryCode: channel.defaultCountry || (channel.key === 'co' ? 'CO' : 'PE'),
+            customerName: message.profileName || '',
+          });
+          if (!handoffActive) {
+            try {
+              const countryCode = channel.defaultCountry || (channel.key === 'co' ? 'CO' : 'PE');
+              const alertResult = await notifyAdvisorRecipients({
+                conversation: latestAfterReply,
+                customerPhone: message.from,
+                customerName: message.profileName || '',
+                countryCode,
+              });
+              patchAdvisorConversation(latestAfterReply.id_conversacion, (current) => ({
+                ...current,
+                advisorAlertedAt: new Date().toISOString(),
+                advisorAlertSummary: alertResult,
+              }));
+            } catch (error) {
+              console.error('advisor notifications failed:', error);
+            }
+          }
+        } else if (latestConversation?.id_conversacion) {
+          clearHandoffTimer(latestConversation.id_conversacion);
+          clearHandoffAdvisorReminder(latestConversation.id_conversacion);
+          patchAdvisorConversation(latestConversation.id_conversacion, (current) => ({
+            ...current,
+            handoffActive: false,
+            supportStatus: current.internalStatus === 'resolved' ? 'cerrado' : 'vuelto_menu',
+          }));
+          await upsertSupportTicket({
+            conversation: latestConversation,
+            user,
+            phone: message.from,
+            patch: {
+              status: 'vuelto_menu',
+              handoff_active: false,
+              closed_at: new Date().toISOString(),
+              close_reason: 'volver_menu',
+            },
+          });
         }
         await sendReply(message.from, reply, channel.phoneNumberId);
       }

@@ -4,9 +4,11 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { loadEnv, requiredEnv } from './config.mjs';
+import { appendAccessAuditLog } from './accessAudit.mjs';
 import { SupabaseRest } from './supabase.mjs';
+import { SupabaseStorage } from './supabaseStorage.mjs';
 import { WhatsAppMetaClient } from './whatsappMeta.mjs';
-import { patchAdvisorConversation, loadAdvisorState } from './advisorInboxState.mjs';
+import { patchAdvisorConversation, loadAdvisorState, getAdvisorConversationState } from './advisorInboxState.mjs';
 import { resolveConversationMedia, saveConversationMedia } from './advisorMediaStore.mjs';
 
 loadEnv();
@@ -16,9 +18,11 @@ const __dirname = path.dirname(__filename);
 const workspaceDir = path.resolve(__dirname, '..');
 const publicDir = path.join(workspaceDir, 'apps', 'advisor-inbox', 'public');
 const dataDir = path.join(workspaceDir, 'apps', 'advisor-inbox', 'data');
-const usersFile = path.join(workspaceDir, 'apps', 'cotizador-web', 'data', 'users.json');
-const techVisitsFile = path.join(workspaceDir, 'apps', 'cotizador-web', 'data', 'tech-visits.json');
-const quotesFile = path.join(workspaceDir, 'apps', 'cotizador-web', 'data', 'quotes.json');
+const cotizadorDataDir = path.join(workspaceDir, 'apps', 'cotizador-web', 'data');
+const usersFile = path.join(cotizadorDataDir, 'users.json');
+const techVisitsFile = path.join(cotizadorDataDir, 'tech-visits.json');
+const quotesFile = path.join(cotizadorDataDir, 'quotes.json');
+const cotizadorSessionsFile = path.join(cotizadorDataDir, 'sessions.json');
 const sessionsFile = path.join(dataDir, 'sessions.json');
 const COOKIE_NAME = 'evinka_advisor_session';
 const SESSION_MAX_AGE_MS = 1000 * 60 * 60 * 12;
@@ -27,6 +31,55 @@ const PHONE_DISPLAY_COUNTRY = process.env.ADVISOR_INBOX_PHONE_COUNTRY || '51';
 const MEDIA_MAX_BYTES = 14 * 1024 * 1024;
 const COTIZADOR_INTERNAL_URL = process.env.COTIZADOR_INTERNAL_URL || 'http://127.0.0.1:3008';
 const COTIZADOR_WEB_URL = process.env.COTIZADOR_WEB_URL || 'https://cotizador.evinka.net';
+const ADVISOR_FORWARD_JENY_PHONE = normalizePhone(process.env.ADVISOR_FORWARD_JENY_PHONE || '+51 939 882 508');
+const ADVISOR_FORWARD_JENY_LABEL = process.env.ADVISOR_FORWARD_JENY_LABEL || 'Jeny';
+const CUSTOMER_IDLE_CLOSE_AFTER_MINUTES = Number(process.env.ADVISOR_CUSTOMER_IDLE_CLOSE_MINUTES || 30);
+const CUSTOMER_IDLE_CLOSE_AFTER_MS = Math.max(1, (Number.isFinite(CUSTOMER_IDLE_CLOSE_AFTER_MINUTES) && CUSTOMER_IDLE_CLOSE_AFTER_MINUTES > 0 ? CUSTOMER_IDLE_CLOSE_AFTER_MINUTES : 10) * 60 * 1000);
+const customerIdleCloseTimers = new Map();
+const storage = new SupabaseStorage({
+  url: requiredEnv('SUPABASE_URL'),
+  key: requiredEnv('SUPABASE_SERVICE_ROLE_KEY'),
+});
+
+function isMissingSupportTicketsTable(error) {
+  const message = String(error?.message || error || '');
+  return message.includes('public.support_tickets')
+    || message.includes("table 'public.support_tickets'")
+    || message.includes('relation "public.support_tickets" does not exist')
+    || message.includes('PGRST205');
+}
+
+async function upsertSupportTicket({ conversation = null, phone = '', patch = {} } = {}) {
+  const normalizedPhone = normalizePhone(phone).replace(/^\+/, '');
+  const conversationId = conversation?.id_conversacion || null;
+  if (!normalizedPhone && !conversationId) return null;
+  try {
+    const clauses = [];
+    if (conversationId) clauses.push(`conversation_id.eq.${conversationId}`);
+    if (normalizedPhone) clauses.push(`phone.eq.${normalizedPhone}`);
+    const query = clauses.length > 1 ? `or=(${clauses.join(',')})&select=*` : `${clauses[0]}&select=*`;
+    const rows = await sb.select('support_tickets', query);
+    const existing = Array.isArray(rows) ? rows[0] : null;
+    const payload = {
+      conversation_id: conversationId,
+      client_id: conversation?.id_usuario || existing?.client_id || null,
+      phone: normalizedPhone || existing?.phone || '',
+      ...patch,
+    };
+    if (existing?.id) {
+      const updated = await sb.update('support_tickets', `id=eq.${existing.id}`, payload);
+      return updated?.[0] || existing;
+    }
+    const inserted = await sb.insert('support_tickets', payload);
+    return inserted?.[0] || null;
+  } catch (error) {
+    if (isMissingSupportTicketsTable(error)) {
+      console.warn('support_tickets table missing, skipping upsert');
+      return null;
+    }
+    throw error;
+  }
+}
 const BOT_VISITS_API_KEY = process.env.EVINKA_BOT_VISITS_API_KEY || 'EvinkaBotVisits#2026';
 
 const sb = new SupabaseRest({
@@ -38,7 +91,7 @@ fs.mkdirSync(dataDir, { recursive: true });
 if (!fs.existsSync(sessionsFile)) fs.writeFileSync(sessionsFile, '{}\n');
 
 const app = express();
-app.use(express.json({ limit: '1mb' }));
+app.use(express.json({ limit: '25mb' }));
 app.use(express.static(publicDir));
 
 function readJSON(file, fallback) {
@@ -84,10 +137,19 @@ function safeUser(user) {
     id: user.id,
     name: user.name,
     email: user.email,
+    employeeCode: user.employeeCode || '',
     role: user.role,
     status: user.status,
     allowedCountries: Array.isArray(user.allowedCountries) ? user.allowedCountries : [],
   };
+}
+
+function normalizeEmployeeCode(value = '') {
+  return String(value || '').trim().toUpperCase().replace(/[^A-Z0-9-]/g, '');
+}
+
+function isAdminRole(user = {}) {
+  return String(user?.role || '').trim().toLowerCase() === 'admin';
 }
 
 function hashPasswordVerify(password, stored) {
@@ -119,12 +181,47 @@ function writeSessions(sessions) {
   writeJSON(sessionsFile, sessions);
 }
 
+function readExternalSessions(file) {
+  const sessions = readJSON(file, {});
+  const now = Date.now();
+  return Object.fromEntries(
+    Object.entries(sessions).filter(([, session]) => session?.expiresAt && new Date(session.expiresAt).getTime() > now),
+  );
+}
+
+function userFromCotizadorSessionToken(token) {
+  const normalizedToken = String(token || '').trim();
+  if (!normalizedToken) return null;
+  const sessions = readExternalSessions(cotizadorSessionsFile);
+  const session = sessions[normalizedToken];
+  if (!session?.userId) return null;
+  return readUsers().find((item) => item.id === session.userId && item.status === 'active') || null;
+}
+
+function createAdvisorSessionForUser(user) {
+  const sessions = readSessions();
+  const token = crypto.randomBytes(24).toString('hex');
+  sessions[token] = {
+    userId: user.id,
+    createdAt: new Date().toISOString(),
+    expiresAt: new Date(Date.now() + SESSION_MAX_AGE_MS).toISOString(),
+    source: 'cotizador_bootstrap',
+  };
+  writeSessions(sessions);
+  return token;
+}
+
 function sessionCookie(token) {
   return `${COOKIE_NAME}=${encodeURIComponent(token)}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${Math.floor(SESSION_MAX_AGE_MS / 1000)}`;
 }
 
 function clearSessionCookie() {
   return `${COOKIE_NAME}=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0`;
+}
+
+function clientIp(req) {
+  const forwarded = String(req.headers['x-forwarded-for'] || '').split(',').map((item) => item.trim()).filter(Boolean)[0];
+  return forwarded || req.ip || req.socket?.remoteAddress || '';
 }
 
 function authOptional(req, _res, next) {
@@ -251,12 +348,430 @@ function metaForConversation(conversation = null, detailConversation = null) {
   return metaByChannelKey.get(resolveConversationChannel(conversation, detailConversation)) || metaByChannelKey.get(defaultWhatsAppChannel.key);
 }
 
-function userNameFromData(user = null, profile = null) {
-  return profile?.nombre_receptor || user?.nombre_visible || user?.nombre_usuario || user?.correo_electronico || user?.telefono_principal || 'Cliente EVINKA';
+function normalizeDisplayName(value = '') {
+  const cleaned = String(value || '').replace(/\s+/g, ' ').trim();
+  if (!cleaned) return '';
+  if (/^\+?\d[\d\s()-]{6,}$/.test(cleaned)) return '';
+  if (cleaned.includes('@')) return '';
+  if (/^cliente\s+evinka$/i.test(cleaned)) return '';
+  return cleaned.slice(0, 80);
+}
+
+function profileNameFromThread(messages = []) {
+  const thread = Array.isArray(messages) ? [...messages].reverse() : [];
+  for (const message of thread) {
+    const payload = message?.payload_crudo || null;
+    const sharedContact = Array.isArray(payload?.contacts) ? payload.contacts[0] : null;
+    const profileName = normalizeDisplayName(
+      payload?.profileName
+      || payload?.contactName
+      || sharedContact?.name?.formatted_name
+      || [sharedContact?.name?.first_name, sharedContact?.name?.last_name].filter(Boolean).join(' ')
+      || ''
+    );
+    if (profileName) return profileName;
+  }
+  return '';
+}
+
+function userNameFromData(user = null, profile = null, messages = [], phone = '') {
+  const candidates = [
+    profile?.nombre_receptor,
+    user?.nombre_visible,
+    user?.nombre_usuario,
+    profileNameFromThread(messages),
+  ];
+  for (const candidate of candidates) {
+    const normalized = normalizeDisplayName(candidate);
+    if (normalized) return normalized;
+  }
+  const prettyPhone = phonePretty(phone || user?.telefono_principal || '');
+  return prettyPhone !== '-' ? `Cliente ${prettyPhone}` : 'Cliente EVINKA';
+}
+
+function interactiveSummaryFromPayload(payload = null) {
+  if (!payload || typeof payload !== 'object') return { title: null, id: null };
+  const button = payload.interactive?.button_reply || null;
+  const list = payload.interactive?.list_reply || null;
+  const title = String(
+    payload.interactiveTitle
+    || button?.title
+    || list?.title
+    || ''
+  ).trim();
+  const id = String(
+    payload.interactiveId
+    || button?.id
+    || list?.id
+    || ''
+  ).trim();
+  return {
+    title: title || null,
+    id: id || null,
+  };
+}
+
+function fallbackMessageText(message = null) {
+  const payload = message?.payload_crudo || null;
+  const type = String(payload?.type || message?.tipo_mensaje || '').trim().toLowerCase();
+  if (String(message?.contenido || '').trim() && String(message?.contenido || '').trim() !== '[mensaje interactivo]') {
+    return String(message.contenido || '').trim();
+  }
+  if (type === 'interactive') {
+    const interactive = interactiveSummaryFromPayload(payload);
+    return interactive.title || '[opción interactiva]';
+  }
+  if (type === 'contacts') {
+    const first = Array.isArray(payload?.contacts) ? payload.contacts[0] : null;
+    const name = String(first?.name?.formatted_name || [first?.name?.first_name, first?.name?.last_name].filter(Boolean).join(' ') || '').trim();
+    const phone = String(first?.phones?.[0]?.phone || first?.phones?.[0]?.wa_id || '').trim();
+    return ['Contacto compartido', name, phone].filter(Boolean).join('\n') || '[contacto compartido]';
+  }
+  if (type === 'location') {
+    const location = payload?.location || {};
+    const name = String(location?.name || payload?.locationName || '').trim();
+    const address = String(location?.address || payload?.locationAddress || '').trim();
+    const coords = payload?.latitude != null && payload?.longitude != null ? `${payload.latitude}, ${payload.longitude}` : '';
+    return ['Ubicación compartida', name, address, coords].filter(Boolean).join('\n') || '[ubicación compartida]';
+  }
+  if (type === 'audio') return '[audio]';
+  if (type === 'video') return '[video]';
+  if (type === 'sticker') return '[sticker]';
+  return String(message?.contenido || '').trim();
+}
+
+function isoTimeValue(value = null) {
+  const time = new Date(value || 0).getTime();
+  return Number.isFinite(time) ? time : 0;
+}
+
+function sortByNewestConversations(conversations = []) {
+  return [...conversations].sort((a, b) => (
+    isoTimeValue(b?.ultimo_mensaje_en || b?.actualizado_en || b?.creado_en)
+    - isoTimeValue(a?.ultimo_mensaje_en || a?.actualizado_en || a?.creado_en)
+  ));
+}
+
+function sortByNewestRecords(items = [], dateFields = ['actualizado_en', 'updated_at', 'creado_en', 'created_at']) {
+  return [...items].sort((a, b) => {
+    const left = dateFields.map((field) => b?.[field]).find(Boolean) || 0;
+    const right = dateFields.map((field) => a?.[field]).find(Boolean) || 0;
+    return isoTimeValue(left) - isoTimeValue(right);
+  });
+}
+
+function mergeProfiles(profiles = []) {
+  const sorted = sortByNewestRecords(profiles, ['actualizado_en', 'created_at', 'creado_en']);
+  if (!sorted.length) return null;
+  const merged = {};
+  for (const profile of sorted) {
+    for (const [key, value] of Object.entries(profile || {})) {
+      if (merged[key] == null || merged[key] === '') {
+        if (value != null && value !== '') merged[key] = value;
+      }
+    }
+  }
+  return { ...sorted[0], ...merged };
+}
+
+function conversationGroupKey(conversation = null, user = null) {
+  return String(conversation?.id_usuario || user?.id_usuario || userPhoneFromConversation(conversation) || user?.telefono_principal || '').trim();
+}
+
+function latestMessageFromThread(thread = [], fallbackConversation = null) {
+  return thread[thread.length - 1] || null || fallbackConversation;
+}
+
+function mergedUpdatedAt(conversations = [], localStates = []) {
+  const values = [
+    ...conversations.map((item) => item?.ultimo_mensaje_en || item?.actualizado_en || item?.creado_en),
+    ...localStates.map((item) => item?.updatedAt),
+  ].filter(Boolean);
+  return values.sort((a, b) => isoTimeValue(b) - isoTimeValue(a))[0] || null;
 }
 
 function advisorLabel(user) {
   return user?.name || user?.email || 'Asesor EVINKA';
+}
+
+function customerIdleCloseText() {
+  return 'Cerramos esta atención por ahora para no dejar el caso abierto. Si deseas continuar, escribe ASESOR y retomamos tu caso.';
+}
+
+function clearCustomerIdleCloseTimer(conversationId = '') {
+  const key = String(conversationId || '').trim();
+  if (!key) return;
+  const timer = customerIdleCloseTimers.get(key);
+  if (timer) clearTimeout(timer);
+  customerIdleCloseTimers.delete(key);
+}
+
+function scheduleCustomerIdleClose({ conversationId = '', conversation = null, detailConversation = null, phone = '', advisor = null } = {}) {
+  const key = String(conversationId || '').trim();
+  if (!key || !phone) return null;
+  clearCustomerIdleCloseTimer(key);
+  const timer = setTimeout(async () => {
+    try {
+      const rows = await sb.select('conversaciones', `id_conversacion=eq.${encodeURIComponent(key)}&select=*`);
+      const currentConversation = rows[0] || conversation || null;
+      const state = getAdvisorConversationState(key) || {};
+      if (!currentConversation) return;
+      const stillOpen = currentConversation.estado_conversacion === 'handoff' || currentConversation.requiere_handoff === true || currentConversation.paso_actual === 'handoff_asesor' || currentConversation.paso_actual === 'esperando_timeout_asesor';
+      if (!stillOpen) return;
+
+      const lastAgentAtMs = new Date(state.lastAgentMessageAt || 0).getTime();
+      const lastCustomerAtMs = new Date(state.lastCustomerMessageAt || currentConversation.ultimo_mensaje_en || currentConversation.actualizado_en || currentConversation.creado_en || 0).getTime();
+      if (!Number.isFinite(lastAgentAtMs) || lastAgentAtMs <= 0) return;
+      if (Number.isFinite(lastCustomerAtMs) && lastCustomerAtMs >= lastAgentAtMs) return;
+
+      const idleMs = Date.now() - lastAgentAtMs;
+      if (idleMs < CUSTOMER_IDLE_CLOSE_AFTER_MS) {
+        scheduleCustomerIdleClose({
+          conversationId: key,
+          conversation: currentConversation,
+          detailConversation,
+          phone,
+          advisor,
+        });
+        return;
+      }
+
+      const metaClient = metaForConversation(currentConversation, detailConversation || currentConversation);
+      const text = customerIdleCloseText();
+      await metaClient.sendText(phone, text);
+      await logAdvisorMessage(currentConversation, text, advisor || { id: 'system', name: 'EVINKA', email: 'system@evinka.local' });
+      const closedAt = new Date().toISOString();
+      const patchedConversation = await patchConversation(key, {
+        estado_conversacion: 'closed',
+        requiere_handoff: false,
+        paso_actual: 'menu_principal',
+        subestado_flujo: 'cerrado_por_silencio_cliente_post_asesor',
+        motivo_handoff: null,
+        cerrada_en: closedAt,
+        ultimo_mensaje_en: closedAt,
+      });
+      patchAdvisorConversation(key, (current) => ({
+        ...current,
+        internalStatus: 'resolved',
+        handoffActive: false,
+        supportStatus: 'cerrado',
+        resolvedBy: current.resolvedBy || 'system_idle_close',
+        resolvedByLabel: current.resolvedByLabel || 'Cierre automático',
+        resolvedAt: closedAt,
+        autoClosedAt: closedAt,
+        autoCloseReason: 'customer_idle_after_advisor_reply',
+        unreadCount: 0,
+      }));
+      await upsertSupportTicket({ conversation: patchedConversation || currentConversation, phone, patch: {
+        status: 'cerrado',
+        handoff_active: false,
+        closed_at: closedAt,
+        close_reason: 'customer_idle_after_advisor_reply',
+        last_agent_message_at: new Date(lastAgentAtMs).toISOString(),
+      } });
+      await logSystemMessage(currentConversation, 'Caso cerrado automáticamente por falta de respuesta del cliente tras atención humana.', {
+        systemAction: 'auto_close_customer_idle_after_advisor_reply',
+        timeoutMinutes: CUSTOMER_IDLE_CLOSE_AFTER_MINUTES,
+        advisorId: advisor?.id || null,
+        advisorName: advisorLabel(advisor || {}),
+      });
+    } catch (error) {
+      console.error('customer idle auto-close failed:', error);
+    } finally {
+      customerIdleCloseTimers.delete(key);
+    }
+  }, CUSTOMER_IDLE_CLOSE_AFTER_MS);
+  customerIdleCloseTimers.set(key, timer);
+  return { ok: true, delayMs: CUSTOMER_IDLE_CLOSE_AFTER_MS };
+}
+
+function trimForwardText(value = '', max = 900) {
+  return String(value || '').replace(/\s+/g, ' ').trim().slice(0, max);
+}
+
+function buildForwardIntro(conversation = {}) {
+  const parts = [
+    `Reenviado a ${ADVISOR_FORWARD_JENY_LABEL} desde EVINKA`,
+    conversation?.customerName || '',
+    conversation?.phonePretty || conversation?.phone || '',
+  ].filter(Boolean);
+  return parts.join(' · ');
+}
+
+async function ensureInternalWhatsAppConversation({ phone, label, advisor = null } = {}) {
+  const normalizedPhone = normalizePhone(phone).replace(/^\+/, '');
+  if (!normalizedPhone) throw new Error('Falta el teléfono del chat interno.');
+  const userId = `whatsapp_${normalizedPhone}`;
+  const visibleName = String(label || normalizedPhone).trim() || normalizedPhone;
+
+  const existingUsers = await sb.select('usuarios', `id_usuario=eq.${encodeURIComponent(userId)}&select=*`);
+  let user = Array.isArray(existingUsers) ? existingUsers[0] : null;
+  if (!user) {
+    const createdUsers = await sb.insert('usuarios', {
+      id_usuario: userId,
+      nombre_visible: visibleName,
+      nombre_usuario: visibleName,
+      correo_electronico: '',
+    });
+    user = Array.isArray(createdUsers) ? createdUsers[0] : { id_usuario: userId, nombre_visible: visibleName, nombre_usuario: visibleName };
+  } else if (normalizeDisplayName(user.nombre_visible || '') !== normalizeDisplayName(visibleName)) {
+    const updatedUsers = await sb.update('usuarios', `id_usuario=eq.${encodeURIComponent(userId)}`, {
+      nombre_visible: visibleName,
+      nombre_usuario: visibleName,
+    });
+    user = Array.isArray(updatedUsers) && updatedUsers[0]
+      ? updatedUsers[0]
+      : { ...user, nombre_visible: visibleName, nombre_usuario: visibleName };
+  }
+
+  const rows = await sb.select('conversaciones', `id_usuario=eq.${encodeURIComponent(userId)}&canal=eq.whatsapp&order=creado_en.desc&limit=1`);
+  let conversation = Array.isArray(rows) ? rows[0] : null;
+  if (!conversation) {
+    const now = new Date().toISOString();
+    const created = await sb.insert('conversaciones', {
+      id_usuario: userId,
+      canal: 'whatsapp',
+      estado_conversacion: 'handoff',
+      requiere_handoff: true,
+      paso_actual: 'chat_caja',
+      subestado_flujo: 'interno_jeny',
+      motivo_handoff: 'Caja / recepción de boletas',
+      intencion_principal: 'otro',
+      ultimo_mensaje_en: now,
+      resumen: JSON.stringify({ kind: 'internal_advisor_chat', internalContact: 'jeny', phone: normalizedPhone }),
+    });
+    conversation = Array.isArray(created) ? created[0] : null;
+  }
+
+  patchAdvisorConversation(conversation?.id_conversacion || userId, (current) => ({
+    ...current,
+    internalStatus: 'open',
+    handoffActive: true,
+    supportStatus: 'tomado',
+    assignedTo: current.assignedTo || advisor?.id || null,
+    assignedToLabel: current.assignedToLabel || (advisor ? advisorLabel(advisor) : null),
+    assignedAt: current.assignedAt || new Date().toISOString(),
+    unreadCount: 0,
+    tags: [...new Set([...(Array.isArray(current.tags) ? current.tags : []), 'interno', 'caja'])],
+  }));
+
+  return conversation;
+}
+
+function parseStoredMediaRef(mediaUrl = '') {
+  const value = String(mediaUrl || '').trim();
+  if (!value) return null;
+  const storagePrefix = '/api/inbox/storage-media/';
+  if (value.startsWith(storagePrefix)) {
+    const relative = value.slice(storagePrefix.length);
+    const slash = relative.indexOf('/');
+    if (slash === -1) return null;
+    const bucket = decodeURIComponent(relative.slice(0, slash));
+    const objectPath = relative
+      .slice(slash + 1)
+      .split('/')
+      .filter(Boolean)
+      .map((part) => decodeURIComponent(part))
+      .join('/');
+    return bucket && objectPath ? { kind: 'storage', bucket, objectPath } : null;
+  }
+  const localPrefix = '/api/inbox/media/';
+  if (value.startsWith(localPrefix)) {
+    return { kind: 'local', relativePath: decodeURIComponent(value.slice(localPrefix.length)) };
+  }
+  return null;
+}
+
+async function loadBufferFromPayload(payload = {}, fallbackMimeType = 'application/octet-stream') {
+  if (payload?.storageBucket && payload?.storagePath) {
+    const downloaded = await storage.downloadObject(payload.storageBucket, payload.storagePath);
+    return {
+      buffer: downloaded.buffer,
+      mimeType: downloaded.mimeType || payload.mimeType || fallbackMimeType,
+      fileSize: downloaded.fileSize || Buffer.byteLength(downloaded.buffer),
+    };
+  }
+
+  if (payload?.localMediaPath) {
+    const absPath = resolveConversationMedia(payload.localMediaPath);
+    if (absPath) {
+      const buffer = fs.readFileSync(absPath);
+      return {
+        buffer,
+        mimeType: payload.mimeType || fallbackMimeType,
+        fileSize: Buffer.byteLength(buffer),
+      };
+    }
+  }
+
+  const parsed = parseStoredMediaRef(payload?.mediaUrl || '');
+  if (parsed?.kind === 'storage') {
+    const downloaded = await storage.downloadObject(parsed.bucket, parsed.objectPath);
+    return {
+      buffer: downloaded.buffer,
+      mimeType: downloaded.mimeType || payload.mimeType || fallbackMimeType,
+      fileSize: downloaded.fileSize || Buffer.byteLength(downloaded.buffer),
+    };
+  }
+
+  if (parsed?.kind === 'local') {
+    const absPath = resolveConversationMedia(parsed.relativePath);
+    if (absPath) {
+      const buffer = fs.readFileSync(absPath);
+      return {
+        buffer,
+        mimeType: payload.mimeType || fallbackMimeType,
+        fileSize: Buffer.byteLength(buffer),
+      };
+    }
+  }
+
+  return null;
+}
+
+async function forwardMessageToJeny({ dbMessage, detailConversation, advisor }) {
+  const metaClient = metaForConversation({ id_usuario: detailConversation?.phone || '' }, detailConversation);
+  const payload = dbMessage?.payload_crudo || {};
+  const intro = buildForwardIntro(detailConversation);
+  const rawText = trimForwardText(fallbackMessageText(dbMessage) || '');
+  const isMedia = Boolean(payload?.mediaUrl || payload?.storageBucket || payload?.storagePath || payload?.localMediaPath);
+
+  await metaClient.sendText(ADVISOR_FORWARD_JENY_PHONE, intro);
+
+  if (isMedia) {
+    const loaded = await loadBufferFromPayload(payload, payload?.mimeType || 'application/octet-stream');
+    if (!loaded?.buffer?.length) {
+      throw new Error('No encontré el archivo original para reenviarlo.');
+    }
+    const fileName = String(payload?.fileName || dbMessage?.contenido || 'archivo').trim() || 'archivo';
+    const uploaded = await metaClient.uploadMedia({
+      buffer: loaded.buffer,
+      mimeType: loaded.mimeType || payload?.mimeType || 'application/octet-stream',
+      fileName,
+    });
+    const mediaId = uploaded?.id;
+    if (!mediaId) {
+      throw new Error('No pude subir el archivo a WhatsApp para reenviarlo.');
+    }
+    const kind = mediaKindFromMime(loaded.mimeType || payload?.mimeType || 'application/octet-stream');
+    const caption = rawText ? trimForwardText(rawText, 900) : '';
+    if (kind === 'image') {
+      await metaClient.sendImage(ADVISOR_FORWARD_JENY_PHONE, { mediaId, caption });
+    } else {
+      await metaClient.sendDocument(ADVISOR_FORWARD_JENY_PHONE, { mediaId, caption, fileName });
+    }
+  } else {
+    const text = rawText || '[mensaje sin texto visible]';
+    await metaClient.sendText(ADVISOR_FORWARD_JENY_PHONE, text);
+  }
+
+  return {
+    forwardedTo: ADVISOR_FORWARD_JENY_PHONE,
+    forwardedLabel: ADVISOR_FORWARD_JENY_LABEL,
+    forwardedBy: advisorLabel(advisor),
+    messageId: dbMessage?.id_mensaje || null,
+    isMedia,
+  };
 }
 
 function findRelatedVisit(conversation) {
@@ -339,21 +854,31 @@ function mediaKindFromMime(mimeType = '') {
   return String(mimeType || '').startsWith('image/') ? 'image' : 'document';
 }
 
-function humanizeSendError(error) {
+function humanizeSendError(error, { kind = 'message' } = {}) {
   const message = String(error?.message || '');
-  if (message.includes('131030') || message.toLowerCase().includes('recipient phone number not in allowed list')) {
+  const lower = message.toLowerCase();
+  if (message.includes('131030') || lower.includes('recipient phone number not in allowed list')) {
     return 'Meta bloqueó el envío porque este número no está en la lista autorizada del WhatsApp de prueba. Hay que agregarlo en Meta o usar un número/producto ya aprobado.';
   }
-  if (message.includes('413') || message.toLowerCase().includes('too large')) {
-    return 'El archivo es demasiado pesado para enviarlo por este canal.';
+  if (message.includes('190') || lower.includes('authentication error') || lower.includes('unauthorized')) {
+    return 'No pude enviar el mensaje porque el canal de WhatsApp de Meta rechazó la autenticación. Hay que revisar o renovar el token de ese número.';
   }
-  return 'No pude enviar el archivo.';
+  if (message.includes('413') || lower.includes('too large')) {
+    return kind === 'media'
+      ? 'El archivo es demasiado pesado para enviarlo por este canal.'
+      : 'No pude enviar el mensaje porque el canal rechazó la solicitud.';
+  }
+  return kind === 'media' ? 'No pude enviar el archivo.' : 'No pude enviar el mensaje.';
 }
 
-async function listInboxConversations() {
-  const conversations = await sb.select('conversaciones', 'select=*&order=ultimo_mensaje_en.desc&limit=120');
+async function listInboxConversations({ mode = 'active' } = {}) {
+  const conversations = await sb.select('conversaciones', 'select=*&order=ultimo_mensaje_en.desc&limit=200');
   const state = loadAdvisorState();
-  const relevant = conversations.filter((item) => item.estado_conversacion === 'handoff' || item.requiere_handoff || state.conversations?.[item.id_conversacion]);
+  const normalizedMode = String(mode || 'active').toLowerCase();
+  const includeFullWhatsappHistory = normalizedMode === 'bot' || normalizedMode === 'all' || normalizedMode === 'resolved';
+  const relevant = includeFullWhatsappHistory
+    ? conversations.filter((item) => item.canal === 'whatsapp')
+    : conversations.filter((item) => item.estado_conversacion === 'handoff' || item.requiere_handoff || state.conversations?.[item.id_conversacion]);
   if (!relevant.length) return [];
 
   const userIds = [...new Set(relevant.map((item) => item.id_usuario).filter(Boolean))];
@@ -372,115 +897,213 @@ async function listInboxConversations() {
   const usersById = Object.fromEntries(users.map((item) => [item.id_usuario, item]));
   const profilesByConversation = Object.fromEntries(profiles.map((item) => [item.id_conversacion, item]));
   const messagesByConversation = new Map();
+  const groupedConversations = new Map();
   const storedVisits = readJSON(techVisitsFile, []);
   const storedQuotes = readJSON(quotesFile, []);
+
   for (const message of messages) {
     const list = messagesByConversation.get(message.id_conversacion) || [];
     list.push(message);
     messagesByConversation.set(message.id_conversacion, list);
   }
 
-  return relevant.map((conversation) => {
+  for (const conversation of relevant) {
     const user = usersById[conversation.id_usuario] || null;
-    const profile = profilesByConversation[conversation.id_conversacion] || null;
-    const thread = messagesByConversation.get(conversation.id_conversacion) || [];
+    const key = conversationGroupKey(conversation, user);
+    const list = groupedConversations.get(key) || [];
+    list.push(conversation);
+    groupedConversations.set(key, list);
+  }
+
+  return [...groupedConversations.values()].map((group) => {
+    const orderedConversations = sortByNewestConversations(group);
+    const primaryConversation = orderedConversations[0];
+    const user = usersById[primaryConversation.id_usuario] || null;
+    const relatedProfiles = orderedConversations
+      .map((item) => profilesByConversation[item.id_conversacion])
+      .filter(Boolean);
+    const mergedProfile = mergeProfiles(relatedProfiles);
+    const thread = orderedConversations
+      .flatMap((item) => messagesByConversation.get(item.id_conversacion) || [])
+      .sort((a, b) => isoTimeValue(a?.creado_en) - isoTimeValue(b?.creado_en));
     const lastMessage = thread[thread.length - 1] || null;
-    const local = state.conversations?.[conversation.id_conversacion] || {};
-    const relatedVisit = storedVisits.find((item) => String(item.reference || '').trim() === String(conversation.id_conversacion || '').trim()) || null;
+    const localStates = orderedConversations.map((item) => state.conversations?.[item.id_conversacion] || {});
+    const primaryLocal = state.conversations?.[primaryConversation.id_conversacion] || {};
+    const relatedVisit = storedVisits.find((item) => String(item.reference || '').trim() === String(primaryConversation.id_conversacion || '').trim()) || null;
     const relatedQuote = relatedVisit?.quoteId
       ? storedQuotes.find((item) => String(item.id || '').trim() === String(relatedVisit.quoteId || '').trim()) || null
       : null;
-    const countryCode = inferConversationCountry({ conversation, user, profile }) || 'PE';
+    const countryCode = inferConversationCountry({ conversation: primaryConversation, user, profile: mergedProfile }) || 'PE';
     return {
-      id: conversation.id_conversacion,
+      id: primaryConversation.id_conversacion,
       countryCode,
-      phone: userPhoneFromConversation(conversation) || user?.telefono_principal || '',
-      phonePretty: phonePretty(userPhoneFromConversation(conversation) || user?.telefono_principal || ''),
-      customerName: userNameFromData(user, profile),
-      email: profile?.correo_receptor || user?.correo_electronico || '',
-      district: profile?.distrito_instalacion || profile?.distrito_recibo || '',
-      province: profile?.provincia_instalacion || profile?.provincia_recibo || '',
-      currentStep: conversation.paso_actual || '',
-      handoffReason: conversation.motivo_handoff || '',
-      whatsappState: conversation.estado_conversacion,
-      status: conversationStatus(conversation, local),
-      assignedTo: local.assignedTo || null,
-      assignedToLabel: local.assignedToLabel || null,
-      assignedAt: local.assignedAt || null,
-      unreadCount: Number(local.unreadCount || 0),
-      tags: Array.isArray(local.tags) ? local.tags : [],
-      internalNote: String(local.internalNote || ''),
-      nextAction: String(local.nextAction || ''),
-      manualPriority: String(local.manualPriority || ''),
+      phone: userPhoneFromConversation(primaryConversation) || user?.telefono_principal || '',
+      phonePretty: phonePretty(userPhoneFromConversation(primaryConversation) || user?.telefono_principal || ''),
+      customerName: userNameFromData(user, mergedProfile, thread, userPhoneFromConversation(primaryConversation) || user?.telefono_principal || ''),
+      email: mergedProfile?.correo_receptor || user?.correo_electronico || '',
+      district: mergedProfile?.distrito_instalacion || mergedProfile?.distrito_recibo || '',
+      province: mergedProfile?.provincia_instalacion || mergedProfile?.provincia_recibo || '',
+      currentStep: primaryConversation.paso_actual || '',
+      handoffReason: primaryConversation.motivo_handoff || '',
+      whatsappState: primaryConversation.estado_conversacion,
+      status: conversationStatus(primaryConversation, primaryLocal),
+      assignedTo: primaryLocal.assignedTo || null,
+      assignedToLabel: primaryLocal.assignedToLabel || null,
+      assignedAt: primaryLocal.assignedAt || null,
+      unreadCount: localStates.reduce((sum, item) => sum + Number(item.unreadCount || 0), 0),
+      tags: [...new Set(localStates.flatMap((item) => Array.isArray(item.tags) ? item.tags : []))],
+      internalNote: String(primaryLocal.internalNote || ''),
+      nextAction: String(primaryLocal.nextAction || ''),
+      manualPriority: String(primaryLocal.manualPriority || ''),
       relatedVisitId: relatedVisit?.id || '',
       relatedQuoteId: relatedQuote?.id || '',
-      lastMessageText: String(lastMessage?.contenido || '').slice(0, 220),
-      lastMessageAt: lastMessage?.creado_en || conversation.ultimo_mensaje_en || conversation.actualizado_en,
-      lastIncomingAt: local.lastIncomingAt || null,
-      createdAt: conversation.creado_en,
-      updatedAt: local.updatedAt || conversation.actualizado_en,
+      lastMessageText: String(fallbackMessageText(lastMessage) || '').slice(0, 220),
+      lastMessageAt: lastMessage?.creado_en || primaryConversation.ultimo_mensaje_en || primaryConversation.actualizado_en,
+      lastIncomingAt: primaryLocal.lastIncomingAt || null,
+      createdAt: orderedConversations[orderedConversations.length - 1]?.creado_en || primaryConversation.creado_en,
+      updatedAt: mergedUpdatedAt(orderedConversations, localStates) || primaryConversation.actualizado_en,
+      conversationIds: orderedConversations.map((item) => item.id_conversacion),
     };
-  });
+  }).sort((a, b) => isoTimeValue(b.lastMessageAt || b.updatedAt) - isoTimeValue(a.lastMessageAt || a.updatedAt));
 }
 
 async function getConversationDetail(conversationId) {
   const rows = await sb.select('conversaciones', `id_conversacion=eq.${conversationId}&select=*`);
-  const conversation = rows[0];
-  if (!conversation) return null;
-  const state = loadAdvisorState().conversations?.[conversationId] || {};
+  const requestedConversation = rows[0];
+  if (!requestedConversation) return null;
+
+  const allConversations = await sb.select(
+    'conversaciones',
+    `id_usuario=eq.${encodeURIComponent(requestedConversation.id_usuario)}&canal=eq.whatsapp&order=creado_en.asc&limit=50`,
+  );
+  const groupedConversations = Array.isArray(allConversations) && allConversations.length
+    ? allConversations
+    : [requestedConversation];
+  const orderedConversations = sortByNewestConversations(groupedConversations);
+  const primaryConversation = orderedConversations[0] || requestedConversation;
+  const conversationIds = groupedConversations.map((item) => item.id_conversacion);
+  const fullState = loadAdvisorState().conversations || {};
+  const primaryState = fullState[primaryConversation.id_conversacion] || {};
+  const groupStates = groupedConversations.map((item) => fullState[item.id_conversacion] || {});
+
   const [users, profiles, messages] = await Promise.all([
-    sb.select('usuarios', `id_usuario=eq.${encodeURIComponent(conversation.id_usuario)}&select=*`),
-    sb.select('perfiles_cliente', `id_conversacion=eq.${conversationId}&select=*`),
-    sb.select('mensajes', `id_conversacion=eq.${conversationId}&select=*&order=creado_en.asc&limit=400`),
+    sb.select('usuarios', `id_usuario=eq.${encodeURIComponent(primaryConversation.id_usuario)}&select=*`),
+    conversationIds.length
+      ? sb.select('perfiles_cliente', `id_conversacion=in.(${conversationIds.join(',')})&select=*`)
+      : [],
+    conversationIds.length
+      ? sb.select('mensajes', `id_conversacion=in.(${conversationIds.join(',')})&select=*&order=creado_en.asc&limit=5000`)
+      : [],
   ]);
   const user = users[0] || null;
-  const profile = profiles[0] || null;
-  const relatedVisit = findRelatedVisit({ id: conversation.id_conversacion, email: profile?.correo_receptor || user?.correo_electronico || '' });
-  const relatedQuote = findRelatedQuote({ id: conversation.id_conversacion, email: profile?.correo_receptor || user?.correo_electronico || '' });
-  const countryCode = inferConversationCountry({ conversation, user, profile }) || 'PE';
+  const profile = mergeProfiles(profiles);
+  const messagesSorted = [...messages].sort((a, b) => isoTimeValue(a?.creado_en) - isoTimeValue(b?.creado_en));
+  let files = [];
+  let artifacts = [];
+  try {
+    const phone = userPhoneFromConversation(primaryConversation) || user?.telefono_principal || '';
+    const query = phone
+      ? `or=(phone.eq.${normalizePhone(phone).replace(/^\+/, '')},conversation_id.in.(${conversationIds.join(',')}))&select=*&order=created_at.desc&limit=100`
+      : `conversation_id=in.(${conversationIds.join(',')})&select=*&order=created_at.desc&limit=100`;
+    files = await sb.select('client_files', query);
+  } catch (error) {
+    if (!String(error?.message || '').includes('client_files')) throw error;
+  }
+  try {
+    const phone = userPhoneFromConversation(primaryConversation) || user?.telefono_principal || '';
+    const query = phone
+      ? `or=(phone.eq.${normalizePhone(phone).replace(/^\+/, '')},conversation_id.in.(${conversationIds.join(',')}))&select=*&order=created_at.desc&limit=100`
+      : `conversation_id=in.(${conversationIds.join(',')})&select=*&order=created_at.desc&limit=100`;
+    artifacts = await sb.select('client_artifacts', query);
+  } catch (error) {
+    if (!String(error?.message || '').includes('client_artifacts')) throw error;
+  }
+  const relatedVisit = findRelatedVisit({ id: primaryConversation.id_conversacion, email: profile?.correo_receptor || user?.correo_electronico || '' });
+  const relatedQuote = findRelatedQuote({ id: primaryConversation.id_conversacion, email: profile?.correo_receptor || user?.correo_electronico || '' });
+  const countryCode = inferConversationCountry({ conversation: primaryConversation, user, profile }) || 'PE';
   return {
     conversation: {
-      id: conversation.id_conversacion,
+      id: primaryConversation.id_conversacion,
+      requestedId: requestedConversation.id_conversacion,
+      conversationIds,
       countryCode,
-      phone: userPhoneFromConversation(conversation) || user?.telefono_principal || '',
-      phonePretty: phonePretty(userPhoneFromConversation(conversation) || user?.telefono_principal || ''),
-      customerName: userNameFromData(user, profile),
+      phone: userPhoneFromConversation(primaryConversation) || user?.telefono_principal || '',
+      phonePretty: phonePretty(userPhoneFromConversation(primaryConversation) || user?.telefono_principal || ''),
+      customerName: userNameFromData(user, profile, messagesSorted, userPhoneFromConversation(primaryConversation) || user?.telefono_principal || ''),
       email: profile?.correo_receptor || user?.correo_electronico || '',
-      step: conversation.paso_actual || '',
-      handoffReason: conversation.motivo_handoff || '',
-      whatsappState: conversation.estado_conversacion,
-      status: conversationStatus(conversation, state),
-      assignedTo: state.assignedTo || null,
-      assignedToLabel: state.assignedToLabel || null,
-      assignedAt: state.assignedAt || null,
+      step: primaryConversation.paso_actual || '',
+      handoffReason: primaryConversation.motivo_handoff || '',
+      whatsappState: primaryConversation.estado_conversacion,
+      status: conversationStatus(primaryConversation, primaryState),
+      assignedTo: primaryState.assignedTo || null,
+      assignedToLabel: primaryState.assignedToLabel || null,
+      assignedAt: primaryState.assignedAt || null,
       district: profile?.distrito_instalacion || profile?.distrito_recibo || '',
       province: profile?.provincia_instalacion || profile?.provincia_recibo || '',
       installationAddress: profile?.direccion_instalacion || '',
       receiptAddress: profile?.direccion_recibo || '',
-      ticketContext: conversation.codigo_ticket_solicitado || '',
-      tags: Array.isArray(state.tags) ? state.tags : [],
-      internalNote: String(state.internalNote || ''),
-      nextAction: String(state.nextAction || ''),
-      manualPriority: String(state.manualPriority || ''),
+      ticketContext: primaryConversation.codigo_ticket_solicitado || '',
+      tags: [...new Set(groupStates.flatMap((item) => Array.isArray(item.tags) ? item.tags : []))],
+      internalNote: String(primaryState.internalNote || ''),
+      nextAction: String(primaryState.nextAction || ''),
+      manualPriority: String(primaryState.manualPriority || ''),
       relatedVisitId: String(relatedVisit?.id || '').trim(),
       relatedQuoteId: String(relatedQuote?.id || '').trim(),
-      unreadCount: Number(state.unreadCount || 0),
-      createdAt: conversation.creado_en,
-      updatedAt: state.updatedAt || conversation.actualizado_en,
+      unreadCount: groupStates.reduce((sum, item) => sum + Number(item.unreadCount || 0), 0),
+      historyConversationCount: conversationIds.length,
+      historyMessageCount: messagesSorted.length,
+      createdAt: groupedConversations[0]?.creado_en || primaryConversation.creado_en,
+      updatedAt: mergedUpdatedAt(groupedConversations, groupStates) || primaryConversation.actualizado_en,
     },
-    messages: messages.map((message) => ({
+    messages: messagesSorted.map((message) => ({
+      ...(interactiveSummaryFromPayload(message.payload_crudo || null)),
       id: message.id_mensaje,
+      conversationId: message.id_conversacion,
       role: message.rol,
-      text: message.contenido,
-      type: message.tipo_mensaje,
+      text: fallbackMessageText(message),
+      type: message.payload_crudo?.type || message.tipo_mensaje,
       createdAt: message.creado_en,
+      source: message.payload_crudo?.source || null,
       advisorName: message.payload_crudo?.advisorName || null,
       advisorEmail: message.payload_crudo?.advisorEmail || null,
       systemAction: message.payload_crudo?.systemAction || null,
+      forwardedTo: message.payload_crudo?.forwardedTo || null,
+      forwardedToLabel: message.payload_crudo?.forwardedToLabel || null,
       mediaUrl: message.payload_crudo?.mediaUrl || null,
       mimeType: message.payload_crudo?.mimeType || null,
       fileName: message.payload_crudo?.fileName || null,
       fileSize: message.payload_crudo?.fileSize || null,
+      sharedContacts: message.payload_crudo?.sharedContacts || message.payload_crudo?.contacts || null,
+      contactName: message.payload_crudo?.contactName || null,
+      contactPhone: message.payload_crudo?.contactPhone || null,
+      locationName: message.payload_crudo?.locationName || null,
+      locationAddress: message.payload_crudo?.locationAddress || null,
+      latitude: message.payload_crudo?.latitude ?? null,
+      longitude: message.payload_crudo?.longitude ?? null,
+    })),
+    files: files.map((file) => ({
+      id: file.id,
+      fileName: file.file_name || '',
+      fileType: file.file_type || '',
+      mimeType: file.mime_type || '',
+      fileSize: file.file_size || 0,
+      clientName: file.client_name || '',
+      phone: file.phone || '',
+      ticketId: file.ticket_id || '',
+      createdAt: file.created_at,
+      url: file.storage_bucket && file.storage_path
+        ? `/api/inbox/storage-media/${encodeURIComponent(file.storage_bucket)}/${String(file.storage_path || '').split('/').filter(Boolean).map((part) => encodeURIComponent(part)).join('/')}`
+        : null,
+    })),
+    artifacts: artifacts.map((artifact) => ({
+      id: artifact.id,
+      artifactType: artifact.artifact_type || '',
+      title: artifact.title || '',
+      summary: artifact.summary || '',
+      phone: artifact.phone || '',
+      ticketId: artifact.ticket_id || '',
+      createdAt: artifact.created_at,
+      payload: artifact.payload || null,
     })),
   };
 }
@@ -523,6 +1146,80 @@ async function logAdvisorMessage(conversation, text, advisor) {
   }
 }
 
+async function logForwardMirrorMessage({ conversation, originalMessage, advisor, forwardedTo, forwardedToLabel, customerContext = null, introText = '' }) {
+  const payload = originalMessage?.payload_crudo || {};
+  const text = trimForwardText(fallbackMessageText(originalMessage) || '');
+  const isMedia = Boolean(payload?.mediaUrl || payload?.storageBucket || payload?.storagePath || payload?.localMediaPath);
+  const content = isMedia
+    ? (text || payload?.fileName || originalMessage?.contenido || 'Archivo reenviado a caja')
+    : (text || '[mensaje reenviado a caja]');
+  const sharedPayload = {
+    advisorId: advisor?.id || 'system',
+    advisorName: advisorLabel(advisor),
+    advisorEmail: advisor?.email || 'system@evinka.local',
+    source: 'advisor_forward_jeny',
+    forwardedTo: forwardedTo || ADVISOR_FORWARD_JENY_PHONE,
+    forwardedToLabel: forwardedToLabel || ADVISOR_FORWARD_JENY_LABEL,
+    originalMessageId: originalMessage?.id_mensaje || null,
+    customerName: customerContext?.customerName || null,
+    customerPhone: customerContext?.phonePretty || customerContext?.phone || null,
+  };
+
+  if (introText) {
+    await sb.insert('mensajes', {
+      id_conversacion: conversation.id_conversacion,
+      id_usuario: conversation.id_usuario,
+      rol: 'advisor',
+      contenido: introText,
+      tipo_mensaje: 'text',
+      payload_crudo: {
+        ...sharedPayload,
+        source: 'advisor_forward_jeny_intro',
+        type: 'text',
+      },
+    });
+  }
+
+  const mirrorPayload = {
+    ...sharedPayload,
+    mediaUrl: payload?.mediaUrl || null,
+    mimeType: payload?.mimeType || null,
+    fileName: payload?.fileName || null,
+    fileSize: payload?.fileSize || null,
+    type: isMedia ? (payload?.type || originalMessage?.tipo_mensaje || 'document') : 'text',
+  };
+
+  try {
+    await sb.insert('mensajes', {
+      id_conversacion: conversation.id_conversacion,
+      id_usuario: conversation.id_usuario,
+      rol: 'advisor',
+      contenido: content,
+      tipo_mensaje: mirrorPayload.type,
+      payload_crudo: mirrorPayload,
+    });
+  } catch (error) {
+    console.warn('logForwardMirrorMessage fallback to assistant:', error?.message || error);
+    await sb.insert('mensajes', {
+      id_conversacion: conversation.id_conversacion,
+      id_usuario: conversation.id_usuario,
+      rol: 'assistant',
+      contenido: content,
+      tipo_mensaje: mirrorPayload.type,
+      payload_crudo: mirrorPayload,
+    });
+  }
+
+  await patchConversation(conversation.id_conversacion, {
+    estado_conversacion: 'handoff',
+    requiere_handoff: true,
+    paso_actual: 'chat_caja',
+    subestado_flujo: 'interno_jeny',
+    motivo_handoff: 'Caja / recepción de boletas',
+    ultimo_mensaje_en: new Date().toISOString(),
+  });
+}
+
 async function patchConversation(conversationId, patch) {
   const rows = await sb.update('conversaciones', `id_conversacion=eq.${conversationId}`, patch);
   return rows[0] || null;
@@ -543,12 +1240,120 @@ app.get(/^\/api\/inbox\/media\/(.+)$/, authRequired, (req, res) => {
   res.sendFile(absolute);
 });
 
+app.get(/^\/api\/inbox\/storage-media\/([^/]+)\/(.+)$/, authRequired, async (req, res) => {
+  try {
+    const bucket = decodeURIComponent(req.params[0] || '').trim();
+    const objectPath = decodeURIComponent(req.params[1] || '').trim();
+    if (!bucket || !objectPath) return res.status(400).json({ error: 'Archivo inválido.' });
+    const file = await storage.downloadObject(bucket, objectPath);
+    if (file.mimeType) res.setHeader('Content-Type', file.mimeType);
+    if (file.fileSize) res.setHeader('Content-Length', String(file.fileSize));
+    res.send(file.buffer);
+  } catch (error) {
+    console.error('storage media proxy failed:', error);
+    res.status(404).json({ error: 'Archivo no disponible.' });
+  }
+});
+
 app.post('/api/login', (req, res) => {
-  const { email, password } = req.body || {};
+  const { username, identifier, email, password } = req.body || {};
   const users = readUsers();
-  const user = users.find((item) => String(item.email || '').toLowerCase() === String(email || '').trim().toLowerCase());
-  if (!user || user.status !== 'active' || !hashPasswordVerify(String(password || ''), user.passwordHash)) {
+  const rawIdentifier = String(username || identifier || email || '').trim();
+  const normalizedCode = normalizeEmployeeCode(rawIdentifier);
+  const normalizedEmail = rawIdentifier.toLowerCase();
+  const user = users.find((item) => (
+    normalizeEmployeeCode(item.employeeCode || '') === normalizedCode
+      || String(item.email || '').trim().toLowerCase() === normalizedEmail
+  ));
+  if (!user || user.status !== 'active') {
+    appendAccessAuditLog({
+      module: 'asesor',
+      action: 'login',
+      status: 'failed',
+      employeeCode: normalizedCode,
+      email: normalizedEmail,
+      ip: clientIp(req),
+      userAgent: req.headers['user-agent'] || '',
+      reason: 'invalid_credentials_or_inactive',
+    });
     return res.status(401).json({ error: 'Credenciales inválidas o cuenta sin acceso.' });
+  }
+
+  const secret = String(password || '').trim();
+  if (isAdminRole(user)) {
+    const passwordOk = user.passwordHash ? hashPasswordVerify(secret, user.passwordHash) : false;
+    const pinOk = user.pinHash && normalizedCode === normalizeEmployeeCode(user.employeeCode || '')
+      ? hashPasswordVerify(secret, user.pinHash)
+      : false;
+    if (!passwordOk && !pinOk) {
+      appendAccessAuditLog({
+        module: 'asesor',
+        action: 'login',
+        status: 'failed',
+        userId: user.id,
+        employeeCode: user.employeeCode,
+        email: user.email,
+        name: user.name,
+        role: user.role,
+        allowedCountries: user.allowedCountries,
+        ip: clientIp(req),
+        userAgent: req.headers['user-agent'] || '',
+        reason: 'invalid_admin_credentials',
+      });
+      return res.status(401).json({ error: 'Credenciales inválidas o cuenta sin acceso.' });
+    }
+  } else {
+    if (!normalizedCode || normalizedCode !== normalizeEmployeeCode(user.employeeCode || '')) {
+      appendAccessAuditLog({
+        module: 'asesor',
+        action: 'login',
+        status: 'failed',
+        userId: user.id,
+        employeeCode: user.employeeCode,
+        email: user.email,
+        name: user.name,
+        role: user.role,
+        allowedCountries: user.allowedCountries,
+        ip: clientIp(req),
+        userAgent: req.headers['user-agent'] || '',
+        reason: 'username_pin_required',
+      });
+      return res.status(401).json({ error: 'Para tu cuenta debes ingresar con usuario y PIN.' });
+    }
+    if (!user.pinHash) {
+      appendAccessAuditLog({
+        module: 'asesor',
+        action: 'login',
+        status: 'denied',
+        userId: user.id,
+        employeeCode: user.employeeCode,
+        email: user.email,
+        name: user.name,
+        role: user.role,
+        allowedCountries: user.allowedCountries,
+        ip: clientIp(req),
+        userAgent: req.headers['user-agent'] || '',
+        reason: 'pending_pin',
+      });
+      return res.status(403).json({ error: 'Tu cuenta aún no tiene PIN configurado. Pide al admin que lo active.' });
+    }
+    if (!hashPasswordVerify(secret, user.pinHash)) {
+      appendAccessAuditLog({
+        module: 'asesor',
+        action: 'login',
+        status: 'failed',
+        userId: user.id,
+        employeeCode: user.employeeCode,
+        email: user.email,
+        name: user.name,
+        role: user.role,
+        allowedCountries: user.allowedCountries,
+        ip: clientIp(req),
+        userAgent: req.headers['user-agent'] || '',
+        reason: 'invalid_pin',
+      });
+      return res.status(401).json({ error: 'Usuario o PIN inválido.' });
+    }
   }
   const sessions = readSessions();
   const token = crypto.randomBytes(24).toString('hex');
@@ -559,6 +1364,30 @@ app.post('/api/login', (req, res) => {
   };
   writeSessions(sessions);
   res.setHeader('Set-Cookie', sessionCookie(token));
+  appendAccessAuditLog({
+    module: 'asesor',
+    action: 'login',
+    status: 'success',
+    userId: user.id,
+    employeeCode: user.employeeCode,
+    email: user.email,
+    name: user.name,
+    role: user.role,
+    allowedCountries: user.allowedCountries,
+    ip: clientIp(req),
+    userAgent: req.headers['user-agent'] || '',
+  });
+  res.json({ ok: true, user: safeUser(user) });
+});
+
+app.post('/api/mobile/bootstrap', (req, res) => {
+  const cotizadorSessionToken = String(req.body?.cotizadorSessionToken || '').trim();
+  const user = userFromCotizadorSessionToken(cotizadorSessionToken);
+  if (!user) {
+    return res.status(401).json({ error: 'No pude validar tu sesión actual de EVINKA Suite.' });
+  }
+  const token = createAdvisorSessionForUser(user);
+  res.setHeader('Set-Cookie', sessionCookie(token));
   res.json({ ok: true, user: safeUser(user) });
 });
 
@@ -566,19 +1395,36 @@ app.post('/api/logout', authOptional, (req, res) => {
   const sessions = readSessions();
   if (req.sessionToken) delete sessions[req.sessionToken];
   writeSessions(sessions);
+  if (req.user) {
+    appendAccessAuditLog({
+      module: 'asesor',
+      action: 'logout',
+      status: 'success',
+      userId: req.user.id,
+      employeeCode: req.user.employeeCode,
+      email: req.user.email,
+      name: req.user.name,
+      role: req.user.role,
+      allowedCountries: req.user.allowedCountries,
+      ip: clientIp(req),
+      userAgent: req.headers['user-agent'] || '',
+    });
+  }
   res.setHeader('Set-Cookie', clearSessionCookie());
   res.json({ ok: true });
 });
 
 app.get('/api/inbox/conversations', authRequired, async (req, res) => {
   try {
-    const items = await listInboxConversations();
+    const items = await listInboxConversations({ mode: String(req.query.status || 'active').toLowerCase() });
     const allowedItems = items.filter((item) => userAllowsCountry(req.user, item.countryCode));
     const status = String(req.query.status || 'active').toLowerCase();
     const filtered = status === 'all'
       ? allowedItems
       : status === 'resolved'
         ? allowedItems.filter((item) => item.status === 'resolved')
+        : status === 'bot'
+          ? allowedItems
         : allowedItems.filter((item) => item.status !== 'resolved');
     res.json(filtered);
   } catch (error) {
@@ -694,19 +1540,73 @@ app.patch('/api/inbox/conversations/:id', authRequired, async (req, res) => {
     ensureConversationAccess(req.user, detail.conversation);
 
     if (action === 'claim') {
+      const wasHandoff = conversation.estado_conversacion === 'handoff' || conversation.requiere_handoff === true || conversation.paso_actual === 'handoff_asesor';
+      const patched = wasHandoff
+        ? conversation
+        : await patchConversation(req.params.id, {
+          estado_conversacion: 'handoff',
+          requiere_handoff: true,
+          paso_actual: 'handoff_asesor',
+          motivo_handoff: conversation.motivo_handoff || 'Tomado por asesor desde la bandeja',
+        });
       const state = patchAdvisorConversation(req.params.id, (current) => ({
         ...current,
         internalStatus: 'open',
+        handoffActive: true,
+        supportStatus: 'tomado',
         assignedTo: req.user.id,
         assignedToLabel: advisorLabel(req.user),
         assignedAt: current.assignedAt || new Date().toISOString(),
         unreadCount: 0,
       }));
+      await upsertSupportTicket({ conversation: patched, phone: userPhoneFromConversation(conversation), patch: {
+        status: 'tomado',
+        assigned_to: req.user.id,
+        handoff_active: true,
+        last_agent_message_at: new Date().toISOString(),
+      } });
       await logSystemMessage(conversation, `${advisorLabel(req.user)} tomó este caso.`, { systemAction: 'claim', advisorId: req.user.id, advisorName: advisorLabel(req.user) });
-      return res.json({ ok: true, state });
+      return res.json({ ok: true, conversation: patched, state });
+    }
+
+    if (action === 'retake') {
+      clearCustomerIdleCloseTimer(req.params.id);
+      const patched = await patchConversation(req.params.id, {
+        estado_conversacion: 'handoff',
+        requiere_handoff: true,
+        paso_actual: 'handoff_asesor',
+        subestado_flujo: 'retomado_por_asesor',
+        motivo_handoff: conversation.motivo_handoff || 'Retomado por asesor desde la bandeja',
+        cerrada_en: null,
+        ultimo_mensaje_en: new Date().toISOString(),
+      });
+      const state = patchAdvisorConversation(req.params.id, (current) => ({
+        ...current,
+        internalStatus: 'open',
+        handoffActive: true,
+        supportStatus: 'tomado',
+        assignedTo: req.user.id,
+        assignedToLabel: advisorLabel(req.user),
+        assignedAt: current.assignedAt || new Date().toISOString(),
+        resolvedBy: null,
+        resolvedByLabel: null,
+        resolvedAt: null,
+        unreadCount: 0,
+      }));
+      await upsertSupportTicket({ conversation: patched, phone: userPhoneFromConversation(conversation), patch: {
+        status: 'tomado',
+        assigned_to: req.user.id,
+        handoff_active: true,
+        closed_at: null,
+        close_reason: null,
+        last_agent_message_at: new Date().toISOString(),
+      } });
+      await logSystemMessage(conversation, `${advisorLabel(req.user)} retomó este caso.`, { systemAction: 'retake', advisorId: req.user.id, advisorName: advisorLabel(req.user) });
+      return res.json({ ok: true, conversation: patched, state });
     }
 
     if (action === 'resolve') {
+      clearCustomerIdleCloseTimer(req.params.id);
       const patched = await patchConversation(req.params.id, {
         estado_conversacion: 'closed',
         requiere_handoff: false,
@@ -715,16 +1615,25 @@ app.patch('/api/inbox/conversations/:id', authRequired, async (req, res) => {
       const state = patchAdvisorConversation(req.params.id, (current) => ({
         ...current,
         internalStatus: 'resolved',
+        handoffActive: false,
+        supportStatus: 'cerrado',
         resolvedBy: req.user.id,
         resolvedByLabel: advisorLabel(req.user),
         resolvedAt: new Date().toISOString(),
         unreadCount: 0,
       }));
+      await upsertSupportTicket({ conversation: patched, phone: userPhoneFromConversation(conversation), patch: {
+        status: 'cerrado',
+        handoff_active: false,
+        closed_at: new Date().toISOString(),
+        close_reason: 'resuelto',
+      } });
       await logSystemMessage(conversation, `${advisorLabel(req.user)} marcó el caso como resuelto.`, { systemAction: 'resolve', advisorId: req.user.id, advisorName: advisorLabel(req.user) });
       return res.json({ ok: true, conversation: patched, state });
     }
 
     if (action === 'return_to_bot') {
+      clearCustomerIdleCloseTimer(req.params.id);
       const advisorState = loadAdvisorState().conversations?.[req.params.id] || {};
       const nextStepLabel = advisorState.nextAction
         ? ({
@@ -751,11 +1660,19 @@ app.patch('/api/inbox/conversations/:id', authRequired, async (req, res) => {
       const state = patchAdvisorConversation(req.params.id, (current) => ({
         ...current,
         internalStatus: 'resolved',
+        handoffActive: false,
+        supportStatus: 'vuelto_menu',
         resolvedBy: req.user.id,
         resolvedByLabel: advisorLabel(req.user),
         resolvedAt: new Date().toISOString(),
         unreadCount: 0,
       }));
+      await upsertSupportTicket({ conversation: patched, phone: userPhoneFromConversation(conversation), patch: {
+        status: 'vuelto_menu',
+        handoff_active: false,
+        closed_at: new Date().toISOString(),
+        close_reason: 'volver_menu',
+      } });
       await logSystemMessage(conversation, `${advisorLabel(req.user)} devolvió el caso al bot.`, {
         systemAction: 'return_to_bot',
         advisorId: req.user.id,
@@ -797,16 +1714,32 @@ app.post('/api/inbox/conversations/:id/messages', authRequired, async (req, res)
     const state = patchAdvisorConversation(req.params.id, (current) => ({
       ...current,
       internalStatus: 'open',
+      handoffActive: true,
+      supportStatus: 'tomado',
       assignedTo: current.assignedTo || req.user.id,
       assignedToLabel: current.assignedToLabel || advisorLabel(req.user),
       assignedAt: current.assignedAt || new Date().toISOString(),
+      lastAgentMessageAt: new Date().toISOString(),
       lastOutboundAt: new Date().toISOString(),
       unreadCount: 0,
     }));
+    await upsertSupportTicket({ conversation, phone, patch: {
+      status: 'tomado',
+      assigned_to: req.user.id,
+      handoff_active: true,
+      last_agent_message_at: new Date().toISOString(),
+    } });
+    scheduleCustomerIdleClose({
+      conversationId: req.params.id,
+      conversation,
+      detailConversation: detail.conversation,
+      phone,
+      advisor: req.user,
+    });
     res.json({ ok: true, state });
   } catch (error) {
     console.error(error);
-    res.status(error.statusCode || 500).json({ error: error.statusCode === 403 ? 'Sin acceso a este caso.' : humanizeSendError(error) });
+    res.status(error.statusCode || 500).json({ error: error.statusCode === 403 ? 'Sin acceso a este caso.' : humanizeSendError(error, { kind: 'message' }) });
   }
 });
 
@@ -879,17 +1812,98 @@ app.post('/api/inbox/conversations/:id/media', authRequired, async (req, res) =>
     const state = patchAdvisorConversation(req.params.id, (current) => ({
       ...current,
       internalStatus: 'open',
+      handoffActive: true,
+      supportStatus: 'tomado',
       assignedTo: current.assignedTo || req.user.id,
       assignedToLabel: current.assignedToLabel || advisorLabel(req.user),
       assignedAt: current.assignedAt || new Date().toISOString(),
+      lastAgentMessageAt: new Date().toISOString(),
       lastOutboundAt: new Date().toISOString(),
       unreadCount: 0,
     }));
 
+    await upsertSupportTicket({ conversation, phone, patch: {
+      status: 'tomado',
+      assigned_to: req.user.id,
+      handoff_active: true,
+      last_agent_message_at: new Date().toISOString(),
+    } });
+
+    scheduleCustomerIdleClose({
+      conversationId: req.params.id,
+      conversation,
+      detailConversation: detail.conversation,
+      phone,
+      advisor: req.user,
+    });
+
     res.json({ ok: true, state, media: { kind, fileName, mimeType, url: saved.urlPath } });
   } catch (error) {
     console.error(error);
-    res.status(error.statusCode || 500).json({ error: error.statusCode === 403 ? 'Sin acceso a este caso.' : humanizeSendError(error) });
+    res.status(error.statusCode || 500).json({ error: error.statusCode === 403 ? 'Sin acceso a este caso.' : humanizeSendError(error, { kind: 'media' }) });
+  }
+});
+
+app.post('/api/inbox/conversations/:id/messages/:messageId/forward-jeny', authRequired, async (req, res) => {
+  try {
+    const messageId = String(req.params.messageId || '').trim();
+    if (!messageId) return res.status(400).json({ error: 'Falta el mensaje.' });
+    const detail = await getConversationDetail(req.params.id);
+    if (!detail) return res.status(404).json({ error: 'Conversación no encontrada.' });
+    ensureConversationAccess(req.user, detail.conversation);
+
+    const scopedIds = Array.isArray(detail.conversation?.conversationIds) && detail.conversation.conversationIds.length
+      ? detail.conversation.conversationIds
+      : [req.params.id];
+    const rows = await sb.select(
+      'mensajes',
+      `id_mensaje=eq.${messageId}&id_conversacion=in.(${scopedIds.join(',')})&select=*`,
+    );
+    const message = Array.isArray(rows) ? rows[0] : null;
+    if (!message) return res.status(404).json({ error: 'Mensaje no encontrado en el historial de este cliente.' });
+
+    const forward = await forwardMessageToJeny({
+      dbMessage: message,
+      detailConversation: detail.conversation,
+      advisor: req.user,
+    });
+
+    const jenyConversation = await ensureInternalWhatsAppConversation({
+      phone: ADVISOR_FORWARD_JENY_PHONE,
+      label: ADVISOR_FORWARD_JENY_LABEL,
+      advisor: req.user,
+    });
+
+    await logForwardMirrorMessage({
+      conversation: jenyConversation,
+      originalMessage: message,
+      advisor: req.user,
+      forwardedTo: ADVISOR_FORWARD_JENY_PHONE,
+      forwardedToLabel: ADVISOR_FORWARD_JENY_LABEL,
+      customerContext: detail.conversation,
+      introText: buildForwardIntro(detail.conversation),
+    });
+
+    await logSystemMessage(
+      { id_conversacion: message.id_conversacion, id_usuario: message.id_usuario },
+      `${advisorLabel(req.user)} reenvió un mensaje a ${ADVISOR_FORWARD_JENY_LABEL}.`,
+      {
+        systemAction: 'forward_jeny',
+        advisorId: req.user.id,
+        advisorName: advisorLabel(req.user),
+        forwardedTo: ADVISOR_FORWARD_JENY_PHONE,
+        forwardedToLabel: ADVISOR_FORWARD_JENY_LABEL,
+        messageId: message.id_mensaje,
+        sourceConversationId: message.id_conversacion,
+      },
+    );
+
+    res.json({ ok: true, forward });
+  } catch (error) {
+    console.error(error);
+    res.status(error.statusCode || 500).json({
+      error: error.statusCode === 403 ? 'Sin acceso a este caso.' : (error.message || `No pude reenviar a ${ADVISOR_FORWARD_JENY_LABEL}.`),
+    });
   }
 });
 

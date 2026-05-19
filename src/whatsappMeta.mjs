@@ -185,7 +185,7 @@ export class WhatsAppMetaClient {
         const contacts = value.contacts || [];
         const messages = value.messages || [];
         for (const msg of messages) {
-          const media = msg.image || msg.document || null;
+          const media = msg.image || msg.document || msg.audio || msg.video || msg.sticker || null;
           out.push({
             id: msg.id,
             from: msg.from,
@@ -197,6 +197,7 @@ export class WhatsAppMetaClient {
               msg.text?.body ||
               msg.image?.caption ||
               msg.document?.caption ||
+              msg.video?.caption ||
               msg.interactive?.button_reply?.title ||
               msg.interactive?.list_reply?.title ||
               null,

@@ -10,7 +10,7 @@
     <link rel="shortcut icon" type="image/png" href="/assets/favicon-light.png?v=20260512a" />
     <link rel="apple-touch-icon" href="/assets/favicon-light.png?v=20260512a" />
     <meta name="application-name" content="EVINKA Cotizador" />
-    <link rel="stylesheet" href="/styles.css?v=20260513ops1" />
+    <link rel="stylesheet" href="/styles.css?v=20260514theme2" />
   </head>
   <body>
     <div id="app">
@@ -22,20 +22,20 @@
           </div>
         </div>
         <h1>EVINKA Cotizador</h1>
-        <p class="muted">Acceso por código + PIN. El admin puede seguir entrando con su respaldo.</p>
+        <p class="muted">Acceso operativo por usuario + PIN. El admin conserva su acceso de respaldo.</p>
         <form id="loginForm" class="form-grid">
           <label>
-            Código o correo admin
+            Usuario
             <input name="identifier" type="text" placeholder="TEC014" required />
           </label>
           <label>
-            PIN o contraseña
+            PIN
             <input name="secret" type="password" placeholder="••••" required />
           </label>
           <button type="submit" class="primary">Entrar</button>
         </form>
         <div class="hint">
-          El admin crea la cuenta, define el código y asigna el PIN. Si aún no tienes PIN, pídeselo al administrador.
+          El administrador crea la cuenta, define el usuario y asigna el PIN. Si aún no tienes PIN, pídeselo al administrador.
         </div>
       </main>
 
@@ -56,11 +56,16 @@
               <button class="tab nav-link" data-tab="visits" id="visitsTabBtn"><span>Visitas</span><span>Agenda</span></button>
               <button class="tab nav-link" data-tab="ops" id="opsTabBtn"><span>Operación</span><span>Pendientes</span></button>
               <button class="tab nav-link" data-tab="conformities" id="conformitiesTabBtn"><span>Conformidades</span><span>Historial</span></button>
+              <button class="tab nav-link hidden" data-tab="advisor" id="advisorTabBtn"><span>Asesor</span><span>Inbox</span></button>
               <button class="tab nav-link hidden" data-tab="admin" id="adminTabBtn"><span>Admin</span><span>Ajustes</span></button>
             </nav>
           </div>
 
           <div class="sidebar-footer">
+            <div class="theme-switch" aria-label="Tema visual">
+              <button id="themeDarkBtn" class="btn-ghost compact-btn is-active" type="button">Noche</button>
+              <button id="themeLightBtn" class="btn-ghost compact-btn" type="button">Día</button>
+            </div>
             <span id="sessionBadge" class="user-chip"></span>
             <button id="logoutBtn" class="btn-ghost">Salir</button>
           </div>
@@ -72,6 +77,12 @@
               <span class="eyebrow">EVINKA INSTALLATION SUITE</span>
               <h1 id="companyName">EVINKA Cotizador</h1>
               <p id="companyTagline" class="section-copy"></p>
+              <div id="countryScopeWrap" class="hero-country-scope hidden">
+                <label>
+                  País activo
+                  <select id="countryScopeSelect"></select>
+                </label>
+              </div>
             </div>
             <div class="hero-visual"></div>
           </header>
@@ -79,14 +90,43 @@
         <section id="tab-quote" class="panel tab-panel">
           <div class="section-header">
             <h2>Cotización web</h2>
-            <p class="muted">Mismo criterio del Excel. Solo se añadió selección de cable.</p>
+            <p class="muted">Modo operativo por país. En vista global primero elige Perú o Colombia.</p>
           </div>
+          <div id="quoteScopeNotice" class="scope-notice hidden">Estás en vista <strong>Global</strong>. Para crear una cotización primero cambia el país activo a <strong>Perú</strong> o <strong>Colombia</strong>.</div>
           <form id="quoteForm" class="grid-form">
+            <fieldset class="extras-box">
+              <legend>Ficha cliente</legend>
+              <div class="grid-3">
+                <label>Nombres<input name="clientFirstName" placeholder="Nombre(s)" /></label>
+                <label>Apellidos<input name="clientLastName" placeholder="Apellido(s)" /></label>
+                <label>Cliente / razón visible<input name="clientName" required /></label>
+                <label>Tipo documento
+                  <select name="documentType">
+                    <option value="DNI">DNI</option>
+                    <option value="CE">CE</option>
+                    <option value="RUC">RUC</option>
+                    <option value="PASAPORTE">PASAPORTE</option>
+                  </select>
+                </label>
+                <label>Número documento<input name="clientDocument" placeholder="Documento" /></label>
+                <label>Celular<input name="phone" placeholder="999123456" /></label>
+                <label>Correo<input name="email" type="email" placeholder="cliente@correo.com" required /></label>
+                <label>Empresa<input name="companyName" placeholder="Empresa / razón social" /></label>
+                <label>Tipo residencia<input name="residenceType" placeholder="Casa, edificio, oficina..." /></label>
+              </div>
+              <div class="grid-3 top-gap-sm">
+                <label>Ciudad<input name="city" list="cityOptions" placeholder="Lima" /></label>
+                <label>Departamento<input name="department" placeholder="Lima" /></label>
+                <label>Distrito / localidad<input name="locality" placeholder="Miraflores" /></label>
+                <label>Barrio / zona<input name="neighborhood" placeholder="Referencia" /></label>
+                <label class="grid-span-2">Dirección<input name="address" placeholder="Dirección del cliente / instalación" /></label>
+                <label>Fecha visita<input name="visitDate" type="date" /></label>
+                <label>Vehículo<input name="vehicleModel" placeholder="Marca / modelo" /></label>
+                <label>VIN<input name="vin" placeholder="VIN opcional" /></label>
+              </div>
+            </fieldset>
+
             <div class="grid-2">
-              <label>Cliente<input name="clientName" required /></label>
-              <label>Correo<input name="email" type="email" placeholder="cliente@correo.com" required /></label>
-              <label>Ciudad<input name="city" /></label>
-              <label>Fecha visita<input name="visitDate" type="date" /></label>
               <label>Tipo instalación
                 <select name="installationType" id="installationTypeSelect">
                   <option value="Monofásico">Monofásico</option>
@@ -112,6 +152,8 @@
 
             <div class="grid-3">
               <label>Técnico<input id="techName" disabled /></label>
+              <label>Referencia cargador<input name="chargerReference" list="chargerReferenceOptions" placeholder="Referencia cargador" /></label>
+              <label>Otra referencia<input name="otherReference" placeholder="Opcional" /></label>
               <label>Distancia instalación (m)<input name="distance" type="number" min="0" step="1" value="0" /></label>
               <label>Tipo cable<select name="cableId" id="cableSelect"></select></label>
               <label>Tipo tubería
@@ -122,6 +164,9 @@
               </label>
               <label>Voltaje (V)<input name="voltage" type="number" min="0" step="1" value="220" /></label>
               <label>Corriente (A)<input name="current" type="number" min="0" step="1" value="32" /></label>
+              <label>Tipo acometida<input name="acometidaType" list="acometidaTypeOptions" placeholder="Monofásica / trifásica" /></label>
+              <label>Calibre acometida<input name="acometidaCaliber" list="acometidaCaliberOptions" placeholder="AWG" /></label>
+              <label>Breaker principal<input name="primaryBreaker" list="primaryBreakerOptions" placeholder="Ej. 2x50A" /></label>
               <label>Puesta a tierra real
                 <select name="grounding">
                   <option value="SI">SI</option>
@@ -134,7 +179,21 @@
                   <option value="SI">SI</option>
                 </select>
               </label>
+              <label>Requiere revisión
+                <select name="requiresReview">
+                  <option value="NO">NO</option>
+                  <option value="SI">SI</option>
+                </select>
+              </label>
             </div>
+
+            <datalist id="chargerReferenceOptions"></datalist>
+            <datalist id="acometidaTypeOptions"></datalist>
+            <datalist id="acometidaCaliberOptions"></datalist>
+            <datalist id="primaryBreakerOptions"></datalist>
+            <datalist id="cityOptions"></datalist>
+
+            <div id="coHarGuide" class="catalog-section top-gap-sm hidden"></div>
 
             <fieldset class="extras-box">
               <legend>Condicionales activados por técnico</legend>
@@ -159,6 +218,7 @@
               <div id="sitePhotosPreview" class="photo-preview-grid"></div>
             </fieldset>
 
+            <label>Descripción de la instalación<textarea name="installationDescription" rows="3" placeholder="Resumen técnico del punto, recorrido, acometida y condiciones."></textarea></label>
             <label>Observación técnica<textarea name="technicianNotes" rows="4" placeholder="Completar con observación técnica validada."></textarea></label>
 
             <div class="actions-row">
@@ -168,6 +228,11 @@
           </form>
 
           <div id="quoteResult" class="result hidden"></div>
+          <div class="catalog-section top-gap-sm">
+            <h3>Clientes recientes</h3>
+            <p class="muted">Base operativa CO capturada desde las cotizaciones nuevas.</p>
+            <div id="clientsList" class="quotes-list"></div>
+          </div>
         </section>
 
         <section id="tab-quotes" class="panel tab-panel hidden">
@@ -198,18 +263,227 @@
         <section id="tab-conformities" class="panel tab-panel hidden">
           <div class="section-header">
             <h2>Conformidades</h2>
-            <p class="muted">Historial generado desde la app con acceso web al PDF y estado del envío.</p>
+            <p class="muted">Mismo patrón de la app: nueva conformidad arriba e historial abajo.</p>
           </div>
           <div id="conformitiesSummary" class="result-grid top-gap-sm"></div>
-          <div class="hint top-gap-sm">La cola offline local del teléfono sigue siendo propia del dispositivo. Aquí se refleja lo que ya llegó al backend.</div>
-          <div id="conformitiesList" class="quotes-list top-gap-sm"></div>
+          <div class="catalog-section top-gap-sm">
+            <h3>Nueva conformidad</h3>
+            <p class="muted">Flujo guiado igual a la app: orden EVINKA, datos del cliente, observaciones, parámetros, implementos, firmas, fotos y generación documental.</p>
+            <div id="conformityEmptyState" class="hint top-gap-sm hidden">No hay órdenes listas para generar conformidad en este momento.</div>
+            <div id="conformityFlowSummary" class="top-gap-sm"></div>
+            <form id="conformityForm" class="stack top-gap-sm">
+              <section class="flow-card">
+                <div class="flow-card-header">
+                  <span class="flow-step">1</span>
+                  <div>
+                    <h4>ORDEN EVINKA</h4>
+                    <p class="muted">Vincula la orden o cotización para precargar datos, o sigue en manual si no existe.</p>
+                  </div>
+                </div>
+                <div class="grid-2 top-gap-sm">
+                  <label>
+                    Código de orden o cotización
+                    <div class="inline-action-field">
+                      <input id="conformityOrderCode" name="installationOrderCode" type="text" placeholder="Ej.: ORD-20260502-000123 o COT-..." />
+                      <button id="loadConformityOrderBtn" class="secondary compact-btn" type="button">Cargar</button>
+                    </div>
+                  </label>
+                  <label>
+                    Orden lista
+                    <select id="conformityOrderSelect" name="installationOrderId"></select>
+                  </label>
+                </div>
+                <div id="conformityLinkedOrderCard" class="linked-order-card top-gap-sm hidden"></div>
+              </section>
+
+              <section class="flow-card">
+                <div class="flow-card-header">
+                  <span class="flow-step">2</span>
+                  <div>
+                    <h4>DATOS DEL CLIENTE / REPRESENTANTE</h4>
+                    <p class="muted">Solo deja visible la información clave para cierre documental.</p>
+                  </div>
+                </div>
+                <div class="grid-2 top-gap-sm">
+                  <label>
+                    Fecha
+                    <input name="date" type="date" required />
+                  </label>
+                  <label>
+                    Cotización asociada
+                    <input name="quoteId" type="text" placeholder="Opcional" />
+                  </label>
+                  <label>
+                    Cliente
+                    <input name="clientName" type="text" required />
+                  </label>
+                  <label>
+                    Correo cliente
+                    <input name="clientEmail" type="email" placeholder="cliente@correo.com" required />
+                  </label>
+                  <label>
+                    RUC / Documento
+                    <input name="ruc" type="text" />
+                  </label>
+                  <label>
+                    Dirección
+                    <input name="address" type="text" required />
+                  </label>
+                </div>
+              </section>
+
+              <section class="flow-card">
+                <div class="flow-card-header">
+                  <span class="flow-step">3</span>
+                  <div>
+                    <h4>OBSERVACIONES / RECOMENDACIONES</h4>
+                    <p class="muted">Anota lo importante para el cierre técnico.</p>
+                  </div>
+                </div>
+                <label class="top-gap-sm">
+                  Observaciones y recomendaciones
+                  <textarea name="observations" rows="4" placeholder="Ej. instalación operativa, pruebas realizadas, observaciones finales."></textarea>
+                </label>
+              </section>
+
+              <section class="flow-card">
+                <div class="flow-card-header">
+                  <span class="flow-step">4</span>
+                  <div>
+                    <h4>PARÁMETROS DE INSTALACIÓN</h4>
+                    <p class="muted">Marca, serie y datos eléctricos del cargador instalado.</p>
+                  </div>
+                </div>
+                <div class="grid-2 top-gap-sm">
+                  <label>
+                    Marca
+                    <input name="chargerBrand" type="text" placeholder="GENERAL" required />
+                  </label>
+                  <label>
+                    Serie
+                    <input name="serialNumber" type="text" />
+                  </label>
+                </div>
+                <div class="grid-4 top-gap-sm">
+                  <label>
+                    Voltaje (V)
+                    <input name="voltage" type="number" min="0" step="1" />
+                  </label>
+                  <label>
+                    Corriente (A)
+                    <input name="amperage" type="number" min="0" step="1" />
+                  </label>
+                  <label>
+                    Otro
+                    <input name="other" type="text" />
+                  </label>
+                  <label>
+                    Potencia (kW)
+                    <input name="powerKw" type="number" min="0" step="0.1" />
+                  </label>
+                </div>
+              </section>
+
+              <section class="flow-card">
+                <div class="flow-card-header">
+                  <span class="flow-step">5</span>
+                  <div>
+                    <h4>IMPLEMENTOS ENTREGADOS</h4>
+                    <p class="muted">Confirma lo entregado para dejar el cierre consistente.</p>
+                  </div>
+                </div>
+                <div class="choice-grid top-gap-sm conformity-check-grid">
+                  <label class="choice-chip"><input type="checkbox" name="cajaCargador" /> Caja del cargador</label>
+                  <label class="choice-chip"><input type="checkbox" name="cargadorEvinka" /> Cargador Evinka</label>
+                  <label class="choice-chip"><input type="checkbox" name="manualCargador" /> Manual del cargador</label>
+                  <label class="choice-chip"><input type="checkbox" name="tarjetasCargador" /> Tarjetas del cargador</label>
+                  <label class="choice-chip"><input type="checkbox" id="conformityAdditionalToggle" name="adicional" /> Adicional</label>
+                </div>
+                <label class="top-gap-sm">
+                  Descripción adicional
+                  <input id="conformityAdditionalDescription" name="adicionalDesc" type="text" placeholder="Ej. Cable, soporte, accesorio adicional" />
+                </label>
+              </section>
+
+              <section class="flow-card">
+                <div class="flow-card-header">
+                  <span class="flow-step">6</span>
+                  <div>
+                    <h4>FIRMAS</h4>
+                    <p class="muted">Captura ambas firmas antes de generar el PDF final.</p>
+                  </div>
+                </div>
+                <div class="signature-grid top-gap-sm">
+                  <div class="signature-card">
+                    <div class="signature-card-head"><strong>Firma instalador</strong><button type="button" class="secondary compact-btn" data-clear-signature="installer">Limpiar</button></div>
+                    <canvas id="installerSignaturePad" class="signature-pad" width="520" height="180"></canvas>
+                  </div>
+                  <div class="signature-card">
+                    <div class="signature-card-head"><strong>Firma cliente</strong><button type="button" class="secondary compact-btn" data-clear-signature="client">Limpiar</button></div>
+                    <canvas id="clientSignaturePad" class="signature-pad" width="520" height="180"></canvas>
+                  </div>
+                </div>
+              </section>
+
+              <section class="flow-card">
+                <div class="flow-card-header">
+                  <span class="flow-step">7</span>
+                  <div>
+                    <h4>FOTOS DE INSTALACIÓN</h4>
+                    <p class="muted">Dos fotos bastan para dejar respaldo visual claro en la página 2 del PDF.</p>
+                  </div>
+                </div>
+                <div class="grid-2 top-gap-sm">
+                  <label>
+                    Foto 1
+                    <input id="conformityPhoto1" type="file" accept="image/png,image/jpeg,image/webp" />
+                  </label>
+                  <label>
+                    Foto 2
+                    <input id="conformityPhoto2" type="file" accept="image/png,image/jpeg,image/webp" />
+                  </label>
+                </div>
+                <div id="conformityPhotoPreview" class="photo-preview-grid top-gap-sm"></div>
+              </section>
+
+              <div id="conformitySyncState" class="hint top-gap-sm hidden"></div>
+
+              <div class="actions-row modal-actions top-gap-sm">
+                <button class="primary" type="submit">Generar conformidad</button>
+                <button id="generateWarrantyBtn" class="secondary" type="button">Generar garantía (2 años)</button>
+                <button id="cancelConformityBtn" class="secondary" type="button">Limpiar</button>
+              </div>
+            </form>
+          </div>
+          <div class="catalog-section top-gap-sm">
+            <h3>Historial</h3>
+            <p class="muted">Conformidades registradas en backend, con acceso directo al PDF.</p>
+            <div id="conformitiesList" class="quotes-list top-gap-sm"></div>
+          </div>
+        </section>
+
+        <section id="tab-advisor" class="panel tab-panel hidden">
+          <div class="section-header advisor-section-header">
+            <div>
+              <h2>Asesor</h2>
+              <p class="muted">Bandeja humana unificada dentro de EVINKA Suite. Mantiene el backend actual de asesor para no tocar producción sensible.</p>
+            </div>
+            <div class="advisor-actions">
+              <a class="secondary" href="https://asesor.evinka.net/" target="_blank" rel="noreferrer">Abrir aparte</a>
+              <button class="secondary" type="button" id="reloadAdvisorFrameBtn">Recargar panel</button>
+            </div>
+          </div>
+          <div class="advisor-frame-shell">
+            <iframe id="advisorFrame" class="advisor-frame" src="https://asesor.evinka.net/" title="EVINKA Asesor"></iframe>
+          </div>
         </section>
 
         <section id="tab-admin" class="panel tab-panel hidden">
           <div class="section-header">
             <h2>Admin</h2>
-            <p class="muted">Control comercial del cotizador: parámetros del negocio y catálogo maestro.</p>
+            <p class="muted">Centro global de operación. La configuración comercial se edita por país.</p>
           </div>
+          <div id="adminScopeNotice" class="scope-notice hidden">Estás en vista <strong>Global</strong>. Para guardar parámetros o catálogo, primero selecciona <strong>Perú</strong> o <strong>Colombia</strong>.</div>
 
           <div id="accountsAdmin" class="catalog-section"></div>
 
@@ -229,7 +503,86 @@
         </section>
         </div>
       </section>
+
+      <div id="userEditorModal" class="modal-overlay hidden" aria-hidden="true">
+        <div class="modal-card user-editor-modal">
+          <div class="modal-header">
+            <div>
+              <h3>Editar usuario</h3>
+              <p class="muted">Actualiza la cuenta operativa, permisos y datos de alerta.</p>
+            </div>
+            <button id="closeUserEditorBtn" class="secondary compact-btn" type="button">Cerrar</button>
+          </div>
+
+          <form id="userEditorForm" class="stack top-gap-sm">
+            <input type="hidden" name="id" />
+
+            <div class="grid-2">
+              <label>
+                Nombre completo
+                <input name="name" type="text" placeholder="Luisa Trillos" required />
+              </label>
+              <label>
+                Correo
+                <input name="email" type="email" placeholder="luisa.trillos@evinka.tech" />
+              </label>
+              <label>
+                Rol
+                <select name="role" id="userEditorRole"></select>
+              </label>
+              <label>
+                Estado
+                <select name="status">
+                  <option value="active">Activa</option>
+                  <option value="pending">Pendiente</option>
+                  <option value="blocked">Bloqueada</option>
+                </select>
+              </label>
+              <label>
+                Usuario
+                <input name="employeeCode" type="text" placeholder="ASE001" required />
+              </label>
+              <label>
+                Teléfono alertas
+                <input name="notificationPhone" type="tel" placeholder="+51999999999" />
+              </label>
+            </div>
+
+            <div class="grid-2">
+              <fieldset class="extras-box modal-fieldset">
+                <legend>Países permitidos</legend>
+                <div class="choice-grid">
+                  <label class="choice-chip"><input type="checkbox" name="allowedCountries" value="PE" /> Perú</label>
+                  <label class="choice-chip"><input type="checkbox" name="allowedCountries" value="CO" /> Colombia</label>
+                  <label class="choice-chip"><input type="checkbox" name="allowedCountries" value="ALL" /> Todos</label>
+                </div>
+              </fieldset>
+
+              <fieldset class="extras-box modal-fieldset">
+                <legend>Colas permitidas</legend>
+                <div class="choice-grid">
+                  <label class="choice-chip"><input type="checkbox" name="allowedQueues" value="comercial" /> Comercial</label>
+                  <label class="choice-chip"><input type="checkbox" name="allowedQueues" value="agenda" /> Agenda</label>
+                  <label class="choice-chip"><input type="checkbox" name="allowedQueues" value="postventa" /> Postventa</label>
+                  <label class="choice-chip"><input type="checkbox" name="allowedQueues" value="pagos" /> Pagos</label>
+                </div>
+              </fieldset>
+            </div>
+
+            <label>
+              Nuevo PIN (opcional)
+              <input name="pin" type="password" inputmode="numeric" pattern="\d{4,8}" placeholder="Déjalo vacío para mantener el actual" />
+            </label>
+
+            <div class="actions-row modal-actions">
+              <button class="primary" type="submit">Guardar cambios</button>
+              <button id="cancelUserEditorBtn" class="secondary" type="button">Cancelar</button>
+            </div>
+          </form>
+        </div>
+      </div>
+
     </div>
-    <script src="/app.js?v=20260513ops1"></script>
+    <script src="/app.js?v=20260514theme2"></script>
   </body>
   </html>

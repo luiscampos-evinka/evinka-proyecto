@@ -6,6 +6,7 @@ import PDFDocument from 'pdfkit';
 import ExcelJS from 'exceljs';
 import { fileURLToPath } from 'url';
 import { loadEnv } from '../../src/config.mjs';
+import { appendAccessAuditLog } from '../../src/accessAudit.mjs';
 import { MicrosoftGraphClient } from '../../src/microsoftGraph.mjs';
 import { SupabaseRest } from '../../src/supabase.mjs';
 import { WhatsAppMetaClient } from '../../src/whatsappMeta.mjs';
@@ -23,9 +24,12 @@ const quoteAssetsDir = path.join(storageDir, 'quote-assets');
 const files = {
   users: path.join(dataDir, 'users.json'),
   config: path.join(dataDir, 'config.json'),
+  roleMatrix: path.join(dataDir, 'role-matrix.json'),
+  clients: path.join(dataDir, 'clients.json'),
   quotes: path.join(dataDir, 'quotes.json'),
   installationOrders: path.join(dataDir, 'installation-orders.json'),
   conformities: path.join(dataDir, 'conformities.json'),
+  warranties: path.join(dataDir, 'warranties.json'),
   techVisits: path.join(dataDir, 'tech-visits.json'),
   sessions: path.join(dataDir, 'sessions.json'),
 };
@@ -34,6 +38,10 @@ const COOKIE_NAME = 'cotizador_session';
 const SESSION_MAX_AGE_MS = 1000 * 60 * 60 * 24 * 7;
 const DISPLAY_TIME_ZONE = 'America/Lima';
 const PORT = Number(process.env.PORT || 3008);
+const COUNTRY_DEFINITIONS = [
+  { code: 'PE', label: 'Perú', currency: 'PEN' },
+  { code: 'CO', label: 'Colombia', currency: 'COP' },
+];
 const MOBILE_APP_API_KEY = process.env.CONFORMITY_APP_API_KEY || 'EvinkaConformidad#2026';
 const BOT_VISITS_API_KEY = process.env.EVINKA_BOT_VISITS_API_KEY || 'EvinkaBotVisits#2026';
 const ALLOWED_CORPORATE_DOMAINS = ['evinka.tech', 'nevperu.com'];
@@ -57,6 +65,12 @@ const liveBookingsSb = process.env.SUPABASE_URL && process.env.SUPABASE_SERVICE_
   : null;
 const TECH_VISITS_DEFAULT_EMAIL = String(process.env.TECH_VISITS_DEFAULT_EMAIL || 'luis.campos@evinka.tech').trim().toLowerCase();
 const TECH_VISITS_DEFAULT_NAME = String(process.env.TECH_VISITS_DEFAULT_NAME || 'Luis Campos').trim();
+const CLICKUP_API_BASE = 'https://api.clickup.com/api/v2';
+const CLICKUP_API_TOKEN = String(process.env.CLICKUP_API_TOKEN || process.env.CLICKUP_TOKEN || '').trim();
+const CLICKUP_B2C_LIST_ID = String(process.env.CLICKUP_B2C_LIST_ID || '').trim();
+const CLICKUP_B2C_STATUS = String(process.env.CLICKUP_B2C_STATUS || 'Open').trim();
+const CLICKUP_B2C_DEFAULT_ASSIGNEE_ID = Number(process.env.CLICKUP_B2C_DEFAULT_ASSIGNEE_ID || 0);
+const CLICKUP_DEFAULT_DURATION_MINUTES = Number(process.env.CLICKUP_DEFAULT_DURATION_MINUTES || 60);
 
 ensureDir(dataDir);
 ensureDir(storageDir);
@@ -114,12 +128,40 @@ app.post('/api/login', (req, res) => {
     );
     if (candidate) {
       if (!candidate.pinHash) {
+        appendAccessAuditLog({
+          module: 'cotizador',
+          action: 'login',
+          status: 'denied',
+          userId: candidate.id,
+          employeeCode: candidate.employeeCode,
+          email: candidate.email,
+          name: candidate.name,
+          role: candidate.role,
+          allowedCountries: candidate.allowedCountries,
+          ip: req.ip,
+          userAgent: req.get('user-agent') || '',
+          reason: 'pending_pin',
+        });
         return res.status(403).json({
           error: 'Tu cuenta todavía no tiene PIN configurado. Pide al admin que lo active.',
           status: 'pending_pin',
         });
       }
       if (!verifyPassword(secret, candidate.pinHash)) {
+        appendAccessAuditLog({
+          module: 'cotizador',
+          action: 'login',
+          status: 'failed',
+          userId: candidate.id,
+          employeeCode: candidate.employeeCode,
+          email: candidate.email,
+          name: candidate.name,
+          role: candidate.role,
+          allowedCountries: candidate.allowedCountries,
+          ip: req.ip,
+          userAgent: req.get('user-agent') || '',
+          reason: 'invalid_pin',
+        });
         return res.status(401).json({ error: 'Código o PIN inválido.' });
       }
       user = candidate;
@@ -135,9 +177,33 @@ app.post('/api/login', (req, res) => {
   }
 
   if (!user) {
+    appendAccessAuditLog({
+      module: 'cotizador',
+      action: 'login',
+      status: 'failed',
+      employeeCode: normalizedCode,
+      email: looksLikeEmail ? normalizeEmail(rawIdentifier) : '',
+      ip: req.ip,
+      userAgent: req.get('user-agent') || '',
+      reason: 'invalid_credentials',
+    });
     return res.status(401).json({ error: 'Credenciales inválidas.' });
   }
   if (user.status !== 'active') {
+    appendAccessAuditLog({
+      module: 'cotizador',
+      action: 'login',
+      status: 'denied',
+      userId: user.id,
+      employeeCode: user.employeeCode,
+      email: user.email,
+      name: user.name,
+      role: user.role,
+      allowedCountries: user.allowedCountries,
+      ip: req.ip,
+      userAgent: req.get('user-agent') || '',
+      reason: user.status,
+    });
     return res.status(403).json({
       error: user.status === 'pending'
         ? 'Tu cuenta está pendiente de aprobación del administrador.'
@@ -158,6 +224,19 @@ app.post('/api/login', (req, res) => {
     sameSite: 'lax',
     secure: false,
     maxAge: SESSION_MAX_AGE_MS,
+  });
+  appendAccessAuditLog({
+    module: 'cotizador',
+    action: 'login',
+    status: 'success',
+    userId: user.id,
+    employeeCode: user.employeeCode,
+    email: user.email,
+    name: user.name,
+    role: user.role,
+    allowedCountries: user.allowedCountries,
+    ip: req.ip,
+    userAgent: req.get('user-agent') || '',
   });
   res.json({ user: safeUser(user), config: publicConfig() });
 });
@@ -200,22 +279,67 @@ app.post('/api/register-request', (req, res) => {
 
 app.post('/api/logout', (req, res) => {
   const token = parseCookie(req.headers.cookie || '')[COOKIE_NAME];
+  let logoutUser = null;
   if (token) {
     const sessions = readJSON(files.sessions, {});
+    const session = resolveActiveSession(sessions, token);
+    if (session) {
+      logoutUser = readUsers().find((user) => user.id === session.userId) || null;
+    }
     delete sessions[token];
     writeJSON(files.sessions, sessions);
+  }
+  if (logoutUser) {
+    appendAccessAuditLog({
+      module: 'cotizador',
+      action: 'logout',
+      status: 'success',
+      userId: logoutUser.id,
+      employeeCode: logoutUser.employeeCode,
+      email: logoutUser.email,
+      name: logoutUser.name,
+      role: logoutUser.role,
+      allowedCountries: logoutUser.allowedCountries,
+      ip: req.ip,
+      userAgent: req.get('user-agent') || '',
+    });
   }
   res.clearCookie(COOKIE_NAME);
   res.json({ ok: true });
 });
 
 app.get('/api/me', authOptional, (req, res) => {
-  if (!req.user) return res.json({ user: null, config: publicConfig() });
-  res.json({ user: safeUser(req.user), config: publicConfig() });
+  const activeCountry = resolveRequestCountryContext(req, req.user);
+  if (!req.user) return res.json({ user: null, config: publicConfig(activeCountry) });
+  res.json({ user: safeUser(req.user), config: publicConfig(activeCountry) });
 });
 
 app.get('/api/catalog', authRequired, (req, res) => {
-  res.json(buildAppConfig());
+  res.json(buildAppConfig(resolveRequestCountryContext(req, req.user)));
+});
+
+app.get('/api/clients', authRequired, (req, res) => {
+  const countryScope = resolveRequestCountryContext(req, req.user);
+  const query = String(req.query.q || '').trim().toLowerCase();
+  const clients = readClients()
+    .filter((client) => userCanAccessCountry(req.user, client.countryCode))
+    .filter((client) => matchesCountryScope(client.countryCode, countryScope))
+    .filter((client) => {
+      if (!query) return true;
+      const haystack = [
+        client.fullName,
+        client.email,
+        client.phone,
+        client.documentNumber,
+        client.city,
+        client.address,
+        client.vehicleModel,
+        client.vin,
+      ].join(' ').toLowerCase();
+      return haystack.includes(query);
+    })
+    .sort((a, b) => String(b.lastQuoteAt || b.updatedAt || '').localeCompare(String(a.lastQuoteAt || a.updatedAt || '')));
+  res.json(clients.slice(0, 80));
 });
 
 app.get('/api/admin/users', authRequired, adminOnly, (req, res) => {
@@ -238,11 +362,17 @@ app.post('/api/admin/users', authRequired, adminOnly, (req, res) => {
   const role = normalizeManagedUserRole(body.role || 'tech');
   const status = normalizeUserStatus(body.status || 'active');
   const requestedCode = normalizeEmployeeCode(body.employeeCode || '');
+  const notificationPhone = normalizeNotificationPhone(body.notificationPhone || body.phone || '');
+  const allowedCountries = normalizeStringList(Array.isArray(body.allowedCountries) ? body.allowedCountries : String(body.allowedCountries || '').split(/[\s,;|]+/)).map((item) => item.toUpperCase());
+  const allowedQueues = normalizeStringList(Array.isArray(body.allowedQueues) ? body.allowedQueues : String(body.allowedQueues || '').split(/[\s,;|]+/)).map((item) => item.toLowerCase());
   const pin = String(body.pin || '').trim();
 
   if (!name) return res.status(400).json({ error: 'Falta el nombre.' });
   if (email && !isValidEmail(email)) {
     return res.status(400).json({ error: 'Correo inválido.' });
+  }
+  if (String(body.notificationPhone || body.phone || '').trim() && !notificationPhone) {
+    return res.status(400).json({ error: 'Teléfono inválido. Usa un número de Perú o Colombia, por ejemplo +51999999999 o +573001234567.' });
   }
   if (!isStrongPin(pin)) {
     return res.status(400).json({ error: 'El PIN debe tener entre 4 y 8 dígitos.' });
@@ -269,6 +399,9 @@ app.post('/api/admin/users', authRequired, adminOnly, (req, res) => {
     role,
     status,
     employeeCode,
+    notificationPhone,
+    allowedCountries,
+    allowedQueues,
     pinHash: hashPassword(pin),
     pinUpdatedAt: now,
     passwordHash: '',
@@ -290,6 +423,9 @@ app.patch('/api/admin/users/:id/credentials', authRequired, adminOnly, (req, res
   const nextCode = body.employeeCode === undefined
     ? normalizeEmployeeCode(users[index].employeeCode)
     : normalizeEmployeeCode(body.employeeCode);
+  const nextNotificationPhone = body.notificationPhone === undefined
+    ? normalizeNotificationPhone(users[index].notificationPhone)
+    : normalizeNotificationPhone(body.notificationPhone);
   const nextPin = body.pin === undefined ? '' : String(body.pin || '').trim();
 
   if (!isValidEmployeeCode(nextCode)) {
@@ -298,6 +434,9 @@ app.patch('/api/admin/users/:id/credentials', authRequired, adminOnly, (req, res
   if (users.some((user, userIndex) => userIndex !== index && normalizeEmployeeCode(user.employeeCode) === nextCode)) {
     return res.status(409).json({ error: 'Ese código ya está en uso.' });
   }
+  if (body.notificationPhone !== undefined && String(body.notificationPhone || '').trim() && !nextNotificationPhone) {
+    return res.status(400).json({ error: 'Teléfono inválido. Usa un número de Perú o Colombia, por ejemplo +51999999999 o +573001234567.' });
+  }
   if (body.pin !== undefined && !isStrongPin(nextPin)) {
     return res.status(400).json({ error: 'El PIN debe tener entre 4 y 8 dígitos.' });
   }
@@ -305,9 +444,75 @@ app.patch('/api/admin/users/:id/credentials', authRequired, adminOnly, (req, res
   users[index] = normalizeUserRecord({
     ...users[index],
     employeeCode: nextCode,
+    notificationPhone: nextNotificationPhone,
     pinHash: body.pin === undefined ? users[index].pinHash : hashPassword(nextPin),
     pinUpdatedAt: body.pin === undefined ? users[index].pinUpdatedAt : new Date().toISOString(),
     approvedBy: safeUser(req.user),
+  });
+  writeUsers(users);
+  invalidateUserSessions(users[index].id);
+  res.json({ ok: true, user: safeUser(users[index]) });
+});
+
+app.patch('/api/admin/users/:id', authRequired, adminOnly, (req, res) => {
+  const users = readUsers();
+  const index = users.findIndex((user) => user.id === req.params.id);
+  if (index < 0) return res.status(404).json({ error: 'Usuario no encontrado' });
+
+  const current = users[index];
+  const body = req.body || {};
+  const name = body.name === undefined ? String(current.name || '').trim() : String(body.name || '').trim();
+  const email = body.email === undefined ? normalizeEmail(current.email || '') : normalizeEmail(body.email || '');
+  const role = body.role === undefined ? normalizeManagedUserRole(current.role || 'tech') : normalizeManagedUserRole(body.role || 'tech');
+  const status = body.status === undefined ? normalizeUserStatus(current.status || 'active') : normalizeUserStatus(body.status || 'active');
+  const employeeCode = body.employeeCode === undefined ? normalizeEmployeeCode(current.employeeCode || '') : normalizeEmployeeCode(body.employeeCode || '');
+  const notificationPhone = body.notificationPhone === undefined
+    ? normalizeNotificationPhone(current.notificationPhone || current.phone || '')
+    : normalizeNotificationPhone(body.notificationPhone || body.phone || '');
+  const allowedCountries = body.allowedCountries === undefined
+    ? normalizeStringList(current.allowedCountries).map((item) => item.toUpperCase())
+    : normalizeStringList(Array.isArray(body.allowedCountries) ? body.allowedCountries : String(body.allowedCountries || '').split(/[\s,;|]+/)).map((item) => item.toUpperCase());
+  const allowedQueues = body.allowedQueues === undefined
+    ? normalizeStringList(current.allowedQueues).map((item) => item.toLowerCase())
+    : normalizeStringList(Array.isArray(body.allowedQueues) ? body.allowedQueues : String(body.allowedQueues || '').split(/[\s,;|]+/)).map((item) => item.toLowerCase());
+  const pin = body.pin === undefined ? null : String(body.pin || '').trim();
+
+  if (!name) return res.status(400).json({ error: 'Falta el nombre.' });
+  if (email && !isValidEmail(email)) {
+    return res.status(400).json({ error: 'Correo inválido.' });
+  }
+  if (email && users.some((user, userIndex) => userIndex !== index && normalizeEmail(user.email) === email)) {
+    return res.status(409).json({ error: 'Ese correo ya está registrado.' });
+  }
+  if (!isValidEmployeeCode(employeeCode)) {
+    return res.status(400).json({ error: 'Código inválido. Usa 3 a 20 caracteres A-Z, 0-9 o guion.' });
+  }
+  if (users.some((user, userIndex) => userIndex !== index && normalizeEmployeeCode(user.employeeCode) === employeeCode)) {
+    return res.status(409).json({ error: 'Ese código ya está en uso.' });
+  }
+  if ((body.notificationPhone !== undefined || body.phone !== undefined) && String(body.notificationPhone || body.phone || '').trim() && !notificationPhone) {
+    return res.status(400).json({ error: 'Teléfono inválido. Usa un número de Perú o Colombia, por ejemplo +51999999999 o +573001234567.' });
+  }
+  if (pin !== null && pin && !isStrongPin(pin)) {
+    return res.status(400).json({ error: 'El PIN debe tener entre 4 y 8 dígitos.' });
+  }
+
+  users[index] = normalizeUserRecord({
+    ...current,
+    name,
+    email,
+    role,
+    status,
+    employeeCode,
+    notificationPhone,
+    allowedCountries,
+    allowedQueues,
+    pinHash: pin ? hashPassword(pin) : current.pinHash,
+    pinUpdatedAt: pin ? new Date().toISOString() : current.pinUpdatedAt,
+    approvedBy: safeUser(req.user),
+    accessGrantedAt: status === 'active'
+      ? (current.accessGrantedAt || new Date().toISOString())
+      : '',
   });
   writeUsers(users);
   invalidateUserSessions(users[index].id);
@@ -339,27 +544,53 @@ app.patch('/api/admin/users/:id/access', authRequired, adminOnly, (req, res) => 
 app.put('/api/catalog', authRequired, adminOnly, (req, res) => {
   const incoming = req.body || {};
   const current = readJSON(files.config, defaultConfig());
-  const next = mergeConfig(current, incoming);
+  const activeCountry = resolveRequestCountryContext(req, req.user);
+  if (!activeCountry || activeCountry === 'ALL') {
+    return res.status(400).json({ error: 'Selecciona Perú o Colombia antes de guardar configuración.' });
+  }
+  const next = mergeConfig(current, incoming, activeCountry);
   writeJSON(files.config, next);
-  res.json(buildAppConfig());
+  res.json(buildAppConfig(activeCountry));
 });
 
 app.get('/api/quotes', authRequired, (req, res) => {
-  const quotes = readJSON(files.quotes, []);
-  res.json(quotes.slice().map(normalizeStoredQuote).sort((a, b) => b.createdAt.localeCompare(a.createdAt)));
+  const countryScope = resolveRequestCountryContext(req, req.user);
+  const quotes = readJSON(files.quotes, [])
+    .map(normalizeStoredQuote)
+    .filter((quote) => userCanAccessCountry(req.user, quote.countryCode))
+    .filter((quote) => matchesCountryScope(quote.countryCode, countryScope));
+  res.json(quotes.slice().sort((a, b) => b.createdAt.localeCompare(a.createdAt)));
 });
 
 app.post('/api/quotes', authRequired, async (req, res) => {
-  const config = buildAppConfig();
+  const activeCountry = resolveRequestCountryContext(req, req.user);
   const quotes = readJSON(files.quotes, []);
   const visits = readJSON(files.techVisits, []);
   const payload = req.body || {};
+  const requestedCountry = normalizeCountryCode(payload.countryCode || activeCountry || resolveUserPrimaryCountry(req.user) || '');
+  if (!requestedCountry || requestedCountry === 'ALL') {
+    return res.status(400).json({ error: 'Selecciona Perú o Colombia antes de generar una cotización.' });
+  }
+  const config = buildAppConfig(requestedCountry);
   const email = normalizeEmail(payload.email);
   if (email && !isValidEmail(email)) {
     return res.status(400).json({ error: 'Correo inválido' });
   }
   payload.email = email;
+  payload.countryCode = resolveRecordCountryCode(
+    payload.countryCode,
+    requestedCountry,
+    payload.city,
+    payload.clientAddress,
+    payload.address,
+    resolveUserPrimaryCountry(req.user),
+  );
+  if (!userCanAccessCountry(req.user, payload.countryCode)) {
+    return res.status(403).json({ error: 'No tienes permiso para crear cotizaciones para ese país.' });
+  }
   const quote = buildQuote(payload, config, req.user);
+  const clientRecord = upsertOperationalClientFromQuote(quote, req.user);
+  quote.clientId = clientRecord.id;
   quote.photos = saveQuotePhotos(quote.id, quote.photos);
   const pdfFilename = buildPdfFilename(quote);
   const pdfPath = path.join(quotesDir, pdfFilename);
@@ -405,6 +636,9 @@ app.patch('/api/quotes/:id/status', authRequired, async (req, res) => {
 
   const body = req.body || {};
   const currentQuote = normalizeStoredQuote(quotes[index]);
+  if (!userCanAccessCountry(req.user, currentQuote.countryCode)) {
+    return res.status(403).json({ error: 'No tienes permiso para actualizar esta cotización.' });
+  }
   const nextStatus = normalizeQuoteStatus(body.status || currentQuote.status);
   let order = currentQuote.installationOrderId
     ? installationOrders.find((item) => item.id === currentQuote.installationOrderId)
@@ -483,6 +717,9 @@ app.post('/api/quotes/:id/schedule-installation', authRequired, async (req, res)
   const timeWindow = requestedTimeWindow || formatTimeOnly(scheduledAt);
 
   const currentQuote = normalizeStoredQuote(quotes[index]);
+  if (!userCanAccessCountry(req.user, currentQuote.countryCode)) {
+    return res.status(403).json({ error: 'No tienes permiso para programar instalaciones para esta cotización.' });
+  }
   let order = currentQuote.installationOrderId
     ? installationOrders.find((item) => item.id === currentQuote.installationOrderId)
     : installationOrders.find((item) => item.quoteId === currentQuote.id);
@@ -538,6 +775,7 @@ app.post('/api/quotes/:id/schedule-installation', authRequired, async (req, res)
     ...currentVisit,
     source: 'app',
     type: 'instalacion',
+    countryCode: currentQuote.countryCode || order.countryCode || currentVisit.countryCode || '',
     status: 'agendada',
     reference: installationReference,
     scheduledAt,
@@ -624,6 +862,9 @@ app.post('/api/quotes/:id/accept', authRequired, (req, res) => {
   const index = quotes.findIndex((item) => item.id === req.params.id);
   if (index < 0) return res.status(404).json({ error: 'Cotización no encontrada' });
   const currentQuote = normalizeStoredQuote(quotes[index]);
+  if (!userCanAccessCountry(req.user, currentQuote.countryCode)) {
+    return res.status(403).json({ error: 'No tienes permiso para aceptar esta cotización.' });
+  }
   let order = currentQuote.installationOrderId
     ? installationOrders.find((item) => item.id === currentQuote.installationOrderId)
     : installationOrders.find((item) => item.quoteId === currentQuote.id);
@@ -645,14 +886,25 @@ app.post('/api/quotes/:id/accept', authRequired, (req, res) => {
 });
 
 app.get('/api/quotes/:id', authRequired, (req, res) => {
+  const countryScope = resolveRequestCountryContext(req, req.user);
   const quote = readJSON(files.quotes, []).map(normalizeStoredQuote).find((q) => q.id === req.params.id);
   if (!quote) return res.status(404).json({ error: 'No encontrado' });
+  if (!userCanAccessCountry(req.user, quote.countryCode)) {
+    return res.status(403).json({ error: 'No tienes permiso para ver esta cotización.' });
+  }
+  if (!matchesCountryScope(quote.countryCode, countryScope)) {
+    return res.status(404).json({ error: 'No encontrado' });
+  }
   res.json(quote);
 });
 
 app.get('/api/installation-orders', authRequired, (req, res) => {
   const user = req.user;
+  const countryScope = resolveRequestCountryContext(req, req.user);
   const orders = readJSON(files.installationOrders, [])
+    .map(normalizeInstallationOrder)
+    .filter((order) => userCanAccessCountry(user, order.countryCode))
+    .filter((order) => matchesCountryScope(order.countryCode, countryScope))
     .filter((order) => canUserSeeAllOperations(user)
       || normalizeEmail(order.assignedTechEmail) === normalizeEmail(user?.email))
     .sort((a, b) => String(b.updatedAt || b.createdAt || '').localeCompare(String(a.updatedAt || a.createdAt || '')));
@@ -660,8 +912,16 @@ app.get('/api/installation-orders', authRequired, (req, res) => {
 });
 
 app.get('/api/installation-orders/:id', authRequired, (req, res) => {
-  const order = readJSON(files.installationOrders, []).find((item) => item.id === req.params.id);
+  const countryScope = resolveRequestCountryContext(req, req.user);
+  const targetId = String(req.params.id || '').trim();
+  const order = readJSON(files.installationOrders, []).map(normalizeInstallationOrder).find((item) => item.id === targetId || item.quoteId === targetId);
   if (!order) return res.status(404).json({ error: 'Orden no encontrada' });
+  if (!userCanAccessCountry(req.user, order.countryCode)) {
+    return res.status(403).json({ error: 'No tienes permiso para ver esta orden.' });
+  }
+  if (!matchesCountryScope(order.countryCode, countryScope)) {
+    return res.status(404).json({ error: 'Orden no encontrada' });
+  }
   if (!canUserSeeAllOperations(req.user)
     && normalizeEmail(order.assignedTechEmail) !== normalizeEmail(req.user?.email)) {
     return res.status(403).json({ error: 'No tienes permiso para ver esta orden' });
@@ -670,7 +930,10 @@ app.get('/api/installation-orders/:id', authRequired, (req, res) => {
 });
 
 app.get('/api/tech/visits', authRequired, async (req, res) => {
+  const countryScope = resolveRequestCountryContext(req, req.user);
   const visits = (await syncTechVisitsFromCalendar())
+    .filter((visit) => userCanAccessCountry(req.user, visit.countryCode))
+    .filter((visit) => matchesCountryScope(visit.countryCode, countryScope))
     .filter((visit) => canUserSeeAllOperations(req.user)
       || normalizeEmail(visit.assignedTechEmail) === normalizeEmail(req.user?.email))
     .sort((a, b) => {
@@ -683,60 +946,215 @@ app.get('/api/tech/visits', authRequired, async (req, res) => {
 
 app.get('/api/conformities', authRequired, (req, res) => {
   const user = req.user;
+  const countryScope = resolveRequestCountryContext(req, req.user);
   const canSeeAll = canUserSeeAllOperations(user);
   const userEmail = normalizeEmail(user?.email);
-  const orders = readJSON(files.installationOrders, []);
+  const orders = readJSON(files.installationOrders, []).map(normalizeInstallationOrder);
   const visits = readJSON(files.techVisits, []).map(normalizeTechVisit);
   const allowedOrderIds = new Set(
     orders
+      .filter((order) => userCanAccessCountry(user, order.countryCode))
+      .filter((order) => matchesCountryScope(order.countryCode, countryScope))
       .filter((order) => canSeeAll || normalizeEmail(order.assignedTechEmail) === userEmail)
       .map((order) => String(order.id || '').trim())
       .filter(Boolean),
   );
   const allowedQuoteIds = new Set(
     visits
+      .filter((visit) => userCanAccessCountry(user, visit.countryCode))
+      .filter((visit) => matchesCountryScope(visit.countryCode, countryScope))
       .filter((visit) => canSeeAll || normalizeEmail(visit.assignedTechEmail) === userEmail)
       .map((visit) => String(visit.quoteId || '').trim())
       .filter(Boolean),
   );
   const conformities = readJSON(files.conformities, [])
+    .map(normalizeConformityRecord)
+    .filter((item) => userCanAccessCountry(user, item.countryCode))
+    .filter((item) => matchesCountryScope(item.countryCode, countryScope))
     .filter((item) => canSeeAll
       || allowedOrderIds.has(String(item.installationOrderId || '').trim())
       || allowedQuoteIds.has(String(item.quoteId || '').trim()))
-    .map((item) => ({
-      id: String(item.id || '').trim(),
-      installationOrderId: String(item.installationOrderId || '').trim(),
-      quoteId: String(item.quoteId || '').trim(),
-      clientName: String(item.clientName || '').trim(),
-      clientEmail: normalizeEmail(item.clientEmail || ''),
-      ruc: String(item.ruc || '').trim(),
-      address: String(item.address || '').trim(),
-      chargerBrand: String(item.chargerBrand || '').trim(),
-      serialNumber: String(item.serialNumber || '').trim(),
-      voltage: String(item.voltage || '').trim(),
-      amperage: String(item.amperage || '').trim(),
-      powerKw: String(item.powerKw || '').trim(),
-      observations: String(item.observations || '').trim(),
-      deliveredItems: Array.isArray(item.deliveredItems) ? item.deliveredItems : [],
-      photoUrls: Array.isArray(item.photoUrls) ? item.photoUrls : [],
-      pdfUrl: String(item.pdfUrl || '').trim(),
-      hasPdfBase64: Boolean(String(item.pdfBase64 || '').trim()),
-      status: String(item.status || 'pdf_generated').trim(),
-      createdAt: String(item.createdAt || '').trim(),
-      createdBy: String(item.createdBy || '').trim(),
-      emailDelivery: item.emailDelivery || null,
-    }))
     .sort((a, b) => String(b.createdAt || '').localeCompare(String(a.createdAt || '')));
   res.json(conformities);
 });
 
+app.post('/api/conformities', authRequired, async (req, res) => {
+  const user = req.user;
+  if (!canUserGenerateConformity(user)) {
+    return res.status(403).json({ error: 'No tienes permiso para generar conformidades desde la web.' });
+  }
+
+  const body = req.body || {};
+  const orderId = String(body.installationOrderId || '').trim();
+  const orders = readJSON(files.installationOrders, []).map(normalizeInstallationOrder);
+  const order = orderId ? orders.find((item) => String(item.id || '').trim() === orderId) : null;
+  if (orderId && !order) return res.status(404).json({ error: 'Orden no encontrada.' });
+
+  const countryScope = resolveRequestCountryContext(req, user);
+  if (order) {
+    if (!userCanAccessCountry(user, order.countryCode)) {
+      return res.status(403).json({ error: 'No tienes permiso para generar esta conformidad.' });
+    }
+    if (!matchesCountryScope(order.countryCode, countryScope)) {
+      return res.status(404).json({ error: 'Orden no encontrada.' });
+    }
+    if (!isInstallationOrderReadyForConformity(order)) {
+      return res.status(400).json({ error: 'La orden todavía no está lista para generar conformidad desde web.' });
+    }
+  }
+
+  const quotes = readJSON(files.quotes, []).map(normalizeStoredQuote);
+  const requestedQuoteId = String(body.quoteId || '').trim();
+  const resolvedQuoteId = requestedQuoteId || String(order?.quoteId || '').trim();
+  const quote = resolvedQuoteId
+    ? quotes.find((item) => String(item.id || '').trim() === resolvedQuoteId) || null
+    : null;
+  const warranties = readJSON(files.warranties, []).map(normalizeWarrantyRecord);
+  const matchedWarranty = warranties.find((item) => String(item.installationOrderId || '').trim() === orderId
+    || (resolvedQuoteId && String(item.quoteId || '').trim() === resolvedQuoteId));
+
+  if (!order && !quote && !String(body.clientName || '').trim()) {
+    return res.status(400).json({ error: 'Completa al menos los datos básicos del cliente para una conformidad manual.' });
+  }
+
+  if (quote) {
+    if (!userCanAccessCountry(user, quote.countryCode)) {
+      return res.status(403).json({ error: 'No tienes permiso para usar esta cotización.' });
+    }
+    if (!matchesCountryScope(quote.countryCode, countryScope)) {
+      return res.status(404).json({ error: 'Cotización no encontrada.' });
+    }
+  }
+
+  if (orderId) {
+    const existing = readJSON(files.conformities, [])
+      .map(normalizeConformityRecord)
+      .find((item) => String(item.installationOrderId || '').trim() === orderId);
+    if (existing) {
+      return res.status(409).json({ error: 'Esta orden ya tiene una conformidad generada.', conformity: existing });
+    }
+  }
+
+  const clientEmail = normalizeEmail(body.clientEmail || order?.clientEmail || quote?.email || '');
+  if (clientEmail && !isValidEmail(clientEmail)) return res.status(400).json({ error: 'Correo inválido.' });
+
+  const conformity = normalizeConformityRecord({
+    id: body.id || `CONF-${Date.now().toString(36).toUpperCase()}-${crypto.randomBytes(2).toString('hex').toUpperCase()}`,
+    installationOrderId: orderId,
+    quoteId: String(resolvedQuoteId || quote?.id || '').trim(),
+    warrantyId: matchedWarranty?.id || '',
+    warrantyCode: matchedWarranty?.warrantyCode || '',
+    warrantyValidUntil: matchedWarranty?.validUntil || '',
+    date: String(body.date || '').trim(),
+    countryCode: resolveRecordCountryCode(body.countryCode, order?.countryCode, quote?.countryCode, body.address, clientEmail),
+    clientName: String(body.clientName || order?.clientName || quote?.clientName || '').trim(),
+    clientEmail,
+    ruc: String(body.ruc || order?.ruc || quote?.ruc || '').trim(),
+    address: String(body.address || order?.address || quote?.clientAddress || '').trim(),
+    chargerBrand: String(body.chargerBrand || order?.chargerBrand || quote?.charger?.brand || quote?.charger?.label || 'GENERAL').trim(),
+    serialNumber: String(body.serialNumber || order?.serialNumber || quote?.serialNumber || '').trim(),
+    voltage: String(body.voltage || order?.voltage || quote?.voltage || '').trim(),
+    amperage: String(body.amperage || order?.amperage || quote?.current || '').trim(),
+    other: String(body.other || '').trim(),
+    powerKw: String(body.powerKw || order?.powerKw || quote?.powerKw || '').trim(),
+    observations: String(body.observations || '').trim(),
+    deliveredItems: normalizeConformityDeliveredItems(body.deliveredItems),
+    cajaCargador: body.cajaCargador === true,
+    cargadorEvinka: body.cargadorEvinka === true,
+    manualCargador: body.manualCargador === true,
+    tarjetasCargador: body.tarjetasCargador === true,
+    adicional: body.adicional === true,
+    adicionalDesc: String(body.adicionalDesc || '').trim(),
+    photoUrls: Array.isArray(body.photoUrls) ? body.photoUrls : [],
+    installerSignatureUrl: String(body.installerSignatureUrl || '').trim(),
+    clientSignatureUrl: String(body.clientSignatureUrl || '').trim(),
+    status: 'pdf_generated',
+    createdAt: new Date().toISOString(),
+    createdBy: normalizeEmail(user?.email || '') || String(user?.employeeCode || user?.id || 'web').trim(),
+  });
+
+  const pdfBuffer = await createConformityPdfBuffer({ conformity, order, quote });
+  conformity.pdfBase64 = pdfBuffer.toString('base64');
+  conformity.emailDelivery = await deliverConformityEmail({ conformity, req });
+
+  const conformities = readJSON(files.conformities, []);
+  conformities.push(conformity);
+  writeJSON(files.conformities, conformities);
+
+  if (orderId) {
+    const rawOrders = readJSON(files.installationOrders, []);
+    const orderIndex = rawOrders.findIndex((item) => String(item.id || '').trim() === orderId);
+    if (orderIndex >= 0) {
+      rawOrders[orderIndex] = {
+        ...rawOrders[orderIndex],
+        status: 'conformidad_generada',
+        conformityStatus: 'pdf_generated',
+        conformityId: conformity.id,
+        conformityPdfUrl: rawOrders[orderIndex]?.conformityPdfUrl || '',
+        updatedAt: new Date().toISOString(),
+      };
+      writeJSON(files.installationOrders, rawOrders);
+    }
+  }
+
+  const rawQuotes = readJSON(files.quotes, []);
+  const quoteIndex = rawQuotes.findIndex((item) => String(item.id || '').trim() === conformity.quoteId);
+  if (quoteIndex >= 0) {
+    rawQuotes[quoteIndex] = {
+      ...normalizeStoredQuote(rawQuotes[quoteIndex]),
+      status: 'instalada',
+      conformityStatus: 'pdf_generated',
+      conformityId: conformity.id,
+      conformityPdfUrl: rawQuotes[quoteIndex]?.conformityPdfUrl || '',
+    };
+    writeJSON(files.quotes, rawQuotes);
+  }
+
+  if (orderId || conformity.quoteId) {
+    const visits = readJSON(files.techVisits, []);
+    let visitsChanged = false;
+    for (let i = 0; i < visits.length; i += 1) {
+      const currentVisit = normalizeTechVisit(visits[i]);
+      const isTarget = currentVisit.type === 'instalacion'
+        && ((orderId && currentVisit.installationOrderId === orderId) || (conformity.quoteId && currentVisit.quoteId === conformity.quoteId));
+      if (!isTarget) continue;
+      visits[i] = normalizeTechVisit({
+        ...currentVisit,
+        status: 'pendiente_cierre',
+        installationOrderId: orderId || currentVisit.installationOrderId,
+        quoteId: conformity.quoteId || currentVisit.quoteId,
+        updatedAt: new Date().toISOString(),
+        closedAt: '',
+        resolution: currentVisit.resolution || 'Instalación concluida con conformidad generada desde web.',
+        checklist: buildAutoChecklistForVisit({
+          ...currentVisit,
+          status: 'pendiente_cierre',
+          installationOrderId: orderId || currentVisit.installationOrderId,
+          quoteId: conformity.quoteId || currentVisit.quoteId,
+        }),
+      });
+      visitsChanged = true;
+    }
+    if (visitsChanged) saveTechVisits(visits);
+  }
+
+  res.json({ ok: true, conformity, emailDelivery: conformity.emailDelivery });
+});
+
 app.get('/api/conformities/:id/pdf', authRequired, async (req, res) => {
   const user = req.user;
+  const countryScope = resolveRequestCountryContext(req, req.user);
   const canSeeAll = canUserSeeAllOperations(user);
-  const orders = readJSON(files.installationOrders, []);
+  const orders = readJSON(files.installationOrders, []).map(normalizeInstallationOrder);
   const visits = readJSON(files.techVisits, []).map(normalizeTechVisit);
-  const conformity = readJSON(files.conformities, []).find((item) => String(item.id || '').trim() === req.params.id);
+  const conformity = readJSON(files.conformities, []).map(normalizeConformityRecord).find((item) => String(item.id || '').trim() === req.params.id);
   if (!conformity) return res.status(404).json({ error: 'Conformidad no encontrada' });
+  if (!userCanAccessCountry(user, conformity.countryCode)) {
+    return res.status(403).json({ error: 'No tienes permiso para ver esta conformidad.' });
+  }
+  if (!matchesCountryScope(conformity.countryCode, countryScope)) {
+    return res.status(404).json({ error: 'Conformidad no encontrada' });
+  }
 
   const order = orders.find((item) => String(item.id || '').trim() === String(conformity.installationOrderId || '').trim());
   const sameTechByOrder = normalizeEmail(order?.assignedTechEmail) === normalizeEmail(user?.email);
@@ -768,12 +1186,148 @@ app.get('/api/conformities/:id/pdf', authRequired, async (req, res) => {
   return res.redirect(pdfUrl);
 });
 
+app.post('/api/warranties', authRequired, async (req, res) => {
+  const user = req.user;
+  if (!canUserGenerateConformity(user)) {
+    return res.status(403).json({ error: 'No tienes permiso para generar garantías desde la web.' });
+  }
+
+  const body = req.body || {};
+  const orderId = String(body.installationOrderId || '').trim();
+  const quoteId = String(body.quoteId || '').trim();
+  const clientEmail = normalizeEmail(body.clientEmail || '');
+  if (clientEmail && !isValidEmail(clientEmail)) return res.status(400).json({ error: 'Correo inválido.' });
+
+  const orders = readJSON(files.installationOrders, []).map(normalizeInstallationOrder);
+  const order = orderId ? orders.find((item) => item.id === orderId || item.quoteId === orderId) : null;
+  const quotes = readJSON(files.quotes, []).map(normalizeStoredQuote);
+  const quote = quoteId ? quotes.find((item) => item.id === quoteId) || null : null;
+  const warrantyId = body.id || `GAR-${Date.now().toString(36).toUpperCase()}-${crypto.randomBytes(2).toString('hex').toUpperCase()}`;
+  const warrantyCode = buildWarrantyCode(orderId || quoteId || String(body.clientName || 'EVINKA'));
+  const validUntil = warrantyValidUntil(body.date);
+  const pdfBuffer = await createWarrantyPdfBuffer({
+    warranty: {
+      id: warrantyId,
+      warrantyCode,
+      validUntil,
+      installationOrderId: orderId,
+      quoteId,
+      clientName: String(body.clientName || order?.clientName || quote?.clientName || '').trim(),
+      clientEmail,
+      clientDocument: String(body.clientDocument || body.ruc || order?.ruc || quote?.ruc || '').trim(),
+      address: String(body.address || order?.address || quote?.clientAddress || '').trim(),
+      chargerBrand: String(body.chargerBrand || order?.chargerBrand || quote?.charger?.label || 'GENERAL').trim(),
+      serialNumber: String(body.serialNumber || order?.serialNumber || '').trim(),
+      voltage: String(body.voltage || order?.voltage || quote?.voltage || '').trim(),
+      amperage: String(body.amperage || order?.amperage || quote?.current || '').trim(),
+      powerKw: String(body.powerKw || order?.powerKw || quote?.powerKw || '').trim(),
+      installerSignatureUrl: String(body.installerSignatureUrl || '').trim(),
+      clientSignatureUrl: String(body.clientSignatureUrl || '').trim(),
+      createdAt: new Date().toISOString(),
+      createdBy: normalizeEmail(user?.email || '') || String(user?.employeeCode || user?.id || 'web').trim(),
+    },
+    order,
+    quote,
+  });
+
+  const warranty = normalizeWarrantyRecord({
+    id: warrantyId,
+    warrantyCode,
+    validUntil,
+    installationOrderId: orderId,
+    quoteId,
+    countryCode: resolveRecordCountryCode(body.countryCode, order?.countryCode, quote?.countryCode, body.address, clientEmail),
+    clientName: String(body.clientName || order?.clientName || quote?.clientName || '').trim(),
+    clientEmail,
+    clientDocument: String(body.clientDocument || body.ruc || order?.ruc || quote?.ruc || '').trim(),
+    address: String(body.address || order?.address || quote?.clientAddress || '').trim(),
+    chargerBrand: String(body.chargerBrand || order?.chargerBrand || quote?.charger?.label || 'GENERAL').trim(),
+    serialNumber: String(body.serialNumber || order?.serialNumber || '').trim(),
+    voltage: String(body.voltage || order?.voltage || quote?.voltage || '').trim(),
+    amperage: String(body.amperage || order?.amperage || quote?.current || '').trim(),
+    powerKw: String(body.powerKw || order?.powerKw || quote?.powerKw || '').trim(),
+    installerSignatureUrl: String(body.installerSignatureUrl || '').trim(),
+    clientSignatureUrl: String(body.clientSignatureUrl || '').trim(),
+    pdfBase64: pdfBuffer.toString('base64'),
+    pdfUrl: `/pdf/${warrantyId}-DEMO-GARANTIA-LEGAL.pdf`,
+    pdfPath: `/pdf/${warrantyId}-DEMO-GARANTIA-LEGAL.pdf`,
+    pdfFilename: `${warrantyId}-DEMO-GARANTIA-LEGAL.pdf`,
+    status: 'warranty_generated',
+    createdAt: new Date().toISOString(),
+    createdBy: normalizeEmail(user?.email || '') || String(user?.employeeCode || user?.id || 'web').trim(),
+  });
+
+  const warranties = readJSON(files.warranties, []);
+  warranties.push(warranty);
+  writeJSON(files.warranties, warranties);
+
+  const conformities = readJSON(files.conformities, []);
+  const conformityIndex = conformities.findIndex((item) => String(item.installationOrderId || '').trim() === orderId || String(item.quoteId || '').trim() === quoteId);
+  if (conformityIndex >= 0) {
+    const linkedConformity = normalizeConformityRecord(conformities[conformityIndex]);
+    const linkedPdfBuffer = await createConformityPdfBuffer({
+      conformity: {
+        ...linkedConformity,
+        warrantyCode,
+        warrantyValidUntil: validUntil,
+      },
+      order,
+      quote,
+    });
+    conformities[conformityIndex] = {
+      ...linkedConformity,
+      warrantyId: warranty.id,
+      warrantyCode,
+      warrantyValidUntil: validUntil,
+      warrantyPdfUrl: `/pdf/${warranty.id}-DEMO-GARANTIA-LEGAL.pdf`,
+      pdfBase64: linkedPdfBuffer.toString('base64'),
+      pdfUrl: linkedConformity.pdfUrl || '',
+    };
+    writeJSON(files.conformities, conformities);
+  }
+
+  if (quoteId) {
+    const rawQuotes = readJSON(files.quotes, []);
+    const quoteIndex = rawQuotes.findIndex((item) => String(item.id || '').trim() === quoteId);
+    if (quoteIndex >= 0) {
+      rawQuotes[quoteIndex] = {
+        ...normalizeStoredQuote(rawQuotes[quoteIndex]),
+        warrantyId: warranty.id,
+        warrantyCode,
+        warrantyValidUntil: validUntil,
+        warrantyPdfUrl: `/pdf/${warranty.id}-DEMO-GARANTIA-LEGAL.pdf`,
+      };
+      writeJSON(files.quotes, rawQuotes);
+    }
+  }
+
+  res.json({ ok: true, warranty });
+});
+
+app.get('/api/warranties/:id/pdf', authRequired, (req, res) => {
+  const warranty = readJSON(files.warranties, []).map(normalizeWarrantyRecord).find((item) => String(item.id || '').trim() === req.params.id);
+  if (!warranty) return res.status(404).json({ error: 'Garantía no encontrada.' });
+  const pdfBase64 = String(warranty.pdfBase64 || '').trim();
+  if (pdfBase64) {
+    const buffer = Buffer.from(pdfBase64, 'base64');
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `inline; filename="Garantia_${String(warranty.installationOrderId || warranty.id || 'EVINKA')}.pdf"`);
+    return res.end(buffer);
+  }
+  const pdfUrl = String(warranty.pdfUrl || '').trim();
+  if (!pdfUrl) return res.status(404).json({ error: 'Esta garantía no tiene PDF disponible.' });
+  return res.redirect(pdfUrl);
+});
+
 app.patch('/api/tech/visits/:id', authRequired, async (req, res) => {
   const visits = readJSON(files.techVisits, []);
   const index = visits.findIndex((item) => item.id === req.params.id);
   if (index < 0) return res.status(404).json({ error: 'Visita no encontrada' });
 
   const current = normalizeTechVisit(visits[index]);
+  if (!userCanAccessCountry(req.user, current.countryCode)) {
+    return res.status(403).json({ error: 'No tienes permiso para actualizar esta visita.' });
+  }
   const sameTech = normalizeEmail(current.assignedTechEmail) === normalizeEmail(req.user?.email);
   if (req.user?.role !== 'admin' && !sameTech) {
     return res.status(403).json({ error: 'No tienes permiso para actualizar esta visita' });
@@ -811,7 +1365,7 @@ app.patch('/api/tech/visits/:id', authRequired, async (req, res) => {
   res.json({ ...normalizeTechVisit(next), notifications });
 });
 
-app.post('/api/internal/tech-visits', internalBotAuth, (req, res) => {
+app.post('/api/internal/tech-visits', internalBotAuth, async (req, res) => {
   const body = req.body || {};
   const clientName = String(body.clientName || '').trim();
   const clientAddress = String(body.clientAddress || '').trim();
@@ -848,19 +1402,32 @@ app.post('/api/internal/tech-visits', internalBotAuth, (req, res) => {
     installationOrderId: String(body.installationOrderId || '').trim(),
     assignedTechEmail: assignedTech?.email || assignedEmail,
     assignedTechName: assignedTech?.name || String(body.assignedTechName || '').trim(),
+    countryCode: resolveRecordCountryCode(body.countryCode, body.clientPhone, clientAddress, body.clientEmail, base?.countryCode || ''),
     checklist: Array.isArray(body.checklist) ? body.checklist.map((item) => String(item || '').trim()).filter(Boolean) : [],
+    clickupTaskId: String(body.clickupTaskId || base?.clickupTaskId || '').trim(),
+    clickupTaskUrl: String(body.clickupTaskUrl || base?.clickupTaskUrl || '').trim(),
+    clickupSyncedAt: String(base?.clickupSyncedAt || '').trim(),
+    clickupSyncError: '',
     createdAt: base?.createdAt || createdAt,
     updatedAt: createdAt,
     startedAt: base?.startedAt || '',
     closedAt: base?.closedAt || '',
   });
+  const clickupSync = await syncTechVisitToClickUp(visit);
+  const syncedVisit = normalizeTechVisit({
+    ...visit,
+    clickupTaskId: clickupSync.taskId || visit.clickupTaskId,
+    clickupTaskUrl: clickupSync.taskUrl || visit.clickupTaskUrl,
+    clickupSyncedAt: clickupSync.syncedAt || visit.clickupSyncedAt,
+    clickupSyncError: clickupSync.ok ? '' : String(clickupSync.error || visit.clickupSyncError || '').trim(),
+  });
   if (existingIndex >= 0) {
-    visits[existingIndex] = visit;
+    visits[existingIndex] = syncedVisit;
   } else {
-    visits.push(visit);
+    visits.push(syncedVisit);
   }
   writeJSON(files.techVisits, visits);
-  res.json({ ok: true, created: existingIndex < 0, visit });
+  res.json({ ok: true, created: existingIndex < 0, visit: syncedVisit, clickupSync });
 });
 
 app.get('/api/mobile/orders/:id', mobileAppAuth, (req, res) => {
@@ -876,18 +1443,36 @@ app.post('/api/mobile/conformities', mobileAppAuth, async (req, res) => {
   const quoteId = String(body.quoteId || '').trim();
   const clientEmail = normalizeEmail(body.clientEmail || '');
   const pdfBase64 = String(body.pdfBase64 || '').trim();
-  if (!orderId || !quoteId) return res.status(400).json({ error: 'Faltan installationOrderId y quoteId' });
   if (clientEmail && !isValidEmail(clientEmail)) return res.status(400).json({ error: 'Correo inválido' });
 
   const orders = readJSON(files.installationOrders, []);
-  const orderIndex = orders.findIndex((item) => item.id === orderId && item.quoteId === quoteId);
-  if (orderIndex < 0) return res.status(404).json({ error: 'Orden no encontrada' });
+  const orderIndex = orderId
+    ? orders.findIndex((item) => item.id === orderId && (!quoteId || item.quoteId === quoteId))
+    : -1;
+  if (orderId && orderIndex < 0) return res.status(404).json({ error: 'Orden no encontrada' });
+  if (!orderId && !quoteId && !String(body.clientName || '').trim()) {
+    return res.status(400).json({ error: 'Completa al menos los datos básicos del cliente.' });
+  }
 
-  const conformities = readJSON(files.conformities, []);
-  const conformity = {
-    id: body.id || `CONF-${Date.now().toString(36).toUpperCase()}-${crypto.randomBytes(2).toString('hex').toUpperCase()}`,
+  const warranties = readJSON(files.warranties, []).map(normalizeWarrantyRecord);
+  const matchedWarranty = warranties.find((item) => (
+    (orderId && String(item.installationOrderId || '').trim() === orderId)
+    || (quoteId && String(item.quoteId || '').trim() === quoteId)
+  )) || null;
+
+  const conformityId = body.id || `CONF-${Date.now().toString(36).toUpperCase()}-${crypto.randomBytes(2).toString('hex').toUpperCase()}`;
+  const persistedPdf = persistPdfToQuotesDir({ id: conformityId, label: 'APP-CONFORMIDAD', pdfBase64 });
+  const fallbackPdfUrl = String(body.pdfUrl || '').trim();
+  const conformity = normalizeConformityRecord({
+    id: conformityId,
     installationOrderId: orderId,
     quoteId,
+    warrantyId: matchedWarranty?.id || '',
+    warrantyCode: matchedWarranty?.warrantyCode || '',
+    warrantyValidUntil: matchedWarranty?.validUntil || '',
+    warrantyPdfUrl: matchedWarranty?.pdfUrl || '',
+    date: String(body.date || '').trim(),
+    countryCode: resolveRecordCountryCode(body.countryCode, orders[orderIndex]?.countryCode, body.address, clientEmail),
     clientName: String(body.clientName || '').trim(),
     clientEmail,
     ruc: String(body.ruc || '').trim(),
@@ -896,31 +1481,54 @@ app.post('/api/mobile/conformities', mobileAppAuth, async (req, res) => {
     serialNumber: String(body.serialNumber || '').trim(),
     voltage: String(body.voltage || '').trim(),
     amperage: String(body.amperage || '').trim(),
+    other: String(body.other || '').trim(),
     powerKw: String(body.powerKw || '').trim(),
     observations: String(body.observations || '').trim(),
     deliveredItems: Array.isArray(body.deliveredItems) ? body.deliveredItems : [],
+    cajaCargador: body.cajaCargador === true,
+    cargadorEvinka: body.cargadorEvinka === true,
+    manualCargador: body.manualCargador === true,
+    tarjetasCargador: body.tarjetasCargador === true,
+    adicional: body.adicional === true,
+    adicionalDesc: String(body.adicionalDesc || '').trim(),
     photoUrls: Array.isArray(body.photoUrls) ? body.photoUrls : [],
     installerSignatureUrl: String(body.installerSignatureUrl || '').trim(),
     clientSignatureUrl: String(body.clientSignatureUrl || '').trim(),
-    pdfUrl: String(body.pdfUrl || '').trim(),
+    pdfUrl: persistedPdf.pdfUrl || fallbackPdfUrl,
+    pdfPath: persistedPdf.pdfPath || fallbackPdfUrl,
+    pdfFilename: persistedPdf.pdfFilename,
     pdfBase64,
     status: String(body.status || 'pdf_generated').trim(),
     createdAt: new Date().toISOString(),
     createdBy: 'mobile_app',
-  };
+  });
   conformity.emailDelivery = await deliverConformityEmail({ conformity, req });
-  conformities.push(conformity);
+
+  const conformities = readJSON(files.conformities, []);
+  const conformityIndex = conformities.findIndex((item) => String(item.id || '').trim() === conformity.id);
+  if (conformityIndex >= 0) {
+    conformities[conformityIndex] = conformity;
+  } else {
+    conformities.push(conformity);
+  }
   writeJSON(files.conformities, conformities);
 
-  orders[orderIndex] = {
-    ...orders[orderIndex],
-    status: 'conformidad_generada',
-    conformityStatus: 'pdf_generated',
-    conformityId: conformity.id,
-    conformityPdfUrl: conformity.pdfUrl,
-    updatedAt: new Date().toISOString(),
-  };
-  writeJSON(files.installationOrders, orders);
+  const conformityPdfUrl = conformity.pdfUrl || `/api/conformities/${encodeURIComponent(conformity.id)}/pdf`;
+  if (orderIndex >= 0) {
+    orders[orderIndex] = {
+      ...orders[orderIndex],
+      status: 'conformidad_generada',
+      conformityStatus: 'pdf_generated',
+      conformityId: conformity.id,
+      conformityPdfUrl,
+      warrantyId: matchedWarranty?.id || orders[orderIndex]?.warrantyId || '',
+      warrantyCode: matchedWarranty?.warrantyCode || orders[orderIndex]?.warrantyCode || '',
+      warrantyValidUntil: matchedWarranty?.validUntil || orders[orderIndex]?.warrantyValidUntil || '',
+      warrantyPdfUrl: matchedWarranty?.pdfUrl || orders[orderIndex]?.warrantyPdfUrl || '',
+      updatedAt: new Date().toISOString(),
+    };
+    writeJSON(files.installationOrders, orders);
+  }
 
   const quotes = readJSON(files.quotes, []);
   const quoteIndex = quotes.findIndex((item) => item.id === quoteId);
@@ -930,38 +1538,147 @@ app.post('/api/mobile/conformities', mobileAppAuth, async (req, res) => {
       status: 'instalada',
       conformityStatus: 'pdf_generated',
       conformityId: conformity.id,
-      conformityPdfUrl: conformity.pdfUrl,
+      conformityPdfUrl,
+      warrantyId: matchedWarranty?.id || quotes[quoteIndex]?.warrantyId || '',
+      warrantyCode: matchedWarranty?.warrantyCode || quotes[quoteIndex]?.warrantyCode || '',
+      warrantyValidUntil: matchedWarranty?.validUntil || quotes[quoteIndex]?.warrantyValidUntil || '',
+      warrantyPdfUrl: matchedWarranty?.pdfUrl || quotes[quoteIndex]?.warrantyPdfUrl || '',
     };
     writeJSON(files.quotes, quotes);
   }
 
-  const visits = readJSON(files.techVisits, []);
-  let visitsChanged = false;
-  for (let i = 0; i < visits.length; i += 1) {
-    const currentVisit = normalizeTechVisit(visits[i]);
-    const isTarget = currentVisit.type === 'instalacion'
-      && (currentVisit.installationOrderId === orderId || currentVisit.quoteId === quoteId);
-    if (!isTarget) continue;
-    visits[i] = normalizeTechVisit({
-      ...currentVisit,
-      status: 'pendiente_cierre',
-      installationOrderId: orderId,
-      quoteId,
-      updatedAt: new Date().toISOString(),
-      closedAt: '',
-      resolution: currentVisit.resolution || 'Instalación concluida con conformidad generada.',
-      checklist: buildAutoChecklistForVisit({
+  if (orderId || quoteId) {
+    const visits = readJSON(files.techVisits, []);
+    let visitsChanged = false;
+    for (let i = 0; i < visits.length; i += 1) {
+      const currentVisit = normalizeTechVisit(visits[i]);
+      const isTarget = currentVisit.type === 'instalacion'
+        && ((orderId && currentVisit.installationOrderId === orderId) || (quoteId && currentVisit.quoteId === quoteId));
+      if (!isTarget) continue;
+      visits[i] = normalizeTechVisit({
         ...currentVisit,
         status: 'pendiente_cierre',
-        installationOrderId: orderId,
-        quoteId,
-      }),
-    });
-    visitsChanged = true;
+        installationOrderId: orderId || currentVisit.installationOrderId,
+        quoteId: quoteId || currentVisit.quoteId,
+        updatedAt: new Date().toISOString(),
+        closedAt: '',
+        resolution: currentVisit.resolution || 'Instalación concluida con conformidad generada.',
+        checklist: buildAutoChecklistForVisit({
+          ...currentVisit,
+          status: 'pendiente_cierre',
+          installationOrderId: orderId || currentVisit.installationOrderId,
+          quoteId: quoteId || currentVisit.quoteId,
+        }),
+      });
+      visitsChanged = true;
+    }
+    if (visitsChanged) saveTechVisits(visits);
   }
-  if (visitsChanged) saveTechVisits(visits);
 
   res.json({ ok: true, conformity, emailDelivery: conformity.emailDelivery });
+});
+
+app.post('/api/mobile/warranties', mobileAppAuth, async (req, res) => {
+  const body = req.body || {};
+  const orderId = String(body.installationOrderId || '').trim();
+  const quoteId = String(body.quoteId || '').trim();
+  const clientEmail = normalizeEmail(body.clientEmail || '');
+  const pdfBase64 = String(body.pdfBase64 || '').trim();
+  if (clientEmail && !isValidEmail(clientEmail)) return res.status(400).json({ error: 'Correo inválido' });
+
+  const orders = readJSON(files.installationOrders, []);
+  const orderIndex = orderId
+    ? orders.findIndex((item) => item.id === orderId && (!quoteId || item.quoteId === quoteId))
+    : -1;
+  if (orderId && orderIndex < 0) return res.status(404).json({ error: 'Orden no encontrada' });
+  if (!orderId && !quoteId && !String(body.clientName || '').trim()) {
+    return res.status(400).json({ error: 'Completa al menos los datos básicos del cliente.' });
+  }
+
+  const quotes = readJSON(files.quotes, []);
+  const quoteIndex = quoteId ? quotes.findIndex((item) => String(item.id || '').trim() === quoteId) : -1;
+  const quote = quoteIndex >= 0 ? normalizeStoredQuote(quotes[quoteIndex]) : null;
+  const warrantyId = body.id || `GAR-${Date.now().toString(36).toUpperCase()}-${crypto.randomBytes(2).toString('hex').toUpperCase()}`;
+  const persistedPdf = persistPdfToQuotesDir({ id: warrantyId, label: 'APP-GARANTIA', pdfBase64 });
+  const fallbackPdfUrl = String(body.pdfUrl || '').trim();
+  const warranty = normalizeWarrantyRecord({
+    id: warrantyId,
+    warrantyCode: String(body.warrantyCode || buildWarrantyCode(orderId || quoteId || String(body.clientName || 'EVINKA'))).trim(),
+    validUntil: String(body.validUntil || warrantyValidUntil(body.date || new Date().toISOString())).trim(),
+    installationOrderId: orderId,
+    quoteId,
+    countryCode: resolveRecordCountryCode(body.countryCode, orders[orderIndex]?.countryCode, quote?.countryCode, body.address, clientEmail),
+    clientName: String(body.clientName || orders[orderIndex]?.clientName || quote?.clientName || '').trim(),
+    clientEmail,
+    clientDocument: String(body.clientDocument || body.ruc || orders[orderIndex]?.ruc || quote?.ruc || '').trim(),
+    address: String(body.address || orders[orderIndex]?.address || quote?.clientAddress || '').trim(),
+    chargerBrand: String(body.chargerBrand || orders[orderIndex]?.chargerBrand || quote?.charger?.label || 'GENERAL').trim(),
+    serialNumber: String(body.serialNumber || orders[orderIndex]?.serialNumber || quote?.serialNumber || '').trim(),
+    voltage: String(body.voltage || orders[orderIndex]?.voltage || quote?.voltage || '').trim(),
+    amperage: String(body.amperage || orders[orderIndex]?.amperage || quote?.current || '').trim(),
+    powerKw: String(body.powerKw || orders[orderIndex]?.powerKw || quote?.powerKw || '').trim(),
+    installerSignatureUrl: String(body.installerSignatureUrl || '').trim(),
+    clientSignatureUrl: String(body.clientSignatureUrl || '').trim(),
+    pdfUrl: persistedPdf.pdfUrl || fallbackPdfUrl,
+    pdfPath: persistedPdf.pdfPath || fallbackPdfUrl,
+    pdfFilename: persistedPdf.pdfFilename,
+    pdfBase64,
+    status: String(body.status || 'warranty_generated').trim(),
+    createdAt: new Date().toISOString(),
+    createdBy: 'mobile_app',
+  });
+
+  const warranties = readJSON(files.warranties, []);
+  const warrantyIndex = warranties.findIndex((item) => String(item.id || '').trim() === warranty.id);
+  if (warrantyIndex >= 0) {
+    warranties[warrantyIndex] = warranty;
+  } else {
+    warranties.push(warranty);
+  }
+  writeJSON(files.warranties, warranties);
+
+  const warrantyPdfUrl = warranty.pdfUrl || `/api/warranties/${encodeURIComponent(warranty.id)}/pdf`;
+  const conformities = readJSON(files.conformities, []);
+  const conformityIndex = conformities.findIndex((item) => (
+    (orderId && String(item.installationOrderId || '').trim() === orderId)
+    || (quoteId && String(item.quoteId || '').trim() === quoteId)
+  ));
+  if (conformityIndex >= 0) {
+    const currentConformity = normalizeConformityRecord(conformities[conformityIndex]);
+    conformities[conformityIndex] = {
+      ...currentConformity,
+      warrantyId: warranty.id,
+      warrantyCode: warranty.warrantyCode,
+      warrantyValidUntil: warranty.validUntil,
+      warrantyPdfUrl,
+    };
+    writeJSON(files.conformities, conformities);
+  }
+
+  if (orderIndex >= 0) {
+    orders[orderIndex] = {
+      ...orders[orderIndex],
+      warrantyId: warranty.id,
+      warrantyCode: warranty.warrantyCode,
+      warrantyValidUntil: warranty.validUntil,
+      warrantyPdfUrl,
+      updatedAt: new Date().toISOString(),
+    };
+    writeJSON(files.installationOrders, orders);
+  }
+
+  if (quoteIndex >= 0) {
+    quotes[quoteIndex] = {
+      ...quote,
+      warrantyId: warranty.id,
+      warrantyCode: warranty.warrantyCode,
+      warrantyValidUntil: warranty.validUntil,
+      warrantyPdfUrl,
+    };
+    writeJSON(files.quotes, quotes);
+  }
+
+  res.json({ ok: true, warranty });
 });
 
 app.use((req, res) => {
@@ -969,9 +1686,17 @@ app.use((req, res) => {
   res.type('html').send(fs.readFileSync(path.join(publicDir, 'index.html'), 'utf8'));
 });
 
-app.listen(PORT, () => {
-  console.log(`Cotizador EVINKA listo en http://localhost:${PORT}`);
-});
+globalThis.__EVINKA_PDF_GENERATORS = {
+  createPdf,
+  createConformityPdfBuffer,
+  createWarrantyPdfBuffer,
+};
+
+if (!process.env.EVINKA_SKIP_LISTEN) {
+  app.listen(PORT, () => {
+    console.log(`Cotizador EVINKA listo en http://localhost:${PORT}`);
+  });
+}
 
 function authOptional(req, res, next) {
   const token = parseCookie(req.headers.cookie || '')[COOKIE_NAME];
@@ -1037,12 +1762,15 @@ function safeUser(user) {
     name: user.name,
     email: user.email,
     employeeCode: user.employeeCode || '',
+    notificationPhone: user.notificationPhone || '',
     hasPin: Boolean(user.pinHash),
     pinUpdatedAt: user.pinUpdatedAt || '',
     role: user.role,
     status: user.status || 'active',
     requestedAt: user.requestedAt || '',
     accessGrantedAt: user.accessGrantedAt || '',
+    allowedCountries: Array.isArray(user.allowedCountries) ? user.allowedCountries : [],
+    allowedQueues: Array.isArray(user.allowedQueues) ? user.allowedQueues : [],
     approvedBy: user.approvedBy ? {
       id: user.approvedBy.id,
       name: user.approvedBy.name,
@@ -1052,14 +1780,19 @@ function safeUser(user) {
   };
 }
 
-function publicConfig() {
-  const config = buildAppConfig();
+function publicConfig(countryCode = 'PE') {
+  const activeCountry = normalizeCountryCode(countryCode) || 'ALL';
+  const config = buildAppConfig(activeCountry);
   return {
     company: config.company,
     currency: config.currency,
     defaults: config.defaults,
     commercialProfiles: config.commercialProfiles,
+    harCatalogs: config.harCatalogs,
     roles: config.roles,
+    roleDefinitions: config.roleDefinitions,
+    activeCountry,
+    countries: COUNTRY_DEFINITIONS,
   };
 }
 
@@ -1075,9 +1808,29 @@ function normalizeQuoteStatus(value) {
 }
 
 function normalizeStoredQuote(quote = {}) {
+  const commercialProfileId = slugProfileId(quote?.commercialProfile?.id || quote?.commercialProfileId || quote?.commercialProfile?.name || 'general');
+  const commercialProfileName = String(quote?.commercialProfile?.name || quote?.commercialProfileName || 'GENERAL').trim() || 'GENERAL';
   return {
     ...quote,
     clientDocument: String(quote?.clientDocument || quote?.ruc || '').trim(),
+    countryCode: quoteCountryCode(quote),
+    commercialProfileId,
+    commercialProfileName,
+    commercialProfile: {
+      ...(quote?.commercialProfile || {}),
+      id: commercialProfileId,
+      name: commercialProfileName,
+    },
+    pdfTemplate: resolveQuotePdfTemplate({
+      ...quote,
+      commercialProfileId,
+      commercialProfileName,
+      commercialProfile: {
+        ...(quote?.commercialProfile || {}),
+        id: commercialProfileId,
+        name: commercialProfileName,
+      },
+    }),
     status: normalizeQuoteStatus(quote?.status || 'cotizada'),
     conformityStatus: String(quote?.conformityStatus || 'not_started').trim(),
   };
@@ -1353,6 +2106,7 @@ function normalizeTechVisit(visit = {}) {
     id: String(visit.id || '').trim(),
     source: String(visit.source || 'chatbot').trim() || 'chatbot',
     type: String(visit.type || 'visita_tecnica').trim() || 'visita_tecnica',
+    countryCode: visitCountryCode(visit),
     status: normalizeTechVisitStatus(visit.status),
     clientName: String(visit.clientName || '').trim(),
     clientPhone: String(visit.clientPhone || '').trim(),
@@ -1378,6 +2132,10 @@ function normalizeTechVisit(visit = {}) {
     updatedAt: String(visit.updatedAt || visit.createdAt || new Date().toISOString()).trim(),
     startedAt: String(visit.startedAt || '').trim(),
     closedAt: String(visit.closedAt || '').trim(),
+    clickupTaskId: String(visit.clickupTaskId || '').trim(),
+    clickupTaskUrl: String(visit.clickupTaskUrl || '').trim(),
+    clickupSyncedAt: String(visit.clickupSyncedAt || '').trim(),
+    clickupSyncError: String(visit.clickupSyncError || '').trim(),
     updatedBy: visit.updatedBy ? safeUser(visit.updatedBy) : null,
   };
 }
@@ -1391,6 +2149,7 @@ function buildInstallationOrderFromQuote(quote, user, options = {}) {
   return {
     id: orderId,
     quoteId: quote.id,
+    countryCode: resolveRecordCountryCode(options.countryCode, quote.countryCode, quote.city, address, quote.email),
     quoteNumber: displayQuoteNumber(quote.id),
     clientName: quote.clientName || '',
     clientEmail: quote.email || '',
@@ -1417,44 +2176,153 @@ function buildInstallationOrderFromQuote(quote, user, options = {}) {
   };
 }
 
-function buildAppConfig() {
+function buildAppConfig(countryCode = 'PE') {
+  const activeCountry = normalizeCountryCode(countryCode) || 'ALL';
   const stored = readJSON(files.config, defaultConfig());
+  if (activeCountry === 'ALL') {
+    const roleMatrix = getRoleMatrix();
+    return {
+      company: {
+        name: 'EVINKA Admin Center',
+        tagline: 'Panel global de operación y configuración para Perú y Colombia',
+      },
+      currency: 'PEN',
+      activeCountry,
+      defaults: {
+        ...(stored.defaults || {}),
+        factorGeneralCosts: Number(stored.defaults?.factorGeneralCosts || EXCEL_SOURCE?.defaults?.factorGeneralCosts || 1),
+        divisorMargin: Number(stored.defaults?.divisorMargin || EXCEL_SOURCE?.defaults?.divisorMargin || 0.75),
+        chargerExchangeRate: Number(stored.defaults?.chargerExchangeRate || EXCEL_SOURCE?.defaults?.chargerExchangeRate || 3.75),
+        miniboxPriceUsd: Number(stored.defaults?.miniboxPriceUsd || EXCEL_SOURCE?.defaults?.miniboxPriceUsd || 700),
+        alienPriceUsd: Number(stored.defaults?.alienPriceUsd || EXCEL_SOURCE?.defaults?.alienPriceUsd || 900),
+      },
+      commercialProfiles: normalizeCommercialProfiles(stored.commercialProfiles, Number(stored.defaults?.divisorMargin || EXCEL_SOURCE?.defaults?.divisorMargin || 0.75)),
+      harCatalogs: normalizeHarCatalogs('ALL', stored.harCatalogs),
+      roles: roleMatrix.roles.map((role) => role.id),
+      roleDefinitions: roleMatrix.roles,
+      catalog: buildCatalogFromItems((stored.catalog?.items || EXCEL_SOURCE?.catalog?.items || []), {
+        ...(EXCEL_SOURCE?.defaults || {}),
+        ...(stored.defaults || {}),
+      }),
+    };
+  }
+  const scoped = getStoredCountryConfig(stored, activeCountry);
+  const roleMatrix = getRoleMatrix();
+  const roleIds = roleMatrix.roles.map((role) => role.id);
   if (!EXCEL_SOURCE) {
     const defaults = {
-      ...stored.defaults,
-      factorGeneralCosts: Number(stored.defaults?.factorGeneralCosts || 1),
-      divisorMargin: Number(stored.defaults?.divisorMargin || 0.75),
-      chargerExchangeRate: Number(stored.defaults?.chargerExchangeRate || 3.75),
-      miniboxPriceUsd: Number(stored.defaults?.miniboxPriceUsd || 700),
-      alienPriceUsd: Number(stored.defaults?.alienPriceUsd || 900),
+      ...scoped.defaults,
+      factorGeneralCosts: Number(scoped.defaults?.factorGeneralCosts || 1),
+      divisorMargin: Number(scoped.defaults?.divisorMargin || 0.75),
+      chargerExchangeRate: Number(scoped.defaults?.chargerExchangeRate || 3.75),
+      miniboxPriceUsd: Number(scoped.defaults?.miniboxPriceUsd || 700),
+      alienPriceUsd: Number(scoped.defaults?.alienPriceUsd || 900),
     };
     return {
-      ...stored,
+      ...scoped,
+      activeCountry,
       defaults,
-      commercialProfiles: normalizeCommercialProfiles(stored.commercialProfiles, defaults.divisorMargin),
-      catalog: buildCatalogFromItems(stored.catalog?.items || [], defaults),
+      roles: roleIds,
+      roleDefinitions: roleMatrix.roles,
+      commercialProfiles: normalizeCommercialProfiles(scoped.commercialProfiles, defaults.divisorMargin),
+      harCatalogs: normalizeHarCatalogs(activeCountry, scoped.harCatalogs),
+      catalog: buildCatalogFromItems(scoped.catalog?.items || [], defaults),
     };
   }
   const defaults = {
     ...EXCEL_SOURCE.defaults,
-    ...stored.defaults,
-    factorGeneralCosts: Number(stored.defaults?.factorGeneralCosts ?? EXCEL_SOURCE.defaults.factorGeneralCosts ?? 1),
-    divisorMargin: Number(stored.defaults?.divisorMargin ?? EXCEL_SOURCE.defaults.divisorMargin ?? 0.75),
-    chargerExchangeRate: Number(stored.defaults?.chargerExchangeRate ?? EXCEL_SOURCE.defaults?.chargerExchangeRate ?? 3.75),
-    miniboxPriceUsd: Number(stored.defaults?.miniboxPriceUsd ?? EXCEL_SOURCE.defaults?.miniboxPriceUsd ?? 700),
-    alienPriceUsd: Number(stored.defaults?.alienPriceUsd ?? EXCEL_SOURCE.defaults?.alienPriceUsd ?? 900),
+    ...scoped.defaults,
+    factorGeneralCosts: Number(scoped.defaults?.factorGeneralCosts ?? EXCEL_SOURCE.defaults.factorGeneralCosts ?? 1),
+    divisorMargin: Number(scoped.defaults?.divisorMargin ?? EXCEL_SOURCE.defaults.divisorMargin ?? 0.75),
+    chargerExchangeRate: Number(scoped.defaults?.chargerExchangeRate ?? EXCEL_SOURCE.defaults?.chargerExchangeRate ?? 3.75),
+    miniboxPriceUsd: Number(scoped.defaults?.miniboxPriceUsd ?? EXCEL_SOURCE.defaults?.miniboxPriceUsd ?? 700),
+    alienPriceUsd: Number(scoped.defaults?.alienPriceUsd ?? EXCEL_SOURCE.defaults?.alienPriceUsd ?? 900),
   };
-  const items = Array.isArray(stored.catalog?.items) && stored.catalog.items.length
-    ? stored.catalog.items
+  const items = Array.isArray(scoped.catalog?.items) && scoped.catalog.items.length
+    ? scoped.catalog.items
     : EXCEL_SOURCE.catalog.items;
-  const roles = [...new Set([...(stored.roles?.length ? stored.roles : ['admin', 'tech']), 'tecnico_supervisor'])];
+  const roles = roleIds;
   return {
-    company: { ...EXCEL_SOURCE.company, ...stored.company },
-    currency: 'PEN',
+    company: { ...EXCEL_SOURCE.company, ...scoped.company },
+    currency: scoped.currency || countryCurrency(activeCountry),
+    activeCountry,
     defaults,
-    commercialProfiles: normalizeCommercialProfiles(stored.commercialProfiles, defaults.divisorMargin),
+    commercialProfiles: normalizeCommercialProfiles(scoped.commercialProfiles, defaults.divisorMargin),
+    harCatalogs: normalizeHarCatalogs(activeCountry, scoped.harCatalogs),
     roles,
+    roleDefinitions: roleMatrix.roles,
     catalog: buildCatalogFromItems(items, defaults),
+  };
+}
+
+function normalizeHarCatalogs(countryCode = 'PE', catalogs = {}) {
+  const fallback = defaultHarCatalogs(countryCode);
+  const normalized = { ...fallback };
+  Object.entries(catalogs || {}).forEach(([key, value]) => {
+    if (!Array.isArray(value)) return;
+    normalized[key] = value
+      .map((item) => String(item || '').trim())
+      .filter(Boolean);
+  });
+  return normalized;
+}
+
+function defaultHarCatalogs(countryCode = 'PE') {
+  const rawCountry = String(countryCode || '').trim().toUpperCase();
+  const activeCountry = rawCountry === 'ALL' ? 'ALL' : (normalizeCountryCode(rawCountry) || 'PE');
+  if (activeCountry !== 'CO') {
+    return {
+      chargerReferences: [],
+      cities: [],
+      acometidaTypes: [],
+      acometidaCalibers: [],
+      primaryBreakers: [],
+      appointmentWindows: [],
+      installationRubrics: [],
+      technicalStatuses: [],
+    };
+  }
+  return {
+    chargerReferences: [
+      'Autel Maxicharger 7 kW',
+      'Autel Maxicharger 22 kW',
+      'Wallbox Pulsar Plus',
+      'ABB Terra AC',
+      'EVINKA Home Charger',
+    ],
+    cities: [
+      'Bogotá',
+      'Chía',
+      'Cajicá',
+      'Medellín',
+      'Envigado',
+      'Itagüí',
+      'Cali',
+      'Barranquilla',
+      'Cartagena',
+      'Bucaramanga',
+    ],
+    acometidaTypes: [
+      'Monofásica 220V',
+      'Trifásica 208V',
+      'Trifásica 220V',
+      'Trifásica 440V',
+    ],
+    acometidaCalibers: ['8 AWG', '6 AWG', '4 AWG', '2 AWG', '1/0 AWG'],
+    primaryBreakers: ['2x40A', '2x50A', '2x63A', '3x40A', '3x50A', '3x63A'],
+    appointmentWindows: ['07:00 - 10:00', '10:00 - 13:00', '13:00 - 16:00', '16:00 - 18:00'],
+    installationRubrics: [
+      'Visita técnica',
+      'Mano de obra técnico electricista',
+      'Transportes y herramientas',
+      'Tablero y protecciones',
+      'Cableado y canalización',
+      'Pedestal / base',
+      'Obra civil menor',
+      'Accesorios y terminales',
+      'Validación técnica previa',
+    ],
+    technicalStatuses: ['cotizada', 'lista_envio', 'aceptada_cliente', 'agendada', 'instalada', 'cerrada', 'recotizar', 'cancelada'],
   };
 }
 
@@ -1612,6 +2480,7 @@ function resolveCommercialProfile(config, profileId) {
   const profiles = Array.isArray(config?.commercialProfiles) ? config.commercialProfiles : [];
   const normalizedId = slugProfileId(profileId || '');
   const selected = profiles.find((item) => item.id === normalizedId)
+    || profiles.find((item) => slugProfileId(item.name) === normalizedId)
     || profiles.find((item) => item.isDefault)
     || profiles[0]
     || normalizeCommercialProfile({ id: 'general', name: 'GENERAL', marginPercent: roundMoney((1 - Number(config?.defaults?.divisorMargin || 0.75)) * 100), isDefault: true }, 0, config?.defaults?.divisorMargin || 0.75);
@@ -1642,6 +2511,59 @@ function convertMarginPrice(value, fromDivisor, toDivisor) {
   return roundMoney((price * from) / to);
 }
 
+function computeCountrySpecificAdjustments({ payload = {}, config, subtotalBase = 0, distance = 0 }) {
+  const countryCode = normalizeCountryCode(payload.countryCode || config?.activeCountry || '') || 'PE';
+  const outOfCity = String(payload.outOfCity || '').trim().toUpperCase() === 'SI';
+  const groundingMissing = String(payload.grounding || '').trim().toUpperCase() === 'NO';
+  const reviewRequested = payload.requiresReview === true || String(payload.requiresReview || '').trim().toUpperCase() === 'SI';
+  const reviewDistance = Number(config?.defaults?.coReviewDistanceMeters || 25);
+  const logisticsRate = Number(config?.defaults?.coOutOfCityRate || 0.08);
+  const logisticsMinimum = Number(config?.defaults?.coOutOfCityMinimum || 180000);
+  const reviewFee = Number(config?.defaults?.coTechnicalReviewFee || 0);
+
+  const requiresReview = countryCode === 'CO'
+    ? (groundingMissing || reviewRequested || distance > reviewDistance)
+    : (groundingMissing || reviewRequested);
+
+  const adjustments = [];
+  if (countryCode === 'CO' && outOfCity) {
+    const surcharge = roundMoney(Math.max(subtotalBase * logisticsRate, logisticsMinimum));
+    if (surcharge > 0) {
+      adjustments.push({
+        code: 'CO-LOGISTICA',
+        label: 'Recargo logístico fuera de ciudad',
+        qty: 1,
+        unitPrice: surcharge,
+        total: surcharge,
+        unit: 'UND',
+      });
+    }
+  }
+  if (countryCode === 'CO' && reviewFee > 0 && requiresReview) {
+    adjustments.push({
+      code: 'CO-REVISION',
+      label: 'Validación técnica previa / revisión especializada',
+      qty: 1,
+      unitPrice: roundMoney(reviewFee),
+      total: roundMoney(reviewFee),
+      unit: 'UND',
+    });
+  }
+
+  const reviewReasons = [];
+  if (groundingMissing) reviewReasons.push('No cuenta con puesta a tierra real');
+  if (countryCode === 'CO' && distance > reviewDistance) reviewReasons.push(`Distancia de acometida mayor a ${reviewDistance} m`);
+  if (reviewRequested) reviewReasons.push('Marcada manualmente para revisión');
+  if (countryCode === 'CO' && outOfCity) reviewReasons.push('Instalación fuera de ciudad');
+
+  return {
+    requiresReview,
+    reviewReasons,
+    adjustments,
+    adjustmentsTotal: roundMoney(sumTotals(adjustments)),
+  };
+}
+
 function buildQuote(payload, config, user) {
   const commercialProfile = resolveCommercialProfile(config, payload.commercialProfileId);
   const effectiveConfig = buildQuoteConfigForProfile(config, commercialProfile);
@@ -1663,7 +2585,14 @@ function buildQuote(payload, config, user) {
   const includedRows = computeMandatoryRows(includedMeters, tubeType, cable, effectiveConfig);
   const includedScope = buildBaseIncludedScope({ propertyType, includedMeters, tubeType, cable, charger });
   const additionalMeterage = roundMoney(Math.max(baseObligatoryNormal - sumTotals(includedRows), 0));
-  const subtotal = roundMoney(minimumBase + additionalMeterage + totalConditionals + charger.pricePen);
+  const subtotalBeforeCountryAdjustments = roundMoney(minimumBase + additionalMeterage + totalConditionals + charger.pricePen);
+  const countryAdjustments = computeCountrySpecificAdjustments({
+    payload,
+    config: effectiveConfig,
+    subtotalBase: subtotalBeforeCountryAdjustments,
+    distance,
+  });
+  const subtotal = roundMoney(subtotalBeforeCountryAdjustments + countryAdjustments.adjustmentsTotal);
   const igv = roundMoney(subtotal * Number(effectiveConfig.defaults.igv || 0));
   const total = roundMoney(subtotal + igv);
   const commercialRows = buildCommercialRows({
@@ -1672,27 +2601,63 @@ function buildQuote(payload, config, user) {
     additionalMeterage,
     conditionalRows,
     charger,
+    countryCode: payload.countryCode,
+    countryAdjustments: countryAdjustments.adjustments,
   });
   const photos = sanitizeQuotePhotos(payload.photos);
+
+  const pdfTemplate = resolveQuotePdfTemplate({
+    countryCode: payload.countryCode,
+    companyName: payload.companyName,
+    clientName: payload.clientName,
+    email: payload.email,
+    commercialProfile,
+    commercialProfileId: commercialProfile.id,
+    commercialProfileName: commercialProfile.name,
+  });
 
   return {
     id: `COT-${Date.now().toString(36).toUpperCase()}-${crypto.randomBytes(2).toString('hex').toUpperCase()}`,
     createdAt: new Date().toISOString(),
     createdBy: safeUser(user),
+    countryCode: resolveRecordCountryCode(payload.countryCode, payload.city, payload.clientAddress, payload.address, resolveUserPrimaryCountry(user)),
+    currency: config.currency || countryCurrency(payload.countryCode),
     clientName: String(payload.clientName || '').trim(),
+    clientFirstName: String(payload.clientFirstName || '').trim(),
+    clientLastName: String(payload.clientLastName || '').trim(),
     email: normalizeEmail(payload.email),
+    phone: String(payload.phone || '').trim(),
+    documentType: String(payload.documentType || '').trim(),
     clientDocument: String(payload.clientDocument || payload.ruc || '').trim(),
+    department: String(payload.department || '').trim(),
+    locality: String(payload.locality || '').trim(),
+    neighborhood: String(payload.neighborhood || '').trim(),
+    address: String(payload.address || payload.clientAddress || '').trim(),
+    residenceType: String(payload.residenceType || '').trim(),
+    companyName: String(payload.companyName || '').trim(),
+    vehicleModel: String(payload.vehicleModel || '').trim(),
+    vin: String(payload.vin || '').trim(),
     city: String(payload.city || '').trim(),
     visitDate: String(payload.visitDate || '').trim(),
     installationType: String(payload.installationType || '').trim(),
     clientType: String(payload.clientType || '').trim(),
     commercialProfile,
+    commercialProfileId: commercialProfile.id,
+    commercialProfileName: commercialProfile.name,
+    pdfTemplate,
     propertyType,
     tubeType,
+    chargerReference: String(payload.chargerReference || '').trim(),
+    otherReference: String(payload.otherReference || '').trim(),
+    acometidaType: String(payload.acometidaType || '').trim(),
+    acometidaCaliber: String(payload.acometidaCaliber || '').trim(),
+    primaryBreaker: String(payload.primaryBreaker || '').trim(),
     voltage: Number(payload.voltage || 0),
     current: Number(payload.current || 0),
     grounding: String(payload.grounding || '').trim(),
     outOfCity: String(payload.outOfCity || '').trim(),
+    installationDescription: String(payload.installationDescription || '').trim(),
+    requiresReview: countryAdjustments.requiresReview,
     marginPercent: Number(commercialProfile.marginPercent || 0),
     charger,
     technicianNotes: String(payload.technicianNotes || '').trim(),
@@ -1705,6 +2670,10 @@ function buildQuote(payload, config, user) {
     includedScope,
     baseObligatoryNormal,
     totalConditionals,
+    subtotalBeforeCountryAdjustments,
+    countryAdjustments: countryAdjustments.adjustments,
+    countryAdjustmentsTotal: countryAdjustments.adjustmentsTotal,
+    reviewReasons: countryAdjustments.reviewReasons,
     minimumBase,
     includedMeters,
     additionalMeterage,
@@ -2065,11 +3034,11 @@ function resolveChargerSelection(payload = {}, config = buildAppConfig()) {
   };
 }
 
-function buildCommercialRows({ propertyType, minimumBase, additionalMeterage, conditionalRows, charger }) {
+function buildCommercialRows({ propertyType, minimumBase, additionalMeterage, conditionalRows, charger, countryAdjustments = [], countryCode = 'PE' }) {
   const rows = [
     {
       code: '0060001',
-      label: 'Servicio de instalación estándar de cargador',
+      label: countryCode === 'CO' ? 'Servicio estándar de instalación EVINKA Colombia' : 'Servicio de instalación estándar de cargador',
       qty: 1,
       unitPrice: roundMoney(minimumBase),
       total: roundMoney(minimumBase),
@@ -2089,7 +3058,7 @@ function buildCommercialRows({ propertyType, minimumBase, additionalMeterage, co
   if (additionalMeterage > 0) {
     rows.push({
       code: '0060001A',
-      label: 'Adecuaciones adicionales a la instalación',
+      label: countryCode === 'CO' ? 'Adecuaciones adicionales de canalización y cableado' : 'Adecuaciones adicionales a la instalación',
       qty: 1,
       unitPrice: roundMoney(additionalMeterage),
       total: roundMoney(additionalMeterage),
@@ -2100,6 +3069,15 @@ function buildCommercialRows({ propertyType, minimumBase, additionalMeterage, co
     rows.push({
       ...row,
       label: `Servicios Adicionales: ${row.label}`,
+      qty: 1,
+      unitPrice: roundMoney(row.total),
+      total: roundMoney(row.total),
+      unit: 'UND',
+    });
+  });
+  countryAdjustments.forEach((row) => {
+    rows.push({
+      ...row,
       qty: 1,
       unitPrice: roundMoney(row.total),
       total: roundMoney(row.total),
@@ -2187,78 +3165,562 @@ function getDistanceFactor(distance, factors) {
   return factors.find((item) => distance <= item.upto)?.factor || factors.at(-1)?.factor || 1;
 }
 
+function normalizeConformityDeliveredItems(value) {
+  if (Array.isArray(value)) {
+    return value.map((item) => String(item || '').trim()).filter(Boolean);
+  }
+  return String(value || '')
+    .split(/\r?\n|,/)
+    .map((item) => item.replace(/^[-•\s]+/, '').trim())
+    .filter(Boolean);
+}
+
+function imageBufferFromDataUrl(value = '') {
+  const raw = String(value || '').trim();
+  const match = raw.match(/^data:(image\/[a-zA-Z0-9.+-]+);base64,(.+)$/);
+  if (!match) return null;
+  try {
+    return { mime: match[1], buffer: Buffer.from(match[2], 'base64') };
+  } catch {
+    return null;
+  }
+}
+
+function warrantyValidUntil(value) {
+  const date = value ? new Date(value) : new Date();
+  if (Number.isNaN(date.getTime())) return formatDateOnly(new Date());
+  const valid = new Date(date.getFullYear() + 2, date.getMonth(), date.getDate());
+  return formatDateOnly(valid);
+}
+
+function buildWarrantyCode(seed = '') {
+  const raw = String(seed || '').replace(/[^A-Za-z0-9]/g, '').toUpperCase();
+  const tail = (raw || crypto.randomBytes(4).toString('hex').toUpperCase()).slice(-8);
+  return `EVK-GAR-${new Date().getFullYear()}-${tail}`;
+}
+
+async function createConformityPdfBuffer({ conformity, order, quote }) {
+  return new Promise((resolve, reject) => {
+    const doc = new PDFDocument({ size: 'A4', margin: 40 });
+    const chunks = [];
+    doc.on('data', (chunk) => chunks.push(chunk));
+    doc.on('end', () => resolve(Buffer.concat(chunks)));
+    doc.on('error', reject);
+
+    const logoPath = '/root/.openclaw/workspace/.tmp/evinka_technology_logo.jpg';
+    const deliveredItems = normalizeConformityDeliveredItems(conformity.deliveredItems);
+    const installerSignature = imageBufferFromDataUrl(conformity.installerSignatureUrl);
+    const clientSignature = imageBufferFromDataUrl(conformity.clientSignatureUrl);
+    const photoBuffers = (Array.isArray(conformity.photoUrls) ? conformity.photoUrls : []).map(imageBufferFromDataUrl).filter(Boolean);
+    const implementRows = [
+      ['Caja del cargador', conformity.cajaCargador === true],
+      ['Cargador Evinka', conformity.cargadorEvinka === true],
+      ['Manual del cargador', conformity.manualCargador === true],
+      ['Tarjetas del cargador', conformity.tarjetasCargador === true],
+      [`Adicional: ${conformity.adicionalDesc || '-'}`, conformity.adicional === true],
+    ];
+
+    const palette = {
+      navy: '#17324a',
+      ink: '#101828',
+      slate: '#667085',
+      line: '#d5dbe5',
+      section: '#eef3f8',
+      soft: '#f8fafc',
+    };
+
+    if (fs.existsSync(logoPath)) doc.image(logoPath, 40, 26, { width: 54 });
+    doc.font('Helvetica-Bold').fontSize(11.2).fillColor(palette.slate).text('EVINKA TECHNOLOGY S.A.S.', 102, 28, { width: 280, align: 'left' });
+    doc.font('Helvetica-Bold').fontSize(15.5).fillColor(palette.navy).text('CONFORMIDAD DE INSTALACIÓN', 102, 42, { width: 320, align: 'left' });
+    doc.font('Helvetica').fontSize(8.8).fillColor(palette.slate).text(`Fecha: ${formatDateOnly(conformity.date || conformity.createdAt || new Date().toISOString())}`, 420, 28, { width: 120, align: 'right' });
+    let y = 30;
+    if (conformity.quoteId) doc.font('Helvetica').fontSize(8.7).fillColor(palette.ink).text(`Cotización: ${conformity.quoteId}`, 375, y + 16, { width: 165, align: 'right' });
+    if (conformity.installationOrderId) doc.text(`Orden: ${conformity.installationOrderId}`, 375, y + 29, { width: 165, align: 'right' });
+    doc.moveTo(40, 90).lineTo(555, 90).strokeColor(palette.line).lineWidth(1).stroke();
+    y = 104;
+
+    const drawMetaCard = (x, width, title, value) => {
+      const boxH = 28;
+      doc.roundedRect(x, y, width, boxH, 8).fillAndStroke(palette.soft, palette.line);
+      doc.font('Helvetica-Bold').fontSize(8.4).fillColor(palette.slate).text(title.toUpperCase(), x + 10, y + 6, { width: width - 20, align: 'left' });
+      doc.font('Helvetica-Bold').fontSize(10.2).fillColor(palette.navy).text(String(value || '-'), x + 10, y + 15, { width: width - 20, align: 'left' });
+    };
+    drawMetaCard(40, 252, 'Conformidad', conformity.id || '-');
+    drawMetaCard(303, 252, 'Garantía', conformity.warrantyCode || 'Pendiente de emisión');
+    y += 40;
+
+    const section = (title) => {
+      y += 14;
+      doc.rect(40, y, 515, 18).fill(palette.section);
+      doc.fillColor(palette.navy).font('Helvetica-Bold').fontSize(9.6).text(title, 46, y + 5);
+      y += 26;
+    };
+    const textH = (text, width, size = 10, align = 'left') => {
+      doc.font('Helvetica').fontSize(size);
+      return doc.heightOfString(String(text || '-'), { width, align });
+    };
+    const drawField = (x, width, label, value) => {
+      const labelText = `${label}:`;
+      const valueText = String(value || '-');
+      doc.font('Helvetica-Bold').fontSize(8.6).fillColor(palette.slate).text(labelText.toUpperCase(), x, y, { width, height: 11, ellipsis: true });
+      const labelHeight = textH(labelText.toUpperCase(), width, 8.6);
+      doc.font('Helvetica').fontSize(10.2).fillColor(palette.ink).text(valueText, x, y + labelHeight + 2, { width, align: 'left' });
+      const valueHeight = textH(valueText, width, 10.2);
+      return labelHeight + 2 + valueHeight;
+    };
+    const drawTwoFields = (left, right, gap = 20) => {
+      const leftH = drawField(left.x, left.width, left.label, left.value);
+      const rightH = drawField(right.x, right.width, right.label, right.value);
+      y += Math.max(leftH, rightH) + gap;
+    };
+    const drawBoxParagraph = (title, text) => {
+      section(title);
+      const content = String(text || 'Sin observaciones adicionales registradas.');
+      const boxH = Math.max(40, textH(content, 500, 10, 'justify') + 14);
+      doc.rect(40, y, 515, boxH).fill(palette.soft).strokeColor(palette.line).lineWidth(0.6).stroke();
+      doc.font('Helvetica').fontSize(10).fillColor(palette.ink).text(content, 46, y + 6, { width: 502, align: 'justify' });
+      y += boxH + 10;
+    };
+    const drawCheckboxRow = (label, checked) => {
+      const boxX = 46;
+      const boxY = y + 2;
+      doc.rect(boxX, boxY, 10, 10).strokeColor(palette.navy).lineWidth(0.8).stroke();
+      if (checked) {
+        doc.save();
+        doc.lineWidth(1.2).strokeColor(palette.navy)
+          .moveTo(boxX + 2, boxY + 5)
+          .lineTo(boxX + 4, boxY + 8)
+          .lineTo(boxX + 8, boxY + 2)
+          .stroke();
+        doc.restore();
+      }
+      const rowText = String(label || '-');
+      const rowHeight = Math.max(14, textH(rowText, 460, 10));
+      doc.font('Helvetica').fontSize(10).fillColor(palette.ink).text(rowText, 64, y, { width: 460, align: 'left' });
+      y += rowHeight + 4;
+    };
+
+    section('DATOS DEL CLIENTE / REPRESENTANTE');
+    y += drawField(40, 515, 'Cliente', formatDisplayName(conformity.clientName) || '-') + 6;
+    drawTwoFields(
+      { x: 40, width: 245, label: 'RUC o DNI', value: conformity.ruc || '-' },
+      { x: 310, width: 245, label: 'Correo', value: conformity.clientEmail || '-' },
+      8,
+    );
+    y += drawField(40, 515, 'Dirección', conformity.address || '-') + 6;
+
+    drawBoxParagraph('OBSERVACIONES / RECOMENDACIONES', conformity.observations || 'Sin observaciones adicionales registradas.');
+
+    section('PARÁMETROS DE INSTALACIÓN');
+    drawTwoFields(
+      { x: 40, width: 245, label: 'Marca', value: conformity.chargerBrand || '-' },
+      { x: 310, width: 245, label: 'N/S', value: conformity.serialNumber || '-' },
+      8,
+    );
+    drawTwoFields(
+      { x: 40, width: 245, label: 'Volt.', value: conformity.voltage || '-' },
+      { x: 310, width: 245, label: 'Amp.', value: conformity.amperage || '-' },
+      8,
+    );
+    drawTwoFields(
+      { x: 40, width: 245, label: 'Otro', value: conformity.other || '-' },
+      { x: 310, width: 245, label: 'Potencia kW', value: conformity.powerKw || '-' },
+      8,
+    );
+
+    section('IMPLEMENTOS ENTREGADOS AL CLIENTE/REPRESENTANTE');
+    implementRows.forEach(([label, checked]) => drawCheckboxRow(label, checked));
+
+    section('TRAZABILIDAD DOCUMENTAL');
+    const conformityTrace = buildTraceabilityLines({
+      orderCode: conformity.installationOrderId || conformity.quoteId || '-',
+      warrantyCode: conformity.warrantyCode || 'Pendiente de emisión',
+      serialNumber: conformity.serialNumber || '-',
+      record: conformity.id || conformity.installationOrderId || conformity.quoteId || '-',
+    });
+    conformityTrace.forEach((traceLine) => {
+      const lineText = String(traceLine || '-');
+      const lineHeight = textH(lineText, 515, 9.3, 'justify');
+      doc.font('Helvetica').fontSize(9.3).fillColor(palette.ink).text(lineText, 40, y, { width: 515, align: 'justify' });
+      y += lineHeight + 5;
+    });
+    y += 2;
+
+    doc.addPage({ size: 'A4', margin: 40 });
+    y = 40;
+
+    section('DECLARACIÓN Y FIRMAS');
+    const declarationText = 'EL CLIENTE/REPRESENTANTE declara recibir conforme la instalación e implementos detallados en el presente documento, salvo observaciones indicadas. Asimismo, autoriza a EVINKA el registro y uso de fotografías de la instalación y equipos con fines de soporte técnico, garantía, trazabilidad, capacitación, estudio interno y material comercial o publicitario, evitando divulgar información sensible del cliente. Los registros digitales, validaciones electrónicas, fotografías y reportes generados por los sistemas EVINKA constituyen medios válidos de conformidad y trazabilidad del servicio.';
+    const declarationHeight = textH(declarationText, 515, 9);
+    doc.font('Helvetica').fontSize(9).fillColor(palette.ink).text(declarationText, 40, y, { width: 515, align: 'justify' });
+    y += declarationHeight + 22;
+    const signatureY = y;
+    const drawSignature = (x, width, label, img, fallback) => {
+      if (img?.buffer) {
+        try {
+          doc.image(img.buffer, x + 10, signatureY - 18, { fit: [width - 20, 56] });
+        } catch {
+          doc.moveTo(x, signatureY + 34).lineTo(x + width, signatureY + 34).strokeColor(palette.line).lineWidth(1).stroke();
+        }
+      } else {
+        doc.moveTo(x, signatureY + 34).lineTo(x + width, signatureY + 34).strokeColor(palette.line).lineWidth(1).stroke();
+      }
+      doc.font('Helvetica-Bold').fontSize(8.8).fillColor(palette.navy).text(label, x, signatureY + 44, { width, align: 'center' });
+      doc.font('Helvetica').fontSize(8.3).fillColor(palette.slate).text(fallback, x, signatureY + 58, { width, align: 'center' });
+    };
+    drawSignature(56, 220, 'RESPONSABLE DE LA INSTALACIÓN', installerSignature, order?.assignedTechnician || order?.assignedTechEmail || 'Equipo EVINKA');
+    drawSignature(310, 220, 'CLIENTE / REPRESENTANTE', clientSignature, formatDisplayName(conformity.clientName) || 'Cliente');
+
+    if (photoBuffers.length) {
+      doc.addPage({ size: 'A4', margin: 40 });
+      doc.font('Helvetica-Bold').fontSize(13).fillColor('#111').text('REGISTRO FOTOGRÁFICO DE LA INSTALACIÓN', 0, 40, { align: 'center' });
+      let photoY = 88;
+      photoBuffers.slice(0, 2).forEach((photo, index) => {
+        doc.font('Helvetica-Bold').fontSize(10).text(`Foto ${index + 1}`, 40, photoY);
+        try {
+          doc.image(photo.buffer, 40, photoY + 18, { fit: [500, 280], align: 'center', valign: 'center' });
+        } catch {
+          doc.rect(40, photoY + 18, 500, 220).strokeColor('#999').stroke();
+          doc.font('Helvetica').fontSize(10).text('No se pudo renderizar la imagen.', 180, photoY + 120);
+        }
+        photoY += 310;
+      });
+    }
+    doc.end();
+  });
+}
+
+async function createWarrantyPdfBuffer({ warranty, order, quote }) {
+  return new Promise((resolve, reject) => {
+    const doc = new PDFDocument({ size: 'A4', margin: 40 });
+    const chunks = [];
+    doc.on('data', (chunk) => chunks.push(chunk));
+    doc.on('end', () => resolve(Buffer.concat(chunks)));
+    doc.on('error', reject);
+    const logoPath = '/root/.openclaw/workspace/.tmp/evinka_technology_logo.jpg';
+    const installerSignature = imageBufferFromDataUrl(warranty.installerSignatureUrl);
+    const clientSignature = imageBufferFromDataUrl(warranty.clientSignatureUrl);
+    if (fs.existsSync(logoPath)) doc.image(logoPath, 40, 28, { width: 58 });
+    doc.font('Helvetica-Bold').fontSize(20).fillColor('#111').text('GARANTÍA EVINKA · 2 AÑOS', 0, 44, { align: 'center' });
+    doc.font('Helvetica').fontSize(10).fillColor('#555').text(`Código ${warranty.warrantyCode}`, 0, 70, { align: 'center' });
+    doc.moveTo(40, 96).lineTo(555, 96).strokeColor('#d0d0d0').lineWidth(1).stroke();
+    let y = 118;
+    const row = (label, value) => {
+      doc.font('Helvetica-Bold').fontSize(10).fillColor('#111').text(`${label}:`, 40, y, { width: 120 });
+      doc.font('Helvetica').text(String(value || '-'), 150, y, { width: 390 });
+      y += 18;
+    };
+    row('Titular', formatDisplayName(warranty.clientName) || '-');
+    row('Correo', warranty.clientEmail || '-');
+    row('Documento', warranty.clientDocument || '-');
+    row('Dirección', warranty.address || '-');
+    row('Orden EVINKA', warranty.installationOrderId || '-');
+    row('Cotización', warranty.quoteId || '-');
+    row('Producto', warranty.chargerBrand || '-');
+    row('Serie', warranty.serialNumber || '-');
+    row('Vigencia hasta', warranty.validUntil || '-');
+    y += 8;
+    doc.font('Helvetica-Bold').fontSize(10).fillColor('#111').text('TRAZABILIDAD DOCUMENTAL', 40, y);
+    y += 18;
+    buildTraceabilityLines({
+      orderCode: warranty.installationOrderId || warranty.quoteId || '-',
+      warrantyCode: warranty.warrantyCode || '-',
+      serialNumber: warranty.serialNumber || '-',
+      record: warranty.id || warranty.warrantyCode || '-',
+    }).forEach((line) => {
+      doc.font('Helvetica').fontSize(9.3).fillColor('#111').text(line, 40, y, { width: 515, align: 'justify' });
+      y += 14;
+    });
+    y += 8;
+    doc.roundedRect(40, y, 515, 122, 12).fillAndStroke('#fbfaf8', '#d8c7aa');
+    doc.font('Helvetica-Bold').fontSize(11).fillColor('#8b6a3e').text('ALCANCE Y SEGURIDAD', 56, y + 14);
+    doc.font('Helvetica').fontSize(9.5).fillColor('#222').text(
+      buildWarrantyNote(quote),
+      56,
+      y + 34,
+      { width: 480, align: 'justify' },
+    );
+    y += 150;
+    doc.font('Helvetica-Bold').fontSize(10).fillColor('#111').text('CONDICIONES ESPECÍFICAS DE GARANTÍA', 40, y);
+    y += 18;
+    buildWarrantyLegalLines().forEach((line) => {
+      doc.font('Helvetica').fontSize(9.1).fillColor('#111').text(line, 40, y, { width: 515, align: 'justify' });
+      y += 32;
+    });
+    y += 8;
+    doc.font('Helvetica-Bold').fontSize(10).fillColor('#111').text('Validación documental', 40, y);
+    y += 18;
+    doc.font('Helvetica').fontSize(9.5).text('EVINKA valida antecedentes, evidencia fotográfica, condiciones de seguridad y consistencia entre equipo, dirección e instalación registrada.', 40, y, { width: 515, align: 'justify' });
+    y += 60;
+    const drawSignature = (x, label, img, fallback) => {
+      if (img?.buffer) {
+        try {
+          doc.image(img.buffer, x, y, { fit: [160, 56] });
+        } catch {
+          doc.moveTo(x, y + 38).lineTo(x + 160, y + 38).strokeColor('#999').lineWidth(0.8).stroke();
+        }
+      } else {
+        doc.moveTo(x, y + 38).lineTo(x + 160, y + 38).strokeColor('#999').lineWidth(0.8).stroke();
+      }
+      doc.font('Helvetica-Bold').fontSize(9).fillColor('#111').text(label, x, y + 46, { width: 160, align: 'center' });
+      doc.font('Helvetica').fontSize(8.5).fillColor('#666').text(fallback, x, y + 60, { width: 160, align: 'center' });
+    };
+    drawSignature(56, 'EVINKA / Responsable técnico', installerSignature, order?.assignedTechnician || order?.assignedTechEmail || 'Equipo EVINKA');
+    drawSignature(336, 'Cliente / Titular', clientSignature, formatDisplayName(warranty.clientName) || 'Cliente');
+    drawFooter(doc);
+    doc.end();
+  });
+}
+
 async function createPdf(quote, config, filePath) {
   return new Promise((resolve, reject) => {
     const doc = new PDFDocument({ size: 'A4', margin: 36 });
     const stream = fs.createWriteStream(filePath);
     doc.pipe(stream);
     const logoPath = '/root/.openclaw/workspace/.tmp/evinka_technology_logo.jpg';
-    const bankRows = [
-      ['BCP', 'SOLES', '1949917309036', '00219400991730906398'],
-      ['BCP', 'DÓLAR', '1949897105165', '00219400989710516595'],
-    ];
+    const templateKind = quotePdfTemplateKind(quote);
+    const currencyLabel = pdfCurrencyLabel(quote);
+    const motorysaHeaderPath = '/root/.openclaw/workspace/.tmp/motorysa-assets/motorysa-header-strip.png';
+    const motorysaCarPath = '/root/.openclaw/workspace/.tmp/motorysa-assets/motorysa-car.jpg';
 
-    drawQuoteHeader(doc, quote, logoPath);
+    let cursorY = 204;
+    if (templateKind === 'motorysa' && quote.countryCode === 'CO') {
+      drawMotorysaCoverPage(doc, quote, { headerStripPath: motorysaHeaderPath, carImagePath: motorysaCarPath });
+      doc.addPage();
+      drawMotorysaPhotoPricingPage(doc, quote);
+      doc.addPage();
+      drawMotorysaPaymentsPage(doc, quote);
+      doc.addPage();
+      drawMotorysaTermsPage(doc, quote);
+    } else {
+      drawQuoteHeader(doc, quote, logoPath);
+      doc.fontSize(10).font('Helvetica').text(buildGreeting(quote.clientName), 36, 160);
+      doc.text(buildQuoteIntro(quote), 36, 174, { width: 523 });
+      const sections = buildQuoteSectionsForPdf(quote);
+      sections.forEach((section, index) => {
+        cursorY = writeSectionTitle(doc, cursorY + (index === 0 ? 0 : 2), `${index + 1}. ${section.title}`, quote, logoPath);
+        section.lines.forEach((line) => {
+          cursorY = writePlainParagraph(doc, cursorY, line, 36, 523, quote, logoPath);
+        });
+        if (section.bullets?.length) {
+          section.bullets.forEach((line) => {
+            cursorY = writeBulletParagraph(doc, cursorY, line, 72, quote, logoPath);
+          });
+        }
+      });
 
-    doc.fontSize(10).font('Helvetica').text(buildGreeting(quote.clientName), 36, 160);
-    doc.text('Nos es grato presentar la siguiente cotización por el servicio de instalación propuesto:', 36, 174, { width: 523 });
+      const tableTitle = templateKind === 'motorysa' ? 'CUADRO DE PRECIOS INSTALACIÓN (NO INCLUYE CARGADOR)' : 'CUADRO DE PRECIOS - INSTALACIÓN';
+      cursorY = ensurePageSpace(doc, cursorY + 10, 210, quote, logoPath, true);
+      doc.font('Helvetica-Bold').fontSize(10).text(tableTitle, 36, cursorY, { width: 523 });
+      cursorY += 18;
+      const commercialTableBottom = drawTable(doc, [28, 38, 42, 64, 215, 68, 68], ['It.', 'Cant.', 'Unid', 'Código', 'Descripción', `Precio Unit. ${currencyLabel}`, `Total ${currencyLabel}`], quote.commercialRows.map((row, index) => [String(index + 1), formatNumber(row.qty), normalizeUnit(row.unit), row.code, row.label, pdfAmount(quote, row.unitPrice), pdfAmount(quote, row.total)]), { x: 36, y: cursorY, rowHeight: 18, headerHeight: 20, fontSize: 8.3 });
 
-    const commercialTableBottom = drawTable(doc, [28, 38, 42, 64, 215, 68, 68], ['It.', 'Cant.', 'Unid', 'Código', 'Descripción', 'Precio Unit. S/', 'Total S/'], quote.commercialRows.map((row, index) => [String(index + 1), formatNumber(row.qty), normalizeUnit(row.unit), row.code, row.label, amount(row.unitPrice), amount(row.total)]), { x: 36, y: 204, rowHeight: 18, headerHeight: 20, fontSize: 8.3 });
+      let tailY = commercialTableBottom + 10;
+      const summaryLines = [
+        `SUBTOTAL INSTALACIÓN ${currencyLabel} ${pdfAmount(quote, quote.subtotal)}`,
+        `IVA ${quote.countryCode === 'CO' ? '19%' : '18%'} ${currencyLabel} ${pdfAmount(quote, quote.igv)}`,
+        `TOTAL INSTALACIÓN IVA INCLUIDO ${currencyLabel} ${pdfAmount(quote, quote.total)}`,
+        'Nota: Este valor NO incluye el cargador.',
+        `Validez de la cotización: ${quote.countryCode === 'CO' ? '7 días' : '30 días'}`,
+        ...(templateKind === 'motorysa' ? ['Forma de pago: Contado'] : []),
+        'Duración estimada de la instalación: 1-2 días',
+        'Garantía materiales y cargador por defectos de fabricación: 1 año',
+        ...(quote.countryCode === 'CO'
+          ? ['La propuesta incluye autodeclaración de cumplimiento RETIE por parte del constructor. No incluye dictamen de uso final; en caso de requerirse es un costo adicional.']
+          : []),
+      ];
+      doc.fontSize(9.2).font('Helvetica');
+      summaryLines.forEach((line) => {
+        tailY = writePlainParagraph(doc, tailY, line, 36, 523, quote, logoPath);
+      });
 
-    const termsTop = commercialTableBottom + 10;
-    doc.fontSize(9.5).font('Helvetica');
-    doc.text(`Lugar de instalación : ${quote.city || 'LIMA'}`, 36, termsTop);
-    doc.text('Tiempo de ejecución : 5 días', 36, termsTop + 14);
-    doc.text('Validez de cotización : 30 días', 36, termsTop + 28);
-    doc.text('Forma de pago : 50% de adelanto y 50% al finalizar la instalación', 36, termsTop + 42, { width: 315 });
-    doc.text('Garantía : 12 meses', 36, termsTop + 58);
-
-    drawSummaryBox(doc, 350, termsTop, [
-      ['SUB TOTAL', amount(quote.subtotal)],
-      ['IGV', amount(quote.igv)],
-      ['TOTAL', amount(quote.total)],
-    ]);
-
-    let cursorY = Math.max(termsTop + 92, termsTop + 24 + 60);
-    cursorY = writeSectionTitle(doc, cursorY, 'Servicio de Instalación Estándar de Cargador', quote, logoPath);
-    cursorY = writeBulletParagraph(doc, cursorY, buildServiceParagraph(quote), 72, quote, logoPath);
-    for (const line of buildIncludedBulletLines(quote)) {
-      cursorY = writeBulletParagraph(doc, cursorY, line, 72, quote, logoPath);
-    }
-
-    if (quote.commercialRows.length > 1) {
-      for (const row of quote.commercialRows.slice(1)) {
-        cursorY = writeSectionTitle(doc, cursorY + 4, row.label, quote, logoPath);
-        cursorY = writeBulletParagraph(doc, cursorY, buildAdditionalParagraph(row, quote), 72, quote, logoPath);
+      tailY += 6;
+      tailY = writeSectionTitle(doc, tailY, 'Observaciones', quote, logoPath);
+      for (const line of buildObservationLines(quote)) {
+        tailY = writeBulletParagraph(doc, tailY, line, 72, quote, logoPath);
       }
+      if (String(quote.technicianNotes || '').trim()) {
+        tailY = writePlainParagraph(doc, tailY + 4, `Observaciones técnicas adicionales: ${String(quote.technicianNotes || '').trim()}`, 36, 523, quote, logoPath);
+      }
+      tailY = writeSignatureBlock(doc, tailY + 10, quote, logoPath);
+
+      drawFooter(doc, quote);
+      renderPhotoReport(doc, quote, logoPath);
     }
-
-    cursorY = writeSectionTitle(doc, cursorY + 6, 'Observaciones', quote, logoPath);
-    for (const line of buildObservationLines(quote)) {
-      cursorY = writeBulletParagraph(doc, cursorY, line, 72, quote, logoPath);
-    }
-    cursorY = writePlainParagraph(doc, cursorY + 4, buildWarrantyNote(quote), 36, 523, quote, logoPath);
-    if (String(quote.technicianNotes || '').trim()) {
-      cursorY = writePlainParagraph(doc, cursorY + 6, `Comentarios adicionales: ${String(quote.technicianNotes || '').trim()}`, 36, 523, quote, logoPath);
-    }
-    cursorY = writePlainParagraph(doc, cursorY + 10, 'Gracias por su atención. Quedamos atentos a cualquier consulta.', 36, 523, quote, logoPath);
-    cursorY = writeSignatureBlock(doc, cursorY + 8, quote, logoPath);
-
-    const bankStartY = ensurePageSpace(doc, cursorY + 18, 160, quote, logoPath, true);
-    const bankTableBottom = drawTable(doc, [90, 90, 145, 198], ['BANCO', 'MONEDA', 'N° CUENTA', 'N° CCI'], bankRows, { x: 36, y: bankStartY, rowHeight: 18, headerHeight: 18, fontSize: 8.5 });
-    let noteY = bankTableBottom;
-    noteY = drawBorderNote(doc, 36, noteY, 523, 'BANCO DE CRÉDITO DEL PERÚ');
-    noteY = drawBorderNote(doc, 36, noteY, 523, 'DOMICILIO: CALLE LAS CAMELIAS 750 INT. BANKING AND LEASING AREA SAN ISIDRO, LIMA');
-    noteY = drawBorderNote(doc, 36, noteY, 523, 'CODIGO SWIFT: BCPLPEPL');
-    noteY = drawBorderNote(doc, 36, noteY, 523, 'CUENTA DE DETRACCIONES BANCO DE LA NACION: 00-003-338576');
-
-    drawFooter(doc);
-
-    renderPhotoReport(doc, quote, logoPath);
 
     doc.end();
     stream.on('finish', resolve);
     stream.on('error', reject);
+  });
+}
+
+function drawMotorysaPaymentsPage(doc, quote = {}) {
+  const x = 36;
+  const width = 523;
+  doc.font('Helvetica-Bold').fontSize(24).fillColor('#222').text('Motorysa', x, 28, { width, align: 'right' });
+  doc.rect(x, 64, width, 10).fill('#ff120a');
+  let y = 92;
+  doc.fillColor('#111').font('Helvetica-Bold').fontSize(12).text('Cuentas autorizadas para pagos', x, y, { width });
+  y += 20;
+  doc.font('Helvetica').fontSize(10).text('A continuación, nos permitimos informar los medios de pago establecidos por Motorysa:', x, y, { width, align: 'justify' });
+  y += 18;
+  doc.font('Helvetica').fontSize(9.8).text('✓ Efectivo    ✓ Tarjeta débito    ✓ Tarjeta crédito    ✓ Consignaciones o transferencias bancarias    ✓ Cheques al día', x, y, { width, align: 'left' });
+  y += 28;
+  doc.font('Helvetica-Bold').fontSize(10.2).fillColor('#d71920').text('TARJETAS DÉBITO Y CRÉDITO', x, y, { width });
+  y += 16;
+  doc.font('Helvetica').fontSize(9.6).fillColor('#111').text('Estos mecanismos de pago requieren presentación personal del titular en la caja.', x, y, { width });
+  y += 24;
+  doc.font('Helvetica-Bold').fontSize(10.2).fillColor('#d71920').text('CONSIGNACIONES O TRANSFERENCIAS BANCARIAS', x, y, { width });
+  y += 16;
+  doc.font('Helvetica').fontSize(9.6).fillColor('#111').text('Los pagos podrán ser realizados en los siguientes bancos:', x, y, { width });
+  y += 18;
+  y = drawMotorysaBankTable(doc, x, y, width);
+  y += 14;
+  doc.font('Helvetica-Bold').fontSize(9.8).text('Titular cuenta', x, y, { width });
+  y += 15;
+  doc.font('Helvetica-Bold').fontSize(9.6).text('Motores y Máquinas S.A. – Motorysa.', x, y, { width });
+  y += 14;
+  doc.font('Helvetica-Bold').fontSize(9.2).text('NIT. 860.019.063-8', x, y, { width });
+  y += 18;
+  doc.font('Helvetica').fontSize(9.4).text('Favor remitir soporte de pago a su asesor.', x, y, { width });
+  y += 22;
+  doc.font('Helvetica-Bold').fontSize(10.2).fillColor('#d71920').text('CHEQUES', x, y, { width });
+  y += 16;
+  doc.font('Helvetica').fontSize(9.2).fillColor('#111').text('Deben ser girados únicamente a nombre de Motorysa, utilizando las siguientes posibilidades de detalle en la casilla "páguese a:".', x, y, { width, align: 'justify' });
+  y += 28;
+  doc.font('Helvetica').fontSize(9.2).text('Motores y Máquinas S.A. - Motorysa    |    Motores y Máquinas S.A.    |    Motorysa', x, y, { width });
+}
+
+function drawMotorysaBankTable(doc, x, y, width) {
+  const border = '#777';
+  const red = '#e11';
+  const cols = [66, 60, 52, 82, 98, 82, 83];
+  const banks = [
+    ['Banco Agrario', 'Corriente', '0850-\n012071-\n5', '4'],
+    ['Banco Av\nVillas', 'Ahorros', '059-\n00352-5', '3'],
+    ['Banco de\nBogotá', 'Corriente', '000-\n34439-0', '3'],
+    ['Banco\nDavivienda', 'Corriente', '1080-\n29160-6', '4'],
+    ['Banco de\nCrédito', 'Ahorros', '010-\n35137-9', '3'],
+    ['Banco de\nOccidente', 'Corriente', '256-\n05628-4', '3'],
+  ];
+  const h1 = 24;
+  const h2 = 22;
+  const h3 = 22;
+  const rowH = 38;
+  const cell = (cx, cy, w, h, text, { bold = false, color = '#111', align = 'center', fontSize = 8.2, paddingY = 5 } = {}) => {
+    doc.rect(cx, cy, w, h).lineWidth(0.6).strokeColor(border).stroke();
+    doc.font(bold ? 'Helvetica-Bold' : 'Helvetica').fontSize(fontSize).fillColor(color).text(String(text || ''), cx + 4, cy + paddingY, { width: w - 8, align });
+  };
+  let cx = x;
+  cell(cx, y, cols[0], h1 + h2 + h3, 'ENTIDAD', { bold: true, color: red, fontSize: 8.6, paddingY: 24 }); cx += cols[0];
+  cell(cx, y, cols[1], h1 + h2 + h3, 'TIPO DE\nCUENTA', { bold: true, color: red, fontSize: 8.4, paddingY: 20 }); cx += cols[1];
+  cell(cx, y, cols[2], h1 + h2 + h3, '# DE\nCUENTA', { bold: true, color: red, fontSize: 8.4, paddingY: 20 }); cx += cols[2];
+  cell(cx, y, cols[3] + cols[4] + cols[5] + cols[6], h1, 'TIEMPO DE CONFIRMACIÓN', { bold: true, color: red, fontSize: 8.6 });
+  cell(cx, y + h1, cols[3] + cols[4], h2, 'CONSIGNACIÓN', { bold: true, color: red, fontSize: 8.4 });
+  cell(cx + cols[3] + cols[4], y + h1, cols[5] + cols[6], h2, 'TRANSFERENCIA ACH', { bold: true, color: red, fontSize: 8.4 });
+  cell(cx, y + h1 + h2, cols[3], h3, 'CHEQUE (Días\nHábiles)', { bold: true, color: red, fontSize: 7.8 });
+  cell(cx + cols[3], y + h1 + h2, cols[4], h3, 'EFECTIVO', { bold: true, color: red, fontSize: 8 });
+  cell(cx + cols[3] + cols[4], y + h1 + h2, cols[5], h3, 'Antes de\nlas 11 am', { bold: true, color: red, fontSize: 7.8 });
+  cell(cx + cols[3] + cols[4] + cols[5], y + h1 + h2, cols[6], h3, 'Después de\nlas 11 am', { bold: true, color: red, fontSize: 7.8 });
+
+  const dataTop = y + h1 + h2 + h3;
+  const dataHeight = rowH * 6;
+  const confX = x + cols[0] + cols[1] + cols[2];
+  const chequeX = confX;
+  const efectivoX = confX + cols[3];
+  const beforeX = efectivoX + cols[4];
+  const afterX = beforeX + cols[5];
+
+  // Primeras tres columnas sí van por fila.
+  let rowY = dataTop;
+  banks.forEach((row) => {
+    let currentX = x;
+    row.slice(0, 3).forEach((value, index) => {
+      cell(currentX, rowY, cols[index], rowH, value, { align: index === 0 ? 'left' : 'center', fontSize: 8.4, paddingY: 10 });
+      currentX += cols[index];
+    });
+    rowY += rowH;
+  });
+
+  // CONSIGNACIÓN
+  let consY = dataTop;
+  ['4', '3', '3', '4', '3', '3'].forEach((value) => {
+    cell(chequeX, consY, cols[3], rowH, value, { fontSize: 8.6, paddingY: 10 });
+    consY += rowH;
+  });
+  cell(efectivoX, dataTop, cols[4], dataHeight / 2, 'Después 3pm, día\nhábil siguiente', { fontSize: 8.4, paddingY: 46 });
+  cell(efectivoX, dataTop + (dataHeight / 2), cols[4], dataHeight / 2, '1 Hora', { fontSize: 8.8, paddingY: 54 });
+
+  // TRANSFERENCIA ACH: encabezados arriba y abajo un solo rectángulo grande por columna.
+  cell(beforeX, dataTop, cols[5], dataHeight, '1 Hora', { fontSize: 8.8, paddingY: 96 });
+  cell(afterX, dataTop, cols[6], dataHeight, '8 am Día Hábil\nsiguiente', { fontSize: 8.4, paddingY: 92 });
+
+  return dataTop + dataHeight;
+}
+
+function drawMotorysaTermsPage(doc, quote = {}) {
+  const x = 36;
+  const width = 523;
+  doc.font('Helvetica-Bold').fontSize(24).fillColor('#222').text('Motorysa', x, 28, { width, align: 'right' });
+  doc.rect(x, 64, width, 10).fill('#ff120a');
+  let y = 92;
+  doc.fillColor('#111').font('Helvetica').fontSize(9.4).text('Para el diligenciamiento de sus cheques, favor tener en cuenta las siguientes recomendaciones:', x, y, { width, align: 'justify' });
+  y += 22;
+  const chequeTips = [
+    'Los cheques deben venir perfectamente diligenciados, sin enmendaduras, tachones, borrones, rotos, pegados, cinta, perforaciones, etc.',
+    'No pueden ser diligenciados en dos tintas; se debe usar un solo color.',
+    'La fecha del cheque debe coincidir con la fecha de pago, excepto en el caso de cheques posfechados.',
+    'Los cheques de persona natural deben ser diligenciados de puño y letra del cliente.',
+    'Los únicos cheques que se reciben diligenciados a máquina son aquellos girados por una persona jurídica.',
+  ];
+  chequeTips.forEach((line, index) => {
+    doc.font('Helvetica').fontSize(9.2).text(`${index + 1}.-`, x + 10, y, { width: 18 });
+    doc.text(line, x + 30, y, { width: width - 30, align: 'justify' });
+    y = doc.y + 4;
+  });
+  y += 8;
+  doc.font('Helvetica').fontSize(9.2).text('Todos los pagos recibidos en cheque deben ser previamente autorizados por la compañía avaladora. Por tal motivo, es necesario que el girador firme el formato de autorización establecido por cada entidad. Para efectos de confirmación, la compañía avaladora podrá solicitar documentación adicional al cliente. En caso de cheque de persona jurídica, es necesario el sello de la compañía junto con la firma del representante legal.', x, y, { width, align: 'justify' });
+  y = doc.y + 18;
+  doc.font('Helvetica-Bold').fontSize(10).text('Departamento financiero', x, y, { width });
+  y += 24;
+  doc.font('Helvetica-Bold').fontSize(12).text('TÉRMINOS Y CONDICIONES', x, y, { width, align: 'center' });
+  y += 28;
+  const terms = [
+    {
+      title: '1. Al momento de realizar el pago se entienden como aceptadas y comprendidas las condiciones aquí definidas.',
+      body: [
+        'Se debe tener en cuenta y coordinar lo siguiente:',
+        '• Gestión de permisos ante la administración (si aplica), ingreso a las instalaciones y garantizar espacios de trabajo libres.',
+        '• Tener el cargador eléctrico del vehículo en el sitio donde será instalado.',
+        '• Realizar el pago de la instalación y enviar el comprobante al WhatsApp 3102195110 para proceder con el agendamiento del servicio.',
+      ],
+    },
+    {
+      title: '2. La cancelación o reprogramación del servicio deberá ser solicitada como mínimo 24 horas antes de la fecha y hora programada.',
+      body: [],
+    },
+    {
+      title: '3. En caso de cancelación del servicio por motivos ajenos a Motorysa (ejemplo: no disponer de permisos de administración), se cobrará un valor correspondiente al stand by y transporte del personal de $300.000 (+ viáticos para zonas rurales o municipios fuera del casco urbano). La reprogramación del servicio quedará sujeta al pago de este valor y a la disponibilidad del personal.',
+      body: [],
+    },
+    {
+      title: '4. La conexión del cargador no interviene en ningún momento el medidor de energía ni requiere manipulación de sellos. La conexión se realiza después del medidor, tal como lo avala el RETIE (Libro 3, artículo 2), permitiendo estas intervenciones a profesionales del área eléctrica sin necesidad de aprobaciones directas o escritas por parte del Operador de Red (ej.: Codensa, Celsa, Aire, etc.).',
+      body: [],
+    },
+    {
+      title: '5. Los materiales utilizados son nuevos, de marcas reconocidas y cuentan con certificado de producto RETIE, lo que garantiza su calidad y cumplimiento normativo.',
+      body: [],
+    },
+  ];
+  terms.forEach((term) => {
+    doc.font('Helvetica-Bold').fontSize(9.2).text(term.title, x, y, { width, align: 'justify' });
+    y = doc.y + 6;
+    term.body.forEach((line) => {
+      const isLead = !line.startsWith('•');
+      doc.font(isLead ? 'Helvetica-Bold' : 'Helvetica').fontSize(9).text(line, isLead ? x : x + 12, y, { width: isLead ? width : width - 12, align: 'justify' });
+      y = doc.y + 4;
+    });
+    y += 8;
   });
 }
 
@@ -2332,13 +3794,209 @@ function drawQuoteHeader(doc, quote, logoPath) {
   y = 96;
   drawKeyValue(doc, rightX, y, 'Fecha', formatDateOnly(quote.createdAt), { labelWidth: 74, valueWidth: 110 }); y += 18;
   drawKeyValue(doc, rightX, y, 'Cotización', displayQuoteNumber(quote.id), { labelWidth: 74, valueWidth: 110 }); y += 18;
-  drawKeyValue(doc, rightX, y, 'Moneda', 'SOLES', { labelWidth: 74, valueWidth: 110 }); y += 18;
+  drawKeyValue(doc, rightX, y, 'Moneda', quote.countryCode === 'CO' ? 'PESOS' : 'SOLES', { labelWidth: 74, valueWidth: 110 }); y += 18;
   drawKeyValue(doc, rightX, y, 'Inmueble', quote.propertyType || '-', { labelWidth: 74, valueWidth: 110 });
+}
+
+function drawMotorysaCoverPage(doc, quote, { headerStripPath, carImagePath } = {}) {
+  const contentX = 36;
+  const contentW = 523;
+  doc.font('Helvetica-Bold').fontSize(28).fillColor('#222').text('Motorysa', contentX, 42, { width: contentW - 12, align: 'right' });
+  doc.rect(contentX, 92, contentW, 12).fill('#ff120a');
+  let y = 128;
+  y = drawMotorysaCoverInfoTable(doc, y, quote);
+  doc.font('Helvetica').fontSize(11).fillColor('#111').text('Es un placer presentarle la siguiente propuesta, elaborada en respuesta a su solicitud: suministro y/o instalación de cargador para vehículo eléctrico.', contentX, y + 10, { width: contentW, align: 'justify' });
+  y += 48;
+  if (carImagePath && fs.existsSync(carImagePath)) {
+    try {
+      const carImage = doc.openImage(carImagePath);
+      const targetWidth = contentW;
+      const scaledHeight = (carImage.height / carImage.width) * targetWidth;
+      doc.image(carImagePath, contentX, y, { width: targetWidth });
+      y += scaledHeight + 8;
+    } catch {
+      doc.image(carImagePath, contentX, y, { width: contentW });
+      y += 252;
+    }
+  }
+  const sections = buildMotorysaCoverSections(quote);
+  sections.forEach((section) => {
+    doc.font('Helvetica-Bold').fontSize(12).text(`${section.index}. ${section.title}`, contentX, y, { width: contentW });
+    y += 14;
+    doc.font('Helvetica').fontSize(10.2).text(section.body, contentX, y, { width: contentW, align: 'justify' });
+    y = doc.y + 9;
+  });
+  return y;
+}
+
+function drawMotorysaCoverInfoTable(doc, startY, quote) {
+  const x = 36;
+  const labelW = 104;
+  const valueW = 419;
+  const dateLabelW = 104;
+  const dateValueW = 196;
+  const quoteLabelW = 104;
+  const quoteValueW = 119;
+  const rowH = 28;
+  const drawCell = (cx, cy, w, text, { bold = false } = {}) => {
+    doc.rect(cx, cy, w, rowH).lineWidth(0.8).strokeColor('#111').stroke();
+    doc.font(bold ? 'Helvetica-Bold' : 'Helvetica').fontSize(11).fillColor('#111').text(String(text || ''), cx + 6, cy + 8, { width: w - 12, align: 'left' });
+  };
+  let y = startY;
+  [
+    ['Señor (a):', formatDisplayName(quote.clientName) || '-'],
+    ['Celular:', quote.phone || '-'],
+    ['Dirección:', quote.address || '-'],
+    ['Ciudad:', quote.city || '-'],
+  ].forEach(([label, value]) => {
+    drawCell(x, y, labelW, label, { bold: true });
+    drawCell(x + labelW, y, valueW, value);
+    y += rowH;
+  });
+  drawCell(x, y, dateLabelW, 'Fecha:', { bold: true });
+  drawCell(x + dateLabelW, y, dateValueW, formatDateOnly(quote.createdAt));
+  drawCell(x + dateLabelW + dateValueW, y, quoteLabelW, 'Cotización #:', { bold: true });
+  drawCell(x + dateLabelW + dateValueW + quoteLabelW, y, quoteValueW, displayQuoteNumber(quote.id));
+  return y + rowH;
+}
+
+function buildMotorysaCoverSections(quote = {}) {
+  const distance = formatNumber(quote.distance || 0);
+  const chargerPower = quote.voltage && quote.current ? roundMoney((Number(quote.voltage || 0) * Number(quote.current || 0)) / 1000) : null;
+  return [
+    {
+      index: 1,
+      title: 'Alcance',
+      body: `Suministro y/o instalación de cargador vehicular eléctrico ${chargerPower ? `${chargerPower} kW` : ''}, incluye mano de obra, materiales, pruebas y puesta en marcha.`,
+    },
+    {
+      index: 2,
+      title: 'Condiciones de instalación',
+      body: 'Las instalaciones se desarrollan bajo normatividad vigente IEC 61851-1, NTC 2050 segunda actualización y Reglamento Técnico de Instalaciones Eléctricas – RETIE 2024.',
+    },
+    {
+      index: 3,
+      title: 'Personal a cargo',
+      body: 'La instalación es realizada por personal competente: técnico electricista con matrícula profesional vigente y, en caso que aplique, el personal cuenta con equipos de protección personal y parafiscales vigentes.',
+    },
+    {
+      index: 4,
+      title: 'Responsabilidad del cliente',
+      body: 'El cliente se hará cargo de gestionar permisos y autorizaciones ante la administración para ingreso vehicular y personal a cargo.',
+    },
+    {
+      index: 5,
+      title: 'Observaciones de la instalación',
+      body: `Se traza ruta para instalación de cargador eléctrico con una distancia aproximada de ${distance} m de tubería. La propuesta podrá requerir ajustes según validación final del sitio, canalización disponible, tablero existente, protecciones y espacio real para ejecución.`,
+    },
+  ];
+}
+
+function drawMotorysaPhotoPricingPage(doc, quote = {}) {
+  const x = 36;
+  const width = 523;
+  doc.font('Helvetica-Bold').fontSize(24).fillColor('#222').text('Motorysa', x, 28, { width, align: 'right' });
+  doc.rect(x, 64, width, 10).fill('#ff120a');
+  doc.fillColor('#111').font('Helvetica-Bold').fontSize(12).text('6. Registro fotográfico', x, 92, { width });
+  drawMotorysaPhotoGrid(doc, x, 110, width, 186, quote);
+  let y = 316;
+  y = drawMotorysaPricingSummaryTable(doc, x, y, width, quote);
+  y += 14;
+  doc.font('Helvetica-Bold').fontSize(11).text('Nota: Este valor NO incluye el cargador.', x, y, { width, align: 'center' });
+  y += 26;
+  const lines = [
+    `Validez de la cotización: ${quote.countryCode === 'CO' ? '7 días' : '30 días'}`,
+    'Forma de pago: Contado',
+    'Duración estimada de la instalación: 1-2 días',
+    'Garantía materiales y cargador por defectos de fabricación: 1 año',
+  ];
+  doc.font('Helvetica-Bold').fontSize(10.2);
+  lines.forEach((line, index) => {
+    doc.text(line, x, y + (index * 17), { width });
+  });
+  y += 78;
+  doc.font('Helvetica').fontSize(9.2).fillColor('#d71920').text('Nota: La propuesta incluye autodeclaración de cumplimiento RETIE por parte del constructor. No incluye dictamen de uso final; en caso de requerirse, es un costo adicional.', x, y, { width, align: 'justify' });
+  doc.fillColor('#111');
+}
+
+function drawMotorysaPhotoGrid(doc, x, y, width, height, quote = {}) {
+  const photos = Array.isArray(quote?.photos) ? quote.photos.filter((photo) => fs.existsSync(photo.filePath)).slice(0, 4) : [];
+  const cols = 4;
+  const gap = 0;
+  const cellW = width / cols;
+  for (let index = 0; index < cols; index += 1) {
+    const cx = x + (index * cellW);
+    doc.rect(cx, y, cellW, height).lineWidth(0.8).strokeColor('#111').stroke();
+    const photo = photos[index];
+    if (photo?.filePath) {
+      try {
+        doc.image(photo.filePath, cx + 2, y + 2, { fit: [cellW - 4, height - 4], align: 'center', valign: 'center' });
+      } catch {
+        doc.font('Helvetica').fontSize(8).fillColor('#777').text(`Foto ${index + 1}`, cx, y + (height / 2) - 4, { width: cellW, align: 'center' });
+      }
+    } else {
+      doc.font('Helvetica').fontSize(8).fillColor('#777').text(`Foto ${index + 1}`, cx, y + (height / 2) - 4, { width: cellW, align: 'center' });
+    }
+  }
+  doc.fillColor('#111');
+}
+
+function drawMotorysaPricingSummaryTable(doc, x, y, width, quote = {}) {
+  const rows = buildMotorysaPricingSummaryRows(quote);
+  const descW = 330;
+  const unitW = 90;
+  const qtyW = width - descW - unitW;
+  const grey = '#d9d9d9';
+  const yellow = '#fff200';
+  const border = '#3a3a3a';
+  const outerBorder = '#222';
+  const valueW = 160;
+  const labelW = width - valueW;
+
+  const cell = (cx, cy, w, h, text, { fill = '#fff', bold = false, align = 'left', fontSize = 10.2, color = '#111', paddingX = 8, paddingY = 7, lineWidth = 0.7 } = {}) => {
+    doc.rect(cx, cy, w, h).lineWidth(lineWidth).fillAndStroke(fill, border);
+    doc.font(bold ? 'Helvetica-Bold' : 'Helvetica').fontSize(fontSize).fillColor(color).text(String(text ?? ''), cx + paddingX, cy + paddingY, { width: w - (paddingX * 2), align });
+  };
+
+  const row3 = (cells, rowY, { fill = '#fff', bold = false, height = 26, fontSize = 10.2 } = {}) => {
+    let cx = x;
+    const widths = [descW, unitW, qtyW];
+    cells.forEach((value, idx) => {
+      cell(cx, rowY, widths[idx], height, value, { fill, bold, align: idx === 0 ? 'left' : 'center', fontSize, paddingX: idx === 0 ? 8 : 6 });
+      cx += widths[idx];
+    });
+    return rowY + height;
+  };
+
+  const totalRow = (label, value, rowY, { fill = '#fff', bold = false, height = 26, fontSize = 10.4 } = {}) => {
+    cell(x, rowY, labelW, height, label, { fill, bold, align: 'left', fontSize, paddingX: 10 });
+    cell(x + labelW, rowY, valueW, height, value, { fill, bold, align: 'center', fontSize, paddingX: 8 });
+    return rowY + height;
+  };
+
+  const tableTop = y;
+  y = row3(['TOTAL MANO DE OBRA', 'UNIDAD', 'CANTIDAD'], y, { fill: grey, bold: true, height: 30, fontSize: 10.6 });
+  y = row3(['Mano de obra técnico electricista', 'GL', '1'], y, { height: 28, fontSize: 10.2 });
+  y = row3(['Transportes y herramientas', 'GL', '1'], y, { height: 28, fontSize: 10.2 });
+  y = row3(['MATERIAL', 'UNIDAD', 'CANTIDAD'], y, { fill: grey, bold: true, height: 30, fontSize: 10.6 });
+  y = row3([rows.materialDescription, 'GL', '1'], y, { height: 122, fontSize: 10 });
+  y = totalRow('SUBTOTAL INSTALACIÓN', `$ ${pdfAmount(quote, quote.subtotal)}`, y, { fill: grey, height: 28, fontSize: 10.4 });
+  y = totalRow(`IVA ${quote.countryCode === 'CO' ? '19%' : '18%'}`, `$ ${pdfAmount(quote, quote.igv)}`, y, { fill: grey, height: 28, fontSize: 10.4 });
+  y = totalRow('TOTAL INSTALACIÓN IVA INCLUIDO', `$ ${pdfAmount(quote, quote.total)}`, y, { fill: yellow, bold: true, height: 30, fontSize: 10.8 });
+  doc.rect(x, tableTop, width, y - tableTop).lineWidth(1.0).strokeColor(outerBorder).stroke();
+  doc.fillColor('#111');
+  return y;
+}
+
+function buildMotorysaPricingSummaryRows(quote = {}) {
+  return {
+    materialDescription: 'Cable, tubería,caja para alojar\nprotecciones eléctricas, interruptor\nde protección, accesorios,\nterminales, cinta aislante,\ntornillería, chazos y todo lo\nnecesario para la correcta\ninstalación y funcionamiento.',
+  };
 }
 
 function buildGreeting(clientName) {
   const displayName = formatDisplayName(clientName);
-  return displayName ? `Estimado Sr. ${displayName}` : 'Estimado cliente';
+  return displayName ? `Cordial saludo ${displayName}` : 'Cordial saludo';
 }
 
 function formatDisplayName(value) {
@@ -2359,8 +4017,11 @@ function displayAdvisorName(value) {
 }
 
 function buildServiceParagraph(quote) {
+  const chargerLabel = quote?.chargerReference || quote?.charger?.label || 'cargador';
+  if (quote.countryCode === 'CO') {
+    return `Se proyecta la instalación eléctrica para el sistema de carga del vehículo en la ubicación definida por el cliente, considerando ${chargerLabel}, recorrido eléctrico, protecciones, canalización, cableado y puesta en operación, sujeto a validación técnica y condiciones reales del sitio.`;
+  }
   const chargerIncluded = quote?.charger?.included === true;
-  const chargerLabel = quote?.charger?.label || 'cargador';
   const chargerText = chargerIncluded
     ? `, incluyendo ${chargerLabel} según definición comercial del proyecto,`
     : ',';
@@ -2372,7 +4033,7 @@ function buildAdditionalParagraph(row, quote) {
 }
 
 function buildWarrantyNote(quote) {
-  return 'La garantía de la instalación tiene una vigencia de 12 meses contados desde la entrega del servicio.';
+  return 'La garantía de la instalación tiene una vigencia de 12 meses contados desde la entrega del servicio. La atención de garantía está sujeta a evaluación técnica y disponibilidad operativa de EVINKA.';
 }
 
 function buildBaseIncludedScope({ propertyType, includedMeters, tubeType, cable, charger }) {
@@ -2410,6 +4071,16 @@ function formatRowLabel(label) {
 }
 
 function buildObservationLines(quote) {
+  if (quote?.countryCode === 'CO') {
+    return [
+      'La propuesta económica se basa en la información suministrada por el cliente y en la validación técnica disponible a la fecha.',
+      'Cualquier adecuación adicional detectada en sitio que no esté incluida expresamente en esta cotización será informada y cotizada por separado.',
+      'La instalación puede requerir una interrupción temporal del suministro eléctrico durante la ejecución de los trabajos.',
+      'No se incluyen trabajos de obra civil mayor, resanes, pintura, enchapes, perforaciones especiales ni alquiler de equipos de elevación salvo que se indiquen de forma expresa.',
+      'El cliente debe garantizar acceso al sitio, disponibilidad del vehículo cuando aplique y autorización de ingreso si la instalación se realiza en conjunto residencial o edificio.',
+      'El cargador y los materiales instalados conservan únicamente las garantías otorgadas por el fabricante y por el alcance contratado.',
+    ];
+  }
   return [
     'Durante la instalación se realizará una interrupción breve del suministro eléctrico.',
     'Se solicita mantener despejada el área de trabajo y los estacionamientos involucrados el día de la instalación.',
@@ -2421,6 +4092,7 @@ function buildObservationLines(quote) {
     'El cliente autoriza el registro y uso de fotografías de la instalación y equipos con fines de soporte técnico, trazabilidad, capacitación y material comercial o publicitario, evitando divulgar información sensible.',
     'La responsabilidad de EVINKA se limita al alcance del servicio contratado y al valor efectivamente pagado por el cliente.',
     'Aplican las condiciones del Certificado de Garantía EVINKA entregado junto con la instalación.',
+    'Código de orden, código de garantía, número de serie y registro deberán mantenerse identificados en el expediente del servicio.',
   ];
 }
 
@@ -2458,21 +4130,28 @@ function writePlainParagraph(doc, y, text, x = 36, width = 523, quote, logoPath)
 
 function writeSignatureBlock(doc, y, quote, logoPath) {
   const advisor = displayAdvisorName(quote.createdBy?.name);
-  y = ensurePageSpace(doc, y, 52, quote, logoPath, true);
+  const isColombia = quote?.countryCode === 'CO';
+  y = ensurePageSpace(doc, y, isColombia ? 70 : 38, quote, logoPath, true);
   doc.font('Helvetica').fontSize(9.2).text('Atentamente,', 36, y, { width: 523 });
-  doc.font('Helvetica-Bold').text('EVINKA Technology S.A.C.', 36, y + 14, { width: 523 });
-  doc.font('Helvetica').text(advisor === 'Equipo EVINKA' ? 'Área Comercial' : advisor, 36, y + 28, { width: 523 });
-  return y + 44;
+  doc.font('Helvetica-Bold').text(isColombia ? 'EVINKA Colombia' : 'EVINKA', 36, y + 14, { width: 523 });
+  if (isColombia) {
+    doc.font('Helvetica').text(advisor === 'Equipo EVINKA' ? 'Área Comercial' : advisor, 36, y + 28, { width: 523 });
+    doc.text('Equipo comercial y técnico de movilidad eléctrica', 36, y + 42, { width: 523 });
+    return y + 58;
+  }
+  return y + 30;
 }
 
-function drawFooter(doc) {
+function drawFooter(doc, quote = {}) {
   const footerY = 680;
+  const contactPhone = quote?.countryCode === 'CO'
+    ? '302 436 1227'
+    : '949076102';
   doc.moveTo(36, footerY).lineTo(559, footerY).strokeColor('#111').lineWidth(1.5).stroke();
-  doc.font('Helvetica-Bold').fontSize(9).text('EVINKA TECHNOLOGY S.A.C.', 36, footerY + 8);
-  doc.font('Helvetica').fontSize(8.5).text('AV. FELIPE PARDO Y ALIAGA NRO. 220 URB. SANTA CRUZ (DP 3 PISO 3) LIMA - LIMA - SAN ISIDRO', 36, footerY + 22, { width: 523 });
-  doc.text('Telef : 945 149 285', 36, footerY + 35);
-  doc.text('E-Mail : contacto@evinka.tech', 36, footerY + 47);
-  doc.text('Pag.Web : evinka.tech', 36, footerY + 59);
+  doc.font('Helvetica-Bold').fontSize(9).text('EVINKA TECHNOLOGY S.A.S.', 36, footerY + 8);
+  doc.font('Helvetica').fontSize(8.5).text('Soluciones de movilidad eléctrica, instalación, soporte técnico y operación comercial.', 36, footerY + 22, { width: 523 });
+  doc.text(`Contacto : ${contactPhone} · contacto@evinka.tech`, 36, footerY + 37);
+  doc.text('Pag.Web : evinka.tech', 36, footerY + 50);
 }
 
 function drawTable(doc, widths, headers, rows, options = {}) {
@@ -2537,12 +4216,20 @@ function drawBorderNote(doc, x, y, width, text) {
   return y + h;
 }
 
-function mergeConfig(current, incoming) {
+function mergeConfig(current, incoming, countryCode = 'PE') {
+  const activeCountry = normalizeCountryCode(countryCode) || 'PE';
   const next = structuredClone(current);
-  if (incoming.company) next.company = { ...next.company, ...incoming.company };
-  if (incoming.defaults) next.defaults = { ...next.defaults, ...incoming.defaults };
-  if (incoming.commercialProfiles) next.commercialProfiles = incoming.commercialProfiles;
-  if (incoming.catalog?.items) next.catalog = { ...next.catalog, items: incoming.catalog.items };
+  const currentCountryConfig = getStoredCountryConfig(next, activeCountry);
+  const mergedCountryConfig = structuredClone(currentCountryConfig);
+  if (incoming.company) mergedCountryConfig.company = { ...mergedCountryConfig.company, ...incoming.company };
+  if (incoming.defaults) mergedCountryConfig.defaults = { ...mergedCountryConfig.defaults, ...incoming.defaults };
+  if (incoming.commercialProfiles) mergedCountryConfig.commercialProfiles = incoming.commercialProfiles;
+  if (incoming.harCatalogs) mergedCountryConfig.harCatalogs = normalizeHarCatalogs(activeCountry, incoming.harCatalogs);
+  if (incoming.catalog?.items) mergedCountryConfig.catalog = { ...mergedCountryConfig.catalog, items: incoming.catalog.items };
+  next.countryConfigs = {
+    ...(next.countryConfigs || {}),
+    [activeCountry]: mergedCountryConfig,
+  };
   return next;
 }
 
@@ -2559,8 +4246,96 @@ function defaultConfig() {
       alienPriceUsd: 900,
     },
     commercialProfiles: defaultCommercialProfiles(0.75),
-    roles: ['admin', 'tech'],
+    roles: getRoleMatrix().roles.map((role) => role.id),
+    roleDefinitions: getRoleMatrix().roles,
     catalog: { services: [], cables: [], conditionals: [], items: [] },
+    countryConfigs: {
+      PE: {
+        company: {
+          name: 'EVINKA Cotizador Perú',
+          tagline: 'Cotizador web para técnicos y administración · Perú',
+        },
+        currency: 'PEN',
+      },
+      CO: {
+        company: {
+          name: 'EVINKA Cotizador Colombia',
+          tagline: 'Cotizador web para técnicos y administración · Colombia',
+        },
+        currency: 'COP',
+        defaults: {
+          igv: 0.19,
+          coOutOfCityRate: 0.08,
+          coOutOfCityMinimum: 180000,
+          coReviewDistanceMeters: 25,
+          coTechnicalReviewFee: 0,
+        },
+        harCatalogs: defaultHarCatalogs('CO'),
+      },
+    },
+  };
+}
+
+function defaultRoleMatrix() {
+  return {
+    version: 1,
+    roles: [
+      {
+        id: 'admin',
+        label: 'Administrador',
+        aliases: ['admin'],
+        tabs: ['quote', 'quotes', 'visits', 'ops', 'conformities', 'advisor', 'admin'],
+        modules: ['inicio', 'asesor', 'visitas', 'cotizaciones', 'instalaciones', 'conformidades', 'auditoria', 'cuentas', 'configuracion'],
+        permissions: ['users.manage', 'roles.manage', 'catalog.manage', 'pricing.manage', 'quotes.write', 'quotes.review', 'visits.assign', 'visits.execute', 'installations.assign', 'installations.execute', 'conformities.review', 'conformities.sign', 'audit.read', 'advisor.handle'],
+      },
+      {
+        id: 'supervisor',
+        label: 'Supervisor',
+        aliases: ['supervisor', 'tecnico_supervisor', 'supervisor_tecnico', 'tech_supervisor', 'technical_supervisor'],
+        tabs: ['quote', 'quotes', 'visits', 'ops', 'conformities', 'advisor'],
+        modules: ['inicio', 'asesor', 'visitas', 'cotizaciones', 'instalaciones', 'conformidades', 'auditoria'],
+        permissions: ['quotes.write', 'quotes.review', 'visits.assign', 'visits.execute', 'installations.assign', 'installations.execute', 'conformities.review', 'advisor.handle', 'audit.read'],
+      },
+      {
+        id: 'asesor_comercial',
+        label: 'Asesor comercial',
+        aliases: ['advisor', 'asesor', 'asesor_comercial', 'asesor_humano', 'human_advisor', 'commercial', 'comercial', 'sales', 'ventas'],
+        tabs: ['quote', 'quotes', 'visits', 'advisor'],
+        modules: ['inicio', 'asesor', 'visitas_iniciales', 'cotizaciones', 'historial_cliente'],
+        permissions: ['quotes.write', 'quotes.review', 'visits.assign', 'advisor.handle'],
+      },
+      {
+        id: 'tecnico_visitas',
+        label: 'Técnico de visitas',
+        aliases: ['tech', 'tecnico', 'tecnico_visitas', 'visit_tech'],
+        tabs: ['visits', 'quotes'],
+        modules: ['inicio', 'visitas', 'detalle_tecnico', 'cotizaciones_consulta', 'evidencias'],
+        permissions: ['visits.execute', 'quotes.review'],
+      },
+      {
+        id: 'tecnico_instalador',
+        label: 'Técnico instalador',
+        aliases: ['tecnico_instalador', 'instalador', 'installation_tech'],
+        tabs: ['ops', 'conformities'],
+        modules: ['inicio', 'instalaciones', 'detalle_instalacion', 'conformidades', 'garantia', 'evidencias'],
+        permissions: ['installations.execute', 'conformities.sign'],
+      },
+    ],
+  };
+}
+
+function getRoleMatrix() {
+  const stored = readJSON(files.roleMatrix, null);
+  const roles = Array.isArray(stored?.roles) && stored.roles.length ? stored.roles : defaultRoleMatrix().roles;
+  return {
+    version: Number(stored?.version || 1),
+    roles: roles.map((role) => ({
+      ...role,
+      aliases: Array.isArray(role.aliases) ? role.aliases : [],
+      tabs: Array.isArray(role.tabs) ? role.tabs : [],
+      modules: Array.isArray(role.modules) ? role.modules : [],
+      permissions: Array.isArray(role.permissions) ? role.permissions : [],
+    })),
   };
 }
 
@@ -2620,9 +4395,11 @@ async function loadExcelSource() {
 
 function ensureSeedData() {
   if (!fs.existsSync(files.config)) writeJSON(files.config, defaultConfig());
+  if (!fs.existsSync(files.clients)) writeJSON(files.clients, []);
   if (!fs.existsSync(files.quotes)) writeJSON(files.quotes, []);
   if (!fs.existsSync(files.installationOrders)) writeJSON(files.installationOrders, []);
   if (!fs.existsSync(files.conformities)) writeJSON(files.conformities, []);
+  if (!fs.existsSync(files.warranties)) writeJSON(files.warranties, []);
   if (!fs.existsSync(files.sessions)) writeJSON(files.sessions, {});
   if (!fs.existsSync(files.users)) {
     writeJSON(files.users, [
@@ -2663,6 +4440,99 @@ function readUsers() {
   return assignEmployeeCodes(readJSON(files.users, []).map(normalizeUserRecord));
 }
 
+function readClients() {
+  return readJSON(files.clients, []).map(normalizeClientRecord);
+}
+
+function writeClients(clients) {
+  writeJSON(files.clients, clients.map(normalizeClientRecord));
+}
+
+function clientCountryCode(client = {}) {
+  return resolveRecordCountryCode(client.countryCode, client.city, client.address, client.email, client.phone);
+}
+
+function normalizeClientRecord(client = {}) {
+  const firstName = String(client.firstName || '').trim();
+  const lastName = String(client.lastName || '').trim();
+  const explicitFullName = String(client.fullName || '').trim();
+  const fullName = explicitFullName || [firstName, lastName].filter(Boolean).join(' ').trim();
+  return {
+    id: String(client.id || `cli-${Date.now().toString(36)}`).trim(),
+    countryCode: clientCountryCode(client),
+    firstName,
+    lastName,
+    fullName,
+    email: normalizeEmail(client.email || ''),
+    phone: String(client.phone || '').trim(),
+    documentType: String(client.documentType || '').trim(),
+    documentNumber: String(client.documentNumber || client.clientDocument || '').trim(),
+    city: String(client.city || '').trim(),
+    department: String(client.department || '').trim(),
+    locality: String(client.locality || '').trim(),
+    neighborhood: String(client.neighborhood || '').trim(),
+    address: String(client.address || '').trim(),
+    residenceType: String(client.residenceType || '').trim(),
+    companyName: String(client.companyName || '').trim(),
+    vehicleModel: String(client.vehicleModel || '').trim(),
+    vin: String(client.vin || '').trim(),
+    outOfCity: String(client.outOfCity || '').trim(),
+    source: String(client.source || 'cotizador').trim(),
+    lastQuoteId: String(client.lastQuoteId || '').trim(),
+    lastQuoteAt: String(client.lastQuoteAt || '').trim(),
+    createdAt: String(client.createdAt || new Date().toISOString()).trim(),
+    updatedAt: String(client.updatedAt || new Date().toISOString()).trim(),
+  };
+}
+
+function upsertOperationalClientFromQuote(quote, user) {
+  const clients = readClients();
+  const normalizedEmail = normalizeEmail(quote.email || '');
+  const normalizedDocument = String(quote.clientDocument || '').trim();
+  const normalizedPhone = String(quote.phone || '').trim();
+  const matchIndex = clients.findIndex((client) => {
+    if (client.countryCode && quote.countryCode && client.countryCode !== quote.countryCode) return false;
+    if (normalizedDocument && client.documentNumber && client.documentNumber === normalizedDocument) return true;
+    if (normalizedPhone && client.phone && client.phone === normalizedPhone) return true;
+    if (normalizedEmail && client.email && client.email === normalizedEmail) return true;
+    return false;
+  });
+
+  const current = matchIndex >= 0 ? clients[matchIndex] : null;
+  const next = normalizeClientRecord({
+    ...current,
+    id: current?.id || `cli-${Date.now().toString(36)}-${crypto.randomBytes(2).toString('hex')}`,
+    countryCode: quote.countryCode,
+    firstName: quote.clientFirstName,
+    lastName: quote.clientLastName,
+    fullName: quote.clientName,
+    email: quote.email,
+    phone: quote.phone,
+    documentType: quote.documentType,
+    documentNumber: quote.clientDocument,
+    city: quote.city,
+    department: quote.department,
+    locality: quote.locality,
+    neighborhood: quote.neighborhood,
+    address: quote.address,
+    residenceType: quote.residenceType || quote.propertyType,
+    companyName: quote.companyName,
+    vehicleModel: quote.vehicleModel,
+    vin: quote.vin,
+    outOfCity: quote.outOfCity,
+    source: 'cotizador',
+    lastQuoteId: quote.id,
+    lastQuoteAt: quote.createdAt,
+    updatedAt: new Date().toISOString(),
+    updatedBy: safeUser(user),
+  });
+
+  if (matchIndex >= 0) clients[matchIndex] = next;
+  else clients.push(next);
+  writeClients(clients);
+  return next;
+}
+
 function writeUsers(users) {
   writeJSON(files.users, assignEmployeeCodes(users.map(normalizeUserRecord)));
 }
@@ -2675,6 +4545,7 @@ function normalizeUserRecord(user = {}) {
     name: String(user.name || '').trim(),
     email,
     employeeCode: normalizeEmployeeCode(user.employeeCode || ''),
+    notificationPhone: normalizeNotificationPhone(user.notificationPhone || user.phone || ''),
     role,
     status: normalizeUserStatus(user.status || 'active'),
     passwordHash: String(user.passwordHash || '').trim(),
@@ -2682,8 +4553,27 @@ function normalizeUserRecord(user = {}) {
     pinUpdatedAt: String(user.pinUpdatedAt || '').trim(),
     requestedAt: String(user.requestedAt || user.createdAt || '').trim(),
     accessGrantedAt: String(user.accessGrantedAt || '').trim(),
+    allowedCountries: normalizeStringList(user.allowedCountries).map((item) => item.toUpperCase()),
+    allowedQueues: normalizeStringList(user.allowedQueues).map((item) => item.toLowerCase()),
     approvedBy: user.approvedBy || null,
   };
+}
+
+function normalizeStringList(value) {
+  if (!Array.isArray(value)) return [];
+  return [...new Set(value.map((item) => String(item || '').trim()).filter(Boolean))];
+}
+
+function normalizeNotificationPhone(value) {
+  const raw = String(value || '').trim();
+  if (!raw) return '';
+  const cleaned = raw.replace(/[^\d+]/g, '').replace(/(?!^)\+/g, '');
+  const digits = cleaned.replace(/^\+/, '').replace(/\D/g, '');
+  if (/^9\d{8}$/.test(digits)) return `+51${digits}`;
+  if (/^3\d{9}$/.test(digits)) return `+57${digits}`;
+  if (/^(51\d{9}|57\d{10})$/.test(digits)) return `+${digits}`;
+  if (/^\d{8,15}$/.test(digits)) return `+${digits}`;
+  return '';
 }
 
 function assignEmployeeCodes(users = []) {
@@ -2714,11 +4604,16 @@ function isValidEmployeeCode(value) {
 }
 
 function nextEmployeeCode(users = [], role = 'tech', usedCodes = new Set()) {
-  const prefix = role === 'admin'
+  const normalizedRole = normalizeManagedUserRole(role);
+  const prefix = normalizedRole === 'admin'
     ? 'ADM'
-    : role === 'tecnico_supervisor'
+    : normalizedRole === 'supervisor'
       ? 'SUP'
-      : 'TEC';
+      : normalizedRole === 'asesor_comercial'
+        ? 'ASE'
+        : normalizedRole === 'tecnico_instalador'
+          ? 'INS'
+          : 'TEC';
   const normalizedUsed = new Set(
     [
       ...usedCodes,
@@ -2736,24 +4631,38 @@ function nextEmployeeCode(users = [], role = 'tech', usedCodes = new Set()) {
 
 function normalizeManagedUserRole(value) {
   const role = String(value || 'tech').trim().toLowerCase().replace(/[\s-]+/g, '_');
-  if (role === 'admin') return 'admin';
-  if (['supervisor', 'tecnico_supervisor', 'supervisor_tecnico', 'tech_supervisor', 'technical_supervisor'].includes(role)) {
-    return 'tecnico_supervisor';
+  for (const definition of getRoleMatrix().roles) {
+    const aliases = [definition.id, ...(definition.aliases || [])]
+      .map((item) => String(item || '').trim().toLowerCase().replace(/[\s-]+/g, '_'));
+    if (aliases.includes(role)) return definition.id;
   }
-  return 'tech';
+  return 'tecnico_visitas';
 }
 
 function isTechAssignableUser(user = {}) {
-  return normalizeManagedUserRole(user.role || 'tech') === 'tech'
-    || normalizeManagedUserRole(user.role || 'tech') === 'tecnico_supervisor';
+  return ['tecnico_visitas', 'tecnico_instalador'].includes(normalizeManagedUserRole(user.role || 'tech'));
 }
 
 function canUserSeeAllOperations(user = {}) {
   const role = normalizeManagedUserRole(user.role || 'tech');
   const email = normalizeEmail(user.email || '');
   return role === 'admin'
-    || role === 'tecnico_supervisor'
+    || role === 'supervisor'
     || email === 'luis.campos@evinka.tech';
+}
+
+function canUserGenerateConformity(user = {}) {
+  const role = normalizeManagedUserRole(user.role || 'tech');
+  const email = normalizeEmail(user.email || '');
+  return role === 'admin'
+    || role === 'supervisor'
+    || role === 'tecnico_instalador'
+    || email === 'luis.campos@evinka.tech';
+}
+
+function isInstallationOrderReadyForConformity(order = {}) {
+  const status = String(order?.status || '').trim().toLowerCase();
+  return ['cerrada', 'instalada', 'pendiente_cierre'].includes(status);
 }
 
 function normalizeUserStatus(value) {
@@ -2847,8 +4756,264 @@ function writeJSON(file, data) {
   fs.writeFileSync(file, `${JSON.stringify(data, null, 2)}\n`);
 }
 
+function sanitizePdfFilenamePart(value, fallback = 'DOCUMENTO') {
+  const normalized = String(value || '')
+    .trim()
+    .replace(/[^A-Za-z0-9._-]+/g, '-')
+    .replace(/-+/g, '-')
+    .replace(/^-|-$/g, '');
+  return normalized || fallback;
+}
+
+function persistPdfToQuotesDir({ id, label, pdfBase64 }) {
+  const encoded = String(pdfBase64 || '').trim();
+  if (!encoded) return { pdfUrl: '', pdfPath: '', pdfFilename: '' };
+  const buffer = Buffer.from(encoded, 'base64');
+  const safeId = sanitizePdfFilenamePart(id, 'DOC');
+  const safeLabel = sanitizePdfFilenamePart(label, 'DOCUMENTO');
+  const pdfFilename = `${safeId}-${safeLabel}.pdf`;
+  fs.writeFileSync(path.join(quotesDir, pdfFilename), buffer);
+  return {
+    pdfUrl: `/pdf/${pdfFilename}`,
+    pdfPath: `/pdf/${pdfFilename}`,
+    pdfFilename,
+  };
+}
+
 function normalizeEmail(value) {
   return String(value || '').trim().toLowerCase();
+}
+
+function normalizeCountryCode(value) {
+  const normalized = String(value || '').trim().toUpperCase();
+  return ['PE', 'CO', 'ALL'].includes(normalized) ? normalized : '';
+}
+
+function countryCurrency(countryCode = '') {
+  return COUNTRY_DEFINITIONS.find((item) => item.code === normalizeCountryCode(countryCode))?.currency || 'PEN';
+}
+
+function getStoredCountryConfig(stored = {}, countryCode = 'PE') {
+  const activeCountry = normalizeCountryCode(countryCode) || 'PE';
+  const seeded = defaultConfig().countryConfigs?.[activeCountry] || {};
+  const base = {
+    company: { ...(stored.company || {}) },
+    currency: stored.currency || countryCurrency(activeCountry),
+    defaults: { ...(stored.defaults || {}) },
+    commercialProfiles: Array.isArray(stored.commercialProfiles) ? stored.commercialProfiles : [],
+    catalog: { ...(stored.catalog || {}), items: Array.isArray(stored.catalog?.items) ? stored.catalog.items : [] },
+  };
+  const scoped = {
+    ...seeded,
+    ...(stored.countryConfigs?.[activeCountry] || {}),
+  };
+  return {
+    company: { ...base.company, ...(scoped.company || {}) },
+    currency: scoped.currency || base.currency || countryCurrency(activeCountry),
+    defaults: { ...base.defaults, ...(scoped.defaults || {}) },
+    commercialProfiles: Array.isArray(scoped.commercialProfiles) && scoped.commercialProfiles.length
+      ? scoped.commercialProfiles
+      : base.commercialProfiles,
+    catalog: {
+      ...base.catalog,
+      ...(scoped.catalog || {}),
+      items: Array.isArray(scoped.catalog?.items) && scoped.catalog.items.length
+        ? scoped.catalog.items
+        : base.catalog.items,
+    },
+  };
+}
+
+function resolveRequestCountryContext(req, user = null) {
+  const hostCountry = inferCountryFromHost(req);
+  if (hostCountry && userCanAccessCountry(user, hostCountry)) return hostCountry;
+  const requested = normalizeCountryCode(req?.query?.country || req?.body?.countryCode || '');
+  if (requested === 'ALL' && userHasGlobalCountryAccess(user)) return 'ALL';
+  if (requested && requested !== 'ALL' && userCanAccessCountry(user, requested)) return requested;
+  if (userHasGlobalCountryAccess(user)) return 'ALL';
+  return resolveUserPrimaryCountry(user) || '';
+}
+
+function inferCountryFromHost(req) {
+  const host = String(req?.headers?.['x-forwarded-host'] || req?.headers?.host || '')
+    .split(',')[0]
+    .trim()
+    .toLowerCase();
+  if (!host) return '';
+  if (['co.evinka.net', 'colombia.evinka.net', 'co.cotizador.evinka.net', 'co-cotizador.evinka.net', 'co-suite.evinka.net'].includes(host)) return 'CO';
+  if (['pe.evinka.net', 'peru.evinka.net', 'pe.cotizador.evinka.net', 'pe-cotizador.evinka.net', 'pe-suite.evinka.net'].includes(host)) return 'PE';
+  return '';
+}
+
+function matchesCountryScope(recordCountryCode = '', scopeCountryCode = '') {
+  const scope = normalizeCountryCode(scopeCountryCode);
+  if (!scope || scope === 'ALL') return true;
+  return normalizeCountryCode(recordCountryCode) === scope;
+}
+
+function normalizeCountryText(value) {
+  return String(value || '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .trim();
+}
+
+function inferCountryFromPhone(value = '') {
+  const digits = String(value || '').replace(/\D+/g, '');
+  if (!digits) return '';
+  if (digits.startsWith('51') || /^9\d{8}$/.test(digits)) return 'PE';
+  if (digits.startsWith('57') || /^3\d{9}$/.test(digits)) return 'CO';
+  return '';
+}
+
+function inferCountryFromSources(...values) {
+  for (const value of values) {
+    const code = normalizeCountryCode(value);
+    if (code && code !== 'ALL') return code;
+  }
+  for (const value of values) {
+    const phoneCountry = inferCountryFromPhone(value);
+    if (phoneCountry) return phoneCountry;
+  }
+  const text = values.map((item) => normalizeCountryText(item)).filter(Boolean).join(' | ');
+  if (!text) return '';
+  if (/(colombia|bogota|medellin|cali|suba|usaquen|chapinero|engativa|fontibon|kennedy|mosquera|chia|envigado|sabaneta|soacha|jamundi)/.test(text)) return 'CO';
+  if (/(peru|lima|callao|miraflores|san isidro|san borja|surco|pueblo libre|la molina|san miguel|jesus maria|arequipa|cusco|trujillo|piura)/.test(text)) return 'PE';
+  return '';
+}
+
+function normalizeUserAllowedCountries(user = {}) {
+  return Array.isArray(user?.allowedCountries)
+    ? [...new Set(user.allowedCountries.map((item) => normalizeCountryCode(item)).filter(Boolean))]
+    : [];
+}
+
+function resolveUserPrimaryCountry(user = {}) {
+  const allowed = normalizeUserAllowedCountries(user).filter((item) => item !== 'ALL');
+  return allowed.length === 1 ? allowed[0] : '';
+}
+
+function userHasGlobalCountryAccess(user = {}) {
+  if (!user) return true;
+  const role = normalizeManagedUserRole(user.role || 'tech');
+  const allowed = normalizeUserAllowedCountries(user);
+  return role === 'admin' || !allowed.length || allowed.includes('ALL');
+}
+
+function userCanAccessCountry(user = {}, countryCode = '') {
+  const normalized = normalizeCountryCode(countryCode);
+  if (!normalized) return userHasGlobalCountryAccess(user);
+  if (userHasGlobalCountryAccess(user)) return true;
+  return normalizeUserAllowedCountries(user).includes(normalized);
+}
+
+function assertUserCanAccessCountry(user = {}, countryCode = '', message = 'No tienes permiso para acceder a este país.') {
+  if (userCanAccessCountry(user, countryCode)) return true;
+  const error = new Error(message);
+  error.statusCode = 403;
+  throw error;
+}
+
+function quoteCountryCode(quote = {}) {
+  return resolveRecordCountryCode(quote.countryCode, quote.city, quote.clientAddress, quote.email);
+}
+
+function visitCountryCode(visit = {}) {
+  return resolveRecordCountryCode(visit.countryCode, visit.clientPhone, visit.clientAddress, visit.clientEmail, visit.notes);
+}
+
+function orderCountryCode(order = {}) {
+  return resolveRecordCountryCode(order.countryCode, order.city, order.address, order.clientEmail);
+}
+
+function conformityCountryCode(conformity = {}) {
+  return resolveRecordCountryCode(conformity.countryCode, conformity.address, conformity.clientEmail);
+}
+
+function resolveRecordCountryCode(...values) {
+  return inferCountryFromSources(...values);
+}
+
+function normalizeInstallationOrder(order = {}) {
+  return {
+    ...order,
+    countryCode: orderCountryCode(order),
+  };
+}
+
+function normalizeConformityRecord(item = {}) {
+  return {
+    id: String(item.id || '').trim(),
+    installationOrderId: String(item.installationOrderId || '').trim(),
+    quoteId: String(item.quoteId || '').trim(),
+    warrantyId: String(item.warrantyId || '').trim(),
+    warrantyCode: String(item.warrantyCode || '').trim(),
+    warrantyValidUntil: String(item.warrantyValidUntil || '').trim(),
+    warrantyPdfUrl: String(item.warrantyPdfUrl || '').trim(),
+    date: String(item.date || '').trim(),
+    countryCode: conformityCountryCode(item),
+    clientName: String(item.clientName || '').trim(),
+    clientEmail: normalizeEmail(item.clientEmail || ''),
+    ruc: String(item.ruc || '').trim(),
+    address: String(item.address || '').trim(),
+    chargerBrand: String(item.chargerBrand || '').trim(),
+    serialNumber: String(item.serialNumber || '').trim(),
+    voltage: String(item.voltage || '').trim(),
+    amperage: String(item.amperage || '').trim(),
+    other: String(item.other || '').trim(),
+    powerKw: String(item.powerKw || '').trim(),
+    observations: String(item.observations || '').trim(),
+    deliveredItems: Array.isArray(item.deliveredItems) ? item.deliveredItems : [],
+    cajaCargador: item.cajaCargador === true,
+    cargadorEvinka: item.cargadorEvinka === true,
+    manualCargador: item.manualCargador === true,
+    tarjetasCargador: item.tarjetasCargador === true,
+    adicional: item.adicional === true,
+    adicionalDesc: String(item.adicionalDesc || '').trim(),
+    photoUrls: Array.isArray(item.photoUrls) ? item.photoUrls : [],
+    installerSignatureUrl: String(item.installerSignatureUrl || '').trim(),
+    clientSignatureUrl: String(item.clientSignatureUrl || '').trim(),
+    pdfUrl: String(item.pdfUrl || '').trim(),
+    pdfPath: String(item.pdfPath || '').trim(),
+    pdfFilename: String(item.pdfFilename || '').trim(),
+    pdfBase64: String(item.pdfBase64 || '').trim(),
+    hasPdfBase64: Boolean(String(item.pdfBase64 || '').trim()),
+    status: String(item.status || 'pdf_generated').trim(),
+    createdAt: String(item.createdAt || '').trim(),
+    createdBy: String(item.createdBy || '').trim(),
+    emailDelivery: item.emailDelivery || null,
+  };
+}
+
+function normalizeWarrantyRecord(item = {}) {
+  return {
+    id: String(item.id || '').trim(),
+    warrantyCode: String(item.warrantyCode || '').trim(),
+    validUntil: String(item.validUntil || '').trim(),
+    installationOrderId: String(item.installationOrderId || '').trim(),
+    quoteId: String(item.quoteId || '').trim(),
+    countryCode: resolveRecordCountryCode(item.countryCode, item.address, item.clientEmail),
+    clientName: String(item.clientName || '').trim(),
+    clientEmail: normalizeEmail(item.clientEmail || ''),
+    clientDocument: String(item.clientDocument || '').trim(),
+    address: String(item.address || '').trim(),
+    chargerBrand: String(item.chargerBrand || '').trim(),
+    serialNumber: String(item.serialNumber || '').trim(),
+    voltage: String(item.voltage || '').trim(),
+    amperage: String(item.amperage || '').trim(),
+    powerKw: String(item.powerKw || '').trim(),
+    installerSignatureUrl: String(item.installerSignatureUrl || '').trim(),
+    clientSignatureUrl: String(item.clientSignatureUrl || '').trim(),
+    pdfUrl: String(item.pdfUrl || '').trim(),
+    pdfPath: String(item.pdfPath || '').trim(),
+    pdfFilename: String(item.pdfFilename || '').trim(),
+    pdfBase64: String(item.pdfBase64 || '').trim(),
+    hasPdfBase64: Boolean(String(item.pdfBase64 || '').trim()),
+    status: String(item.status || 'warranty_generated').trim(),
+    createdAt: String(item.createdAt || '').trim(),
+    createdBy: String(item.createdBy || '').trim(),
+  };
 }
 
 function isAllowedCorporateEmail(email) {
@@ -2930,6 +5095,145 @@ function amount(value) {
   return new Intl.NumberFormat('es-PE', { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(Number(value || 0));
 }
 
+function pdfCurrencyLabel(quote = {}) {
+  return quote?.countryCode === 'CO' ? '$' : 'S/';
+}
+
+function pdfAmount(quote = {}, value) {
+  if (quote?.countryCode === 'CO') {
+    return new Intl.NumberFormat('es-CO', { minimumFractionDigits: 0, maximumFractionDigits: 0 }).format(Number(value || 0));
+  }
+  return amount(value);
+}
+
+function normalizeQuotePdfTemplate(value = '') {
+  const normalized = String(value || '').trim().toLowerCase();
+  return normalized === 'motorysa' ? 'motorysa' : normalized === 'standard' ? 'standard' : '';
+}
+
+function resolveProfilePdfTemplate(profile = {}) {
+  const profileId = slugProfileId(profile?.id || profile?.name || '');
+  const profileName = String(profile?.name || '').trim().toLowerCase();
+  if (profileId === 'motorysa' || profileName.includes('motorysa')) return 'motorysa';
+  return 'standard';
+}
+
+function resolveQuotePdfTemplate(quote = {}) {
+  const explicit = normalizeQuotePdfTemplate(quote?.pdfTemplate || quote?.templateKind || quote?.quoteTemplate);
+  if (explicit) return explicit;
+  if (quote?.commercialProfile || quote?.commercialProfileId || quote?.commercialProfileName) {
+    return resolveProfilePdfTemplate({
+      id: quote?.commercialProfile?.id || quote?.commercialProfileId,
+      name: quote?.commercialProfile?.name || quote?.commercialProfileName,
+    });
+  }
+  const company = String(quote?.companyName || '').trim().toLowerCase();
+  const client = String(quote?.clientName || '').trim().toLowerCase();
+  const email = String(quote?.email || '').trim().toLowerCase();
+  return [company, client, email].some((value) => value.includes('motorysa')) ? 'motorysa' : 'standard';
+}
+
+function quotePdfTemplateKind(quote = {}) {
+  return resolveQuotePdfTemplate(quote);
+}
+
+function buildQuoteIntro(quote = {}) {
+  if (quote.countryCode === 'CO') {
+    return 'De acuerdo con su solicitud, a continuación presentamos la propuesta económica para la instalación del sistema de carga del vehículo eléctrico, elaborada con base en la información comercial y técnica actualmente disponible.';
+  }
+  return 'Nos es grato presentar la siguiente cotización por el servicio de instalación propuesto:';
+}
+
+function buildTraceabilityLines({ orderCode = '-', warrantyCode = '-', serialNumber = '-', record = '-' } = {}) {
+  return [
+    `Código de orden: ${orderCode || '-'}`,
+    `Código de garantía: ${warrantyCode || '-'}`,
+    `Número de serie: ${serialNumber || '-'}`,
+    `Registro: ${record || '-'}`,
+  ];
+}
+
+function buildLegalAddendumLines() {
+  return [
+    'Todo trabajo o adecuación no detallada expresamente en esta propuesta será considerado adicional y cotizado por separado.',
+    'El cliente autoriza el registro y uso de fotografías de la instalación y equipos con fines de soporte técnico, trazabilidad, capacitación y material comercial o publicitario, evitando divulgar información sensible.',
+    'La responsabilidad de EVINKA se limita al alcance del servicio contratado y al valor efectivamente pagado por el cliente.',
+    'Aplican las condiciones del Certificado de Garantía EVINKA entregado junto con la instalación.',
+  ];
+}
+
+function buildWarrantyLegalLines() {
+  return [
+    'Sección 5: La atención de garantía estará sujeta a evaluación técnica y disponibilidad operativa de EVINKA, no implicando reemplazo inmediato ni cobertura de perjuicios indirectos o lucro cesante.',
+    'Sección 7: Funciones remotas, conectividad, aplicaciones, plataformas, integración OCPP o servicios en línea podrán depender de terceros, internet o condiciones externas ajenas al control de EVINKA.',
+    'Sección 8: EVINKA podrá reparar, reemplazar componentes o aplicar soluciones técnicas equivalentes según evaluación técnica y disponibilidad.',
+    'Sección 10: La garantía no cubre trabajos civiles, acabados, pintura, modificaciones posteriores de la instalación ni daños ocasionados por infraestructura eléctrica preexistente del inmueble. La atención de garantía estará sujeta a evaluación técnica y disponibilidad operativa de EVINKA, no implicando reemplazo inmediato ni cobertura de perjuicios indirectos o lucro cesante. Funciones remotas, conectividad, aplicaciones, plataformas, integración OCPP o servicios en línea podrán depender de terceros, internet o condiciones externas ajenas al control de EVINKA. Los tiempos de carga y desempeño final podrán variar según el vehículo, batería, suministro eléctrico y condiciones externas de operación. EVINKA podrá conservar registro fotográfico técnico de la instalación para fines de trazabilidad, soporte, capacitación y mejora continua.',
+  ];
+}
+
+function buildQuoteSectionsForPdf(quote = {}) {
+  if (quote.countryCode !== 'CO') {
+    return [
+      { title: 'Servicio de Instalación Estándar de Cargador', lines: [buildServiceParagraph(quote)], bullets: buildIncludedBulletLines(quote) },
+      {
+        title: 'Trazabilidad documental y condiciones legales',
+        lines: buildTraceabilityLines({
+          orderCode: quote.installationOrderId || quote.id || '-',
+          warrantyCode: quote.warrantyCode || 'Se emite al cierre',
+          serialNumber: quote.serialNumber || '-',
+          record: quote.id || quote.installationOrderId || '-',
+        }),
+        bullets: buildLegalAddendumLines(),
+      },
+    ];
+  }
+  const chargerRef = quote.chargerReference || quote.charger?.label || 'cargador';
+  const templateKind = quotePdfTemplateKind(quote);
+  return [
+    {
+      title: 'Objeto',
+      lines: [
+        buildServiceParagraph(quote),
+        `Cliente: ${formatDisplayName(quote.clientName) || '-'} · Documento: ${quote.documentType || '-'} ${quote.clientDocument || '-'}.`,
+      ],
+      bullets: [],
+    },
+    {
+      title: templateKind === 'motorysa' ? 'Alcance técnico de la instalación' : 'Alcance de la instalación propuesta',
+      lines: [
+        `Se contempla la instalación para la referencia ${chargerRef}, considerando la acometida existente, el recorrido del cableado y las protecciones requeridas.`,
+      ],
+      bullets: buildIncludedBulletLines(quote).slice(0, 6),
+    },
+    {
+      title: 'Condiciones del sitio',
+      lines: [
+        `Ubicación: ${[quote.city, quote.department, quote.locality, quote.neighborhood, quote.address].filter(Boolean).join(' / ') || '-'}.`,
+        `Acometida reportada: ${quote.acometidaType || '-'} · Calibre ${quote.acometidaCaliber || '-'} · Breaker principal ${quote.primaryBreaker || '-'}.`,
+      ],
+      bullets: (quote.reviewReasons || []).length ? quote.reviewReasons : ['La propuesta está sujeta a confirmación técnica final en sitio.'],
+    },
+    {
+      title: 'Exclusiones y aclaraciones',
+      lines: [
+        'La cotización corresponde únicamente al servicio de instalación y materiales definidos en el presente documento.',
+        'Cualquier adecuación eléctrica adicional no contemplada expresamente será cotizada por separado.',
+      ],
+      bullets: [],
+    },
+    {
+      title: 'Trazabilidad documental y condiciones legales',
+      lines: buildTraceabilityLines({
+        orderCode: quote.installationOrderId || quote.id || '-',
+        warrantyCode: quote.warrantyCode || 'Se emite al cierre',
+        serialNumber: quote.serialNumber || '-',
+        record: quote.id || quote.installationOrderId || '-',
+      }),
+      bullets: buildLegalAddendumLines(),
+    },
+  ];
+}
+
 function formatNumber(value) {
   return new Intl.NumberFormat('es-PE', { maximumFractionDigits: 2 }).format(Number(value || 0));
 }
@@ -2944,6 +5248,124 @@ function formatDateOnly(value) {
 
 function formatTimeOnly(value) {
   return new Intl.DateTimeFormat('es-PE', { hour: 'numeric', minute: '2-digit', timeZone: DISPLAY_TIME_ZONE }).format(new Date(value));
+}
+
+function clickUpEnabled() {
+  return Boolean(CLICKUP_API_TOKEN && CLICKUP_B2C_LIST_ID);
+}
+
+function buildClickUpVisitTaskName(visit = {}) {
+  const client = String(visit.clientName || 'Cliente EVINKA').trim();
+  const date = visit.scheduledAt ? formatDateOnly(visit.scheduledAt) : 'sin fecha';
+  const time = visit.scheduledAt ? formatTimeOnly(visit.scheduledAt) : 'sin hora';
+  return `${client} - ${date} - ${time}`;
+}
+
+function buildClickUpVisitTaskDescription(visit = {}) {
+  const lines = [
+    'Visita técnica creada automáticamente desde el chatbot de WhatsApp.',
+    '',
+    `Cliente: ${visit.clientName || '-'}`,
+    `Teléfono: ${visit.clientPhone || '-'}`,
+    `Correo: ${visit.clientEmail || '-'}`,
+    `Documento: ${visit.clientDocument || '-'}`,
+    `Dirección: ${visit.clientAddress || '-'}`,
+    `Fecha programada: ${visit.scheduledAt ? formatDate(visit.scheduledAt) : '-'}`,
+    `Franja: ${visit.timeWindow || '-'}`,
+    `Referencia: ${visit.reference || '-'}`,
+    `Técnico asignado: ${visit.assignedTechName || visit.assignedTechEmail || '-'}`,
+    '',
+    `Notas: ${visit.notes || 'Sin notas.'}`,
+  ];
+  return lines.join('\n').trim();
+}
+
+function buildClickUpVisitPayload(visit = {}) {
+  const scheduledAt = visit.scheduledAt ? new Date(visit.scheduledAt) : null;
+  const startMs = scheduledAt && Number.isFinite(scheduledAt.getTime())
+    ? scheduledAt.getTime()
+    : null;
+  const durationMinutes = Number.isFinite(CLICKUP_DEFAULT_DURATION_MINUTES) && CLICKUP_DEFAULT_DURATION_MINUTES > 0
+    ? CLICKUP_DEFAULT_DURATION_MINUTES
+    : 60;
+  const dueMs = startMs ? startMs + durationMinutes * 60 * 1000 : null;
+  return {
+    name: buildClickUpVisitTaskName(visit),
+    description: buildClickUpVisitTaskDescription(visit),
+    status: CLICKUP_B2C_STATUS,
+    priority: 3,
+    start_date: startMs ? String(startMs) : undefined,
+    start_date_time: Boolean(startMs),
+    due_date: dueMs ? String(dueMs) : undefined,
+    due_date_time: Boolean(dueMs),
+  };
+}
+
+function buildClickUpCreateVisitPayload(visit = {}) {
+  const payload = buildClickUpVisitPayload(visit);
+  if (Number.isFinite(CLICKUP_B2C_DEFAULT_ASSIGNEE_ID) && CLICKUP_B2C_DEFAULT_ASSIGNEE_ID > 0) {
+    payload.assignees = [CLICKUP_B2C_DEFAULT_ASSIGNEE_ID];
+  }
+  return payload;
+}
+
+async function clickUpRequest(method, endpoint, payload = null) {
+  const response = await fetch(`${CLICKUP_API_BASE}${endpoint}`, {
+    method,
+    headers: {
+      Authorization: CLICKUP_API_TOKEN,
+      'Content-Type': 'application/json',
+    },
+    body: payload ? JSON.stringify(payload) : undefined,
+  });
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    throw new Error(`ClickUp ${response.status}: ${data.err || data.error || response.statusText}`);
+  }
+  return data;
+}
+
+function shouldSyncVisitToClickUp(visit = {}) {
+  const status = String(visit.status || '').trim().toLowerCase();
+  return clickUpEnabled()
+    && String(visit.source || '').trim().toLowerCase() === 'chatbot'
+    && Boolean(String(visit.scheduledAt || '').trim())
+    && !['cancelada', 'cerrada'].includes(status);
+}
+
+async function syncTechVisitToClickUp(visit = {}) {
+  if (!clickUpEnabled()) {
+    return {
+      ok: false,
+      skipped: true,
+      reason: 'clickup_not_configured',
+      error: 'ClickUp no está configurado en este servidor.',
+    };
+  }
+  if (!shouldSyncVisitToClickUp(visit)) {
+    return { ok: false, skipped: true, reason: 'visit_not_schedulable' };
+  }
+
+  try {
+    const payload = buildClickUpVisitPayload(visit);
+    const task = visit.clickupTaskId
+      ? await clickUpRequest('PUT', `/task/${encodeURIComponent(visit.clickupTaskId)}`, payload)
+      : await clickUpRequest('POST', `/list/${encodeURIComponent(CLICKUP_B2C_LIST_ID)}/task`, buildClickUpCreateVisitPayload(visit));
+    return {
+      ok: true,
+      skipped: false,
+      taskId: String(task.id || '').trim(),
+      taskUrl: String(task.url || '').trim(),
+      syncedAt: new Date().toISOString(),
+    };
+  } catch (error) {
+    console.error('syncTechVisitToClickUp failed:', error);
+    return {
+      ok: false,
+      skipped: false,
+      error: error instanceof Error ? error.message : String(error || 'Error desconocido al sincronizar con ClickUp.'),
+    };
+  }
 }
 
 function buildVisitTimeLabel(visit = {}) {

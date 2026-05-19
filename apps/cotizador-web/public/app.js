@@ -1,6 +1,9 @@
 const state = {
   user: null,
   config: null,
+  theme: 'dark',
+  activeCountry: '',
+  clients: [],
   quotes: [],
   techVisits: [],
   installationOrders: [],
@@ -9,13 +12,19 @@ const state = {
   selectedTab: 'quote',
   catalogDraft: null,
   quotePhotos: [],
+  conformityOrderId: '',
+  conformityPhotoFiles: [null, null],
+  conformitySignatureData: { installer: '', client: '' },
 };
+
+const TAB_ORDER = ['quote', 'quotes', 'visits', 'ops', 'conformities', 'advisor', 'admin'];
 
 const el = (id) => document.getElementById(id);
 
 init();
 
 async function init() {
+  loadThemePreference();
   bindUI();
   await loadSession();
 }
@@ -25,6 +34,8 @@ function bindUI() {
   el('registerForm')?.addEventListener('submit', onRegisterRequest);
   el('toggleRegisterBtn')?.addEventListener('click', toggleRegisterForm);
   el('logoutBtn').addEventListener('click', onLogout);
+  el('themeDarkBtn')?.addEventListener('click', () => setTheme('dark'));
+  el('themeLightBtn')?.addEventListener('click', () => setTheme('light'));
   el('quoteForm').addEventListener('submit', onGenerateQuote);
   el('resetFormBtn').addEventListener('click', () => {
     el('quoteForm').reset();
@@ -37,14 +48,53 @@ function bindUI() {
   el('sitePhotos')?.addEventListener('change', onAddSitePhotos);
   el('commercialProfileSelect')?.addEventListener('change', renderQuoteSelects);
   el('adminForm').addEventListener('submit', onSaveAdmin);
+  el('countryScopeSelect')?.addEventListener('change', onChangeCountryScope);
+  el('userEditorForm')?.addEventListener('submit', onSubmitUserEditor);
+  el('closeUserEditorBtn')?.addEventListener('click', closeUserEditorModal);
+  el('cancelUserEditorBtn')?.addEventListener('click', closeUserEditorModal);
+  el('userEditorModal')?.addEventListener('click', (event) => {
+    if (event.target?.id === 'userEditorModal') closeUserEditorModal();
+  });
+  el('conformityForm')?.addEventListener('submit', onSubmitConformityForm);
+  el('cancelConformityBtn')?.addEventListener('click', resetConformityForm);
+  el('conformityOrderSelect')?.addEventListener('change', onChangeConformityOrder);
+  el('loadConformityOrderBtn')?.addEventListener('click', onLoadConformityOrder);
+  el('generateWarrantyBtn')?.addEventListener('click', onGenerateWarranty);
+  el('conformityPhoto1')?.addEventListener('change', (event) => onChangeConformityPhoto(event, 0));
+  el('conformityPhoto2')?.addEventListener('change', (event) => onChangeConformityPhoto(event, 1));
+  el('conformityAdditionalToggle')?.addEventListener('change', syncConformityAdditionalField);
+  document.querySelectorAll('[data-clear-signature]').forEach((button) => {
+    button.addEventListener('click', () => clearSignaturePad(button.dataset.clearSignature));
+  });
+  el('reloadAdvisorFrameBtn')?.addEventListener('click', reloadAdvisorFrame);
   document.querySelectorAll('.tab').forEach((btn) => btn.addEventListener('click', () => setTab(btn.dataset.tab)));
+  initSignaturePad('installer');
+  initSignaturePad('client');
+}
+
+function loadThemePreference() {
+  const saved = String(localStorage.getItem('evinkaTheme') || '').trim();
+  const preferred = saved || (window.matchMedia && window.matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark');
+  setTheme(preferred === 'light' ? 'light' : 'dark', { persist: false });
+}
+
+function setTheme(theme, { persist = true } = {}) {
+  state.theme = theme === 'light' ? 'light' : 'dark';
+  document.body.dataset.theme = state.theme;
+  document.documentElement.style.colorScheme = state.theme;
+  const metaTheme = document.querySelector('meta[name="theme-color"]');
+  if (metaTheme) metaTheme.setAttribute('content', state.theme === 'light' ? '#f4efe7' : '#0c0c0c');
+  el('themeDarkBtn')?.classList.toggle('is-active', state.theme === 'dark');
+  el('themeLightBtn')?.classList.toggle('is-active', state.theme === 'light');
+  if (persist) localStorage.setItem('evinkaTheme', state.theme);
 }
 
 async function loadSession() {
-  const res = await fetch('/api/me');
+  const res = await fetch(withCountryQuery('/api/me'));
   const data = await res.json();
   state.user = data.user;
   state.config = data.config;
+  state.activeCountry = data.config?.activeCountry || resolveDefaultCountry(data.user);
   if (!state.user) {
     showLogin();
     return;
@@ -52,6 +102,7 @@ async function loadSession() {
   showDashboard();
   await Promise.allSettled([
     loadCatalog(),
+    loadClients(),
     loadQuotes(),
     loadTechVisits(),
     loadInstallationOrders(),
@@ -69,29 +120,52 @@ function showLogin() {
 function showDashboard() {
   el('loginView').classList.add('hidden');
   el('dashboardView').classList.remove('hidden');
+  syncCountryScopeSelector();
+  refreshScopePanels();
   el('companyName').textContent = state.config?.company?.name || 'EVINKA Cotizador';
-  el('companyTagline').textContent = state.config?.company?.tagline || '';
-  el('sessionBadge').textContent = `${state.user.role} · ${state.user.name}`;
-  el('adminTabBtn').classList.toggle('hidden', !isAdminUser());
-  el('quoteTabBtn')?.classList.toggle('hidden', !canEditCommercialFlow());
-  el('quotesTabBtn')?.classList.toggle('hidden', !canEditCommercialFlow());
-  el('visitsTabBtn')?.classList.toggle('hidden', !canSeeOperations());
-  el('opsTabBtn')?.classList.toggle('hidden', !canSeeOperations());
-  el('conformitiesTabBtn')?.classList.toggle('hidden', !canSeeOperations());
+  const countryScope = activeCountryLabel();
+  const tagline = String(state.config?.company?.tagline || '').trim();
+  const shouldAppendScope = countryScope && !tagline.toLowerCase().includes(countryScope.toLowerCase()) && !isGlobalScope();
+  el('companyTagline').textContent = [tagline, shouldAppendScope ? countryScope : ''].filter(Boolean).join(' · ');
+  el('sessionBadge').textContent = `${roleLabel()} · ${state.user.name}${countryScope ? ` · ${countryScope}` : ''}`;
+  TAB_ORDER.forEach((tab) => {
+    const button = el(`${tab}TabBtn`);
+    if (button) button.classList.toggle('hidden', !canAccessTab(tab));
+  });
   el('techName').value = state.user.name;
   if (el('quoteForm').visitDate && !el('quoteForm').visitDate.value) {
     el('quoteForm').visitDate.value = new Date().toISOString().slice(0, 10);
   }
-  setTab(canEditCommercialFlow() ? 'quote' : 'ops');
+  const defaultTab = TAB_ORDER.find((tab) => canAccessTab(tab)) || 'quote';
+  setTab(defaultTab);
 }
 
 function setTab(name) {
-  state.selectedTab = name;
-  document.querySelectorAll('.tab').forEach((btn) => btn.classList.toggle('active', btn.dataset.tab === name));
-  ['quote', 'quotes', 'visits', 'ops', 'conformities', 'admin'].forEach((tab) => {
+  const nextTab = canAccessTab(name)
+    ? name
+    : TAB_ORDER.find((tab) => canAccessTab(tab)) || 'quote';
+  state.selectedTab = nextTab;
+  document.querySelectorAll('.tab').forEach((btn) => btn.classList.toggle('active', btn.dataset.tab === nextTab));
+  TAB_ORDER.forEach((tab) => {
     const panel = el(`tab-${tab}`);
-    if (panel) panel.classList.toggle('hidden', tab !== name);
+    if (panel) panel.classList.toggle('hidden', tab !== nextTab);
   });
+  if (nextTab === 'advisor') reloadAdvisorFrame(false);
+}
+
+function reloadAdvisorFrame(force = true) {
+  const frame = el('advisorFrame');
+  if (!frame) return;
+  const current = frame.getAttribute('src') || 'https://asesor.evinka.net/';
+  if (!force) {
+    if (!frame.src) frame.src = current;
+    return;
+  }
+  const url = new URL(current, window.location.origin);
+  if (state.activeCountry && state.activeCountry !== 'ALL') url.searchParams.set('country', state.activeCountry);
+  else url.searchParams.delete('country');
+  url.searchParams.set('_embed_ts', Date.now().toString());
+  frame.src = url.toString();
 }
 
 function applyAdvisorPrefillFromQuery() {
@@ -123,7 +197,7 @@ async function onLogin(event) {
   });
   const data = await res.json().catch(() => ({}));
   if (!res.ok) {
-    return alert(data.error || 'No pude entrar. Revisa tu código/PIN o el acceso admin de respaldo.');
+    return alert(data.error || 'No pude entrar. Revisa tu usuario/PIN o el acceso admin de respaldo.');
   }
   await loadSession();
 }
@@ -157,7 +231,7 @@ async function onLogout() {
 }
 
 async function loadCatalog() {
-  const res = await fetch('/api/catalog');
+  const res = await fetch(withCountryQuery('/api/catalog'));
   if (!res.ok) return;
   state.catalog = await res.json();
   state.catalogDraft = structuredClone(state.catalog);
@@ -174,6 +248,41 @@ function renderQuoteSelects() {
   const cables = buildCablesForProfile(effectiveProfile);
   const currentCableId = el('cableSelect')?.value;
   fillSelect('cableSelect', cables.map((item) => ({ value: item.id, label: `${item.label} (${money(item.pricePerMeter)}/m)` })), currentCableId);
+
+  const harCatalogs = state.catalog?.harCatalogs || {};
+  fillDatalist('chargerReferenceOptions', harCatalogs.chargerReferences || []);
+  fillDatalist('acometidaTypeOptions', harCatalogs.acometidaTypes || []);
+  fillDatalist('acometidaCaliberOptions', harCatalogs.acometidaCalibers || []);
+  fillDatalist('primaryBreakerOptions', harCatalogs.primaryBreakers || []);
+  fillDatalist('cityOptions', harCatalogs.cities || []);
+  renderHarGuide();
+}
+
+function renderHarGuide() {
+  const wrap = el('coHarGuide');
+  if (!wrap) return;
+  const harCatalogs = state.catalog?.harCatalogs || {};
+  const isColombia = (state.activeCountry || state.catalog?.activeCountry) === 'CO';
+  if (!isColombia) {
+    wrap.classList.add('hidden');
+    wrap.innerHTML = '';
+    return;
+  }
+  wrap.classList.remove('hidden');
+  const rubrics = harCatalogs.installationRubrics || [];
+  const statuses = harCatalogs.technicalStatuses || [];
+  wrap.innerHTML = `
+    <h3>Base HAR Colombia</h3>
+    <p class="muted">Ya dejé cargadas referencias base del HAR para cotizar más alineado con CO y no depender tanto de texto libre.</p>
+    <div class="result-grid">
+      <div class="metric"><b>Referencias cargador</b><span>${escapeHtml(String((harCatalogs.chargerReferences || []).length))}</span></div>
+      <div class="metric"><b>Ciudades sugeridas</b><span>${escapeHtml(String((harCatalogs.cities || []).length))}</span></div>
+      <div class="metric"><b>Tipos acometida</b><span>${escapeHtml(String((harCatalogs.acometidaTypes || []).length))}</span></div>
+      <div class="metric"><b>Estados técnicos</b><span>${escapeHtml(String(statuses.length))}</span></div>
+    </div>
+    ${rubrics.length ? `<p><strong>Rubros base CO:</strong> ${escapeHtml(rubrics.join(' · '))}</p>` : ''}
+    ${statuses.length ? `<p class="muted">Estados base: ${escapeHtml(statuses.join(' · '))}</p>` : ''}
+  `;
 }
 
 function renderExtras() {
@@ -232,7 +341,7 @@ async function loadAdminUsers() {
 function renderAdminUsers() {
   const wrap = el('accountsAdmin');
   if (!wrap) return;
-  if (state.user?.role !== 'admin') {
+  if (!isAdminUser()) {
     wrap.innerHTML = '';
     return;
   }
@@ -240,10 +349,11 @@ function renderAdminUsers() {
   const pending = users.filter((user) => user.status === 'pending');
   const active = users.filter((user) => user.status === 'active');
   const blocked = users.filter((user) => user.status === 'blocked');
-  const roles = state.config?.roles || ['admin', 'tech', 'tecnico_supervisor'];
+  const roleDefinitions = state.config?.roleDefinitions || [];
+  const roles = state.config?.roles || roleDefinitions.map((role) => role.id) || ['admin', 'supervisor', 'asesor_comercial', 'tecnico_visitas', 'tecnico_instalador'];
   wrap.innerHTML = `
     <h3>Cuentas</h3>
-    <p class="muted">El admin crea las cuentas y asigna un código + PIN para entrar directo.</p>
+    <p class="muted">El admin crea las cuentas y asigna un usuario + PIN para entrar directo.</p>
     <form class="form-grid top-gap-sm" onsubmit="window.createAdminUser(event)">
       <label>
         Nombre
@@ -254,13 +364,28 @@ function renderAdminUsers() {
         <input name="email" type="email" placeholder="julio.campos@evinka.tech" />
       </label>
       <label>
+        Teléfono alertas (opcional)
+        <input name="notificationPhone" type="tel" placeholder="+51999999999" />
+      </label>
+      <label>
         Rol
         <select name="role">
-          ${roles.map((role) => `<option value="${escapeHtml(role)}">${escapeHtml(role)}</option>`).join('')}
+          ${roles.map((role) => {
+            const definition = roleDefinitions.find((item) => item.id === role);
+            return `<option value="${escapeHtml(role)}">${escapeHtml(definition?.label || role)}</option>`;
+          }).join('')}
         </select>
       </label>
       <label>
-        Código (opcional)
+        País permitido
+        <select name="allowedCountries">
+          <option value="PE">Perú</option>
+          <option value="CO">Colombia</option>
+          <option value="ALL">Perú y Colombia</option>
+        </select>
+      </label>
+      <label>
+        Usuario (opcional)
         <input name="employeeCode" type="text" placeholder="TEC014" />
       </label>
       <label>
@@ -284,21 +409,27 @@ function renderAdminUserCard(user) {
   const requested = user.requestedAt ? formatDate(user.requestedAt) : '-';
   const granted = user.accessGrantedAt ? formatDate(user.accessGrantedAt) : '-';
   const pinStatus = user.hasPin ? 'PIN listo' : 'Sin PIN';
+  const countries = Array.isArray(user.allowedCountries) && user.allowedCountries.length ? user.allowedCountries.join(', ') : 'Todos';
+  const queues = Array.isArray(user.allowedQueues) && user.allowedQueues.length ? user.allowedQueues.join(', ') : 'Todas';
   return `
     <article class="quote-card account-card">
       <div class="row">
         <strong>${escapeHtml(user.name || user.email)}</strong>
         <span class="pill pill-${escapeHtml(user.status)}">${escapeHtml(labelUserStatus(user.status))}</span>
       </div>
-      <div class="row"><span>${escapeHtml(user.email || '-')}</span><span>${escapeHtml(user.role || 'tech')}</span></div>
-      <div class="row"><span>Código</span><span>${escapeHtml(user.employeeCode || '-')}</span></div>
+      <div class="row"><span>${escapeHtml(user.email || '-')}</span><span>${escapeHtml(roleLabel(user.role || 'tecnico_visitas'))}</span></div>
+      <div class="row"><span>Usuario</span><span>${escapeHtml(user.employeeCode || '-')}</span></div>
+      <div class="row"><span>Teléfono alertas</span><span>${escapeHtml(user.notificationPhone || '-')}</span></div>
+      <div class="row"><span>País</span><span>${escapeHtml(countries)}</span></div>
+      <div class="row"><span>Colas</span><span>${escapeHtml(queues)}</span></div>
       <div class="row"><span>PIN</span><span>${escapeHtml(pinStatus)}</span></div>
       <div class="row"><span>Solicitud</span><span>${requested}</span></div>
       <div class="row"><span>Acceso</span><span>${granted}</span></div>
       <div class="row quote-card-actions">
         ${user.status !== 'active' ? `<button class="primary compact-btn" type="button" onclick="window.updateUserAccess('${user.id}','approve')">Dar acceso</button>` : ''}
         ${user.status !== 'blocked' ? `<button class="secondary compact-btn" type="button" onclick="window.updateUserAccess('${user.id}','block')">Quitar acceso</button>` : ''}
-        <button class="secondary compact-btn" type="button" onclick="window.manageUserCredentials('${user.id}')">Código / PIN</button>
+        <button class="secondary compact-btn" type="button" onclick="window.editAdminUser('${user.id}')">Editar usuario</button>
+        <button class="secondary compact-btn" type="button" onclick="window.manageUserCredentials('${user.id}')">Usuario / PIN</button>
       </div>
     </article>
   `;
@@ -308,6 +439,169 @@ function labelUserStatus(status) {
   if (status === 'pending') return 'Pendiente';
   if (status === 'blocked') return 'Bloqueada';
   return 'Activa';
+}
+
+function normalizeAllowedCountriesInput(value) {
+  const raw = String(value || '').trim().toUpperCase();
+  if (!raw) return [];
+  if (raw === 'ALL') return ['ALL'];
+  return raw.split(/[\s,;|]+/).map((item) => item.trim()).filter(Boolean);
+}
+
+function resolveDefaultCountry(user = state.user) {
+  const allowed = Array.isArray(user?.allowedCountries) ? user.allowedCountries.filter(Boolean) : [];
+  if (allowed.length === 1 && allowed[0] !== 'ALL') return allowed[0];
+  return state.activeCountry || state.config?.activeCountry || (canUseGlobalScope(user) ? 'ALL' : 'PE');
+}
+
+function withCountryQuery(url) {
+  const country = state.activeCountry || resolveDefaultCountry();
+  if (!country) return url;
+  const next = new URL(url, window.location.origin);
+  next.searchParams.set('country', country);
+  return `${next.pathname}${next.search}`;
+}
+
+function activeCountryLabel() {
+  const country = state.activeCountry || state.config?.activeCountry || resolveDefaultCountry();
+  if (country === 'ALL') return 'Global';
+  return country === 'CO' ? 'Colombia' : 'Perú';
+}
+
+function activeCountryCode() {
+  const country = state.activeCountry || state.config?.activeCountry || resolveDefaultCountry();
+  return country === 'CO' ? 'CO' : country === 'ALL' ? 'ALL' : 'PE';
+}
+
+function setQuoteFieldLabel(fieldName, text) {
+  const control = document.querySelector(`#quoteForm [name="${fieldName}"]`);
+  const label = control?.closest('label');
+  if (!label) return;
+  const textNode = [...label.childNodes].find((node) => node.nodeType === Node.TEXT_NODE && node.textContent.trim());
+  if (textNode) textNode.textContent = text;
+}
+
+function refreshQuoteCountryCopy() {
+  const country = activeCountryCode();
+  const legend = document.querySelector('#quoteForm fieldset.extras-box legend');
+  const documentType = document.querySelector('#quoteForm [name="documentType"]');
+  const phone = document.querySelector('#quoteForm [name="phone"]');
+  const company = document.querySelector('#quoteForm [name="companyName"]');
+  const city = document.querySelector('#quoteForm [name="city"]');
+  const department = document.querySelector('#quoteForm [name="department"]');
+  const locality = document.querySelector('#quoteForm [name="locality"]');
+  const neighborhood = document.querySelector('#quoteForm [name="neighborhood"]');
+
+  if (country === 'CO') {
+    if (legend) legend.textContent = 'Ficha cliente Colombia';
+    setQuoteFieldLabel('department', 'Departamento');
+    setQuoteFieldLabel('locality', 'Localidad');
+    setQuoteFieldLabel('neighborhood', 'Barrio');
+    if (phone) phone.placeholder = '3001234567';
+    if (company) company.placeholder = 'Motorysa / empresa';
+    if (city) city.placeholder = 'Bogotá';
+    if (department) department.placeholder = 'Cundinamarca';
+    if (locality) locality.placeholder = 'Suba';
+    if (neighborhood) neighborhood.placeholder = 'Barrio';
+    if (documentType) {
+      const current = documentType.value;
+      documentType.innerHTML = `
+        <option value="CC">CC</option>
+        <option value="CE">CE</option>
+        <option value="NIT">NIT</option>
+        <option value="PASAPORTE">PASAPORTE</option>
+      `;
+      documentType.value = ['CC', 'CE', 'NIT', 'PASAPORTE'].includes(current) ? current : 'CC';
+    }
+    return;
+  }
+
+  if (legend) legend.textContent = country === 'ALL' ? 'Ficha cliente' : 'Ficha cliente Perú';
+  setQuoteFieldLabel('department', 'Departamento');
+  setQuoteFieldLabel('locality', 'Distrito');
+  setQuoteFieldLabel('neighborhood', 'Zona / referencia');
+  if (phone) phone.placeholder = '999123456';
+  if (company) company.placeholder = 'Empresa / razón social';
+  if (city) city.placeholder = 'Lima';
+  if (department) department.placeholder = 'Lima';
+  if (locality) locality.placeholder = 'Miraflores';
+  if (neighborhood) neighborhood.placeholder = 'Referencia';
+  if (documentType) {
+    const current = documentType.value;
+    documentType.innerHTML = `
+      <option value="DNI">DNI</option>
+      <option value="CE">CE</option>
+      <option value="RUC">RUC</option>
+      <option value="PASAPORTE">PASAPORTE</option>
+    `;
+    documentType.value = ['DNI', 'CE', 'RUC', 'PASAPORTE'].includes(current) ? current : 'DNI';
+  }
+}
+
+function hostFixedCountry() {
+  const host = window.location.hostname.toLowerCase();
+  if (['co-suite.evinka.net', 'co-cotizador.evinka.net', 'co.evinka.net', 'colombia.evinka.net'].includes(host)) return 'CO';
+  if (['pe-suite.evinka.net', 'pe-cotizador.evinka.net', 'pe.evinka.net', 'peru.evinka.net'].includes(host)) return 'PE';
+  return '';
+}
+
+function canUseGlobalScope(user = state.user) {
+  const allowed = Array.isArray(user?.allowedCountries) ? user.allowedCountries.filter(Boolean) : [];
+  return isAdminUser() || allowed.includes('ALL') || !allowed.length;
+}
+
+function isGlobalScope() {
+  return (state.activeCountry || state.config?.activeCountry || resolveDefaultCountry()) === 'ALL';
+}
+
+function allowedCountriesLabel(user = state.user) {
+  const allowed = Array.isArray(user?.allowedCountries) ? user.allowedCountries.filter(Boolean) : [];
+  if (!allowed.length || allowed.includes('ALL')) return 'Perú y Colombia';
+  return allowed.map((code) => code === 'CO' ? 'Colombia' : code === 'PE' ? 'Perú' : code).join(' · ');
+}
+
+function canSwitchCountryScope(user = state.user) {
+  if (hostFixedCountry()) return false;
+  const allowed = Array.isArray(user?.allowedCountries) ? user.allowedCountries.filter(Boolean) : [];
+  return isAdminUser() || allowed.includes('ALL') || allowed.length > 1;
+}
+
+function syncCountryScopeSelector() {
+  const wrap = el('countryScopeWrap');
+  const select = el('countryScopeSelect');
+  if (!wrap || !select) return;
+  const countries = Array.isArray(state.config?.countries) ? state.config.countries : [
+    { code: 'PE', label: 'Perú' },
+    { code: 'CO', label: 'Colombia' },
+  ];
+  const options = [
+    ...(canUseGlobalScope() && !hostFixedCountry() ? [{ code: 'ALL', label: 'Global' }] : []),
+    ...countries,
+  ];
+  const current = state.activeCountry || resolveDefaultCountry();
+  select.innerHTML = options.map((item) => `<option value="${escapeHtml(item.code)}">${escapeHtml(item.label)}</option>`).join('');
+  select.value = options.some((item) => item.code === current) ? current : (options[0]?.code || 'PE');
+  wrap.classList.toggle('hidden', !canSwitchCountryScope());
+}
+
+async function onChangeCountryScope(event) {
+  const nextCountry = String(event.target?.value || '').trim().toUpperCase();
+  if (!nextCountry || nextCountry === state.activeCountry) return;
+  state.activeCountry = nextCountry;
+  await loadSession();
+}
+
+function refreshScopePanels() {
+  const quoteNotice = el('quoteScopeNotice');
+  const adminNotice = el('adminScopeNotice');
+  const quoteButton = document.querySelector('#quoteForm button[type="submit"]');
+  const adminButton = document.querySelector('#adminForm button[type="submit"]');
+  const global = isGlobalScope();
+  if (quoteNotice) quoteNotice.classList.toggle('hidden', !global);
+  if (adminNotice) adminNotice.classList.toggle('hidden', !global);
+  if (quoteButton) quoteButton.disabled = global;
+  if (adminButton) adminButton.disabled = global;
+  refreshQuoteCountryCopy();
 }
 
 async function updateUserAccess(id, action) {
@@ -337,7 +631,9 @@ async function createAdminUser(event) {
     body: JSON.stringify({
       name: form.get('name'),
       email: form.get('email'),
+      notificationPhone: form.get('notificationPhone'),
       role: form.get('role'),
+      allowedCountries: normalizeAllowedCountriesInput(form.get('allowedCountries')),
       employeeCode: form.get('employeeCode'),
       pin: form.get('pin'),
     }),
@@ -346,14 +642,16 @@ async function createAdminUser(event) {
   if (!res.ok) return alert(data.error || 'No se pudo crear la cuenta.');
   event.target.reset();
   await loadAdminUsers();
-  alert(`Cuenta creada. Código asignado: ${data.user?.employeeCode || '-'}`);
+  alert(`Cuenta creada. Usuario asignado: ${data.user?.employeeCode || '-'}`);
 }
 
 async function manageUserCredentials(id) {
   const user = (state.adminUsers || []).find((item) => item.id === id);
   if (!user) return;
-  const employeeCode = window.prompt('Código del usuario', user.employeeCode || '');
+  const employeeCode = window.prompt('Usuario de acceso', user.employeeCode || '');
   if (employeeCode === null) return;
+  const notificationPhone = window.prompt('Teléfono de alertas (WhatsApp)', user.notificationPhone || '');
+  if (notificationPhone === null) return;
   const pin = window.prompt('Nuevo PIN (4 a 8 dígitos). Déjalo vacío para mantener el actual.', '');
   if (pin === null) return;
   const res = await fetch(`/api/admin/users/${encodeURIComponent(id)}/credentials`, {
@@ -361,17 +659,101 @@ async function manageUserCredentials(id) {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
       employeeCode,
+      notificationPhone,
       ...(pin ? { pin } : {}),
     }),
   });
   const data = await res.json().catch(() => ({}));
-  if (!res.ok) return alert(data.error || 'No se pudo actualizar el código o PIN.');
+  if (!res.ok) return alert(data.error || 'No se pudo actualizar el usuario o PIN.');
   await loadAdminUsers();
-  alert('Código / PIN actualizado.');
+  alert('Usuario / PIN actualizado.');
+}
+
+function fillUserEditorRoles(selectedRole = '') {
+  const select = el('userEditorRole');
+  if (!select) return;
+  const roles = state.config?.roleDefinitions || [];
+  select.innerHTML = roles.map((role) => `<option value="${escapeHtml(role.id)}">${escapeHtml(role.label || role.id)}</option>`).join('');
+  select.value = selectedRole || roles[0]?.id || 'asesor_comercial';
+}
+
+function setCheckboxValues(name, values = []) {
+  document.querySelectorAll(`input[name="${name}"]`).forEach((input) => {
+    input.checked = values.includes(input.value);
+  });
+}
+
+function getCheckboxValues(name) {
+  return [...document.querySelectorAll(`input[name="${name}"]`)]
+    .filter((input) => input.checked)
+    .map((input) => input.value);
+}
+
+function openUserEditorModal(user) {
+  const modal = el('userEditorModal');
+  const form = el('userEditorForm');
+  if (!modal || !form || !user) return;
+  fillUserEditorRoles(user.role || 'asesor_comercial');
+  form.elements.id.value = user.id || '';
+  form.elements.name.value = user.name || '';
+  form.elements.email.value = user.email || '';
+  form.elements.status.value = user.status || 'active';
+  form.elements.employeeCode.value = user.employeeCode || '';
+  form.elements.notificationPhone.value = user.notificationPhone || '';
+  form.elements.pin.value = '';
+  setCheckboxValues('allowedCountries', Array.isArray(user.allowedCountries) ? user.allowedCountries : []);
+  setCheckboxValues('allowedQueues', Array.isArray(user.allowedQueues) ? user.allowedQueues : []);
+  modal.classList.remove('hidden');
+  modal.setAttribute('aria-hidden', 'false');
+}
+
+function closeUserEditorModal() {
+  const modal = el('userEditorModal');
+  const form = el('userEditorForm');
+  if (form) form.reset();
+  setCheckboxValues('allowedCountries', []);
+  setCheckboxValues('allowedQueues', []);
+  if (!modal) return;
+  modal.classList.add('hidden');
+  modal.setAttribute('aria-hidden', 'true');
+}
+
+async function editAdminUser(id) {
+  const user = (state.adminUsers || []).find((item) => item.id === id);
+  if (!user) return;
+  openUserEditorModal(user);
+}
+
+async function onSubmitUserEditor(event) {
+  event.preventDefault();
+  const form = event.target;
+  const id = form.elements.id.value;
+  if (!id) return;
+  const res = await fetch(`/api/admin/users/${encodeURIComponent(id)}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      name: form.elements.name.value,
+      email: form.elements.email.value,
+      role: form.elements.role.value,
+      status: form.elements.status.value,
+      employeeCode: form.elements.employeeCode.value,
+      notificationPhone: form.elements.notificationPhone.value,
+      allowedCountries: getCheckboxValues('allowedCountries'),
+      allowedQueues: getCheckboxValues('allowedQueues'),
+      ...(form.elements.pin.value ? { pin: form.elements.pin.value } : {}),
+    }),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) return alert(data.error || 'No se pudo actualizar el usuario.');
+  await loadAdminUsers();
+  closeUserEditorModal();
+  alert('Usuario actualizado.');
 }
 
 window.createAdminUser = createAdminUser;
 window.manageUserCredentials = manageUserCredentials;
+window.editAdminUser = editAdminUser;
 
 function parametersEditor(defaults = {}) {
   const factors = Array.isArray(defaults.distanceFactors) && defaults.distanceFactors.length
@@ -564,7 +946,8 @@ function ensureDraft() {
 
 async function onSaveAdmin(event) {
   event.preventDefault();
-  if (state.user.role !== 'admin') return alert('Sin permisos.');
+  if (!isAdminUser()) return alert('Sin permisos.');
+  if (isGlobalScope()) return alert('Selecciona Perú o Colombia antes de guardar configuración.');
   const form = new FormData(event.target);
   const payload = {
     company: {
@@ -594,7 +977,7 @@ async function onSaveAdmin(event) {
     })),
     catalog: { items: state.catalogDraft.catalog.items },
   };
-  const res = await fetch('/api/catalog', {
+  const res = await fetch(withCountryQuery('/api/catalog'), {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payload),
@@ -606,6 +989,9 @@ async function onSaveAdmin(event) {
 
 async function onGenerateQuote(event) {
   event.preventDefault();
+  if (isGlobalScope()) {
+    return alert('Estás en vista Global. Selecciona Perú o Colombia antes de generar una cotización.');
+  }
   const form = new FormData(event.target);
   const body = Object.fromEntries(form.entries());
   if (event.target.dataset.visitId) body.visitId = event.target.dataset.visitId;
@@ -616,6 +1002,7 @@ async function onGenerateQuote(event) {
     quantity: Number(form.get(`cond_${item.code}_qty`) || 0),
   }));
   body.photos = await collectQuotePhotos();
+  body.countryCode = state.activeCountry || resolveDefaultCountry(state.user);
   body.distance = Number(body.distance || 0);
   body.voltage = Number(body.voltage || 0);
   body.current = Number(body.current || 0);
@@ -629,7 +1016,7 @@ async function onGenerateQuote(event) {
   const quote = data;
   renderQuoteResult(quote);
   clearQuotePrefill();
-  await Promise.allSettled([loadQuotes(), loadTechVisits(), loadInstallationOrders(), loadConformities()]);
+  await Promise.allSettled([loadClients(), loadQuotes(), loadTechVisits(), loadInstallationOrders(), loadConformities()]);
   el('sitePhotos').value = '';
   state.quotePhotos = [];
   renderSelectedPhotosPreview();
@@ -643,12 +1030,39 @@ function renderQuoteResult(quote) {
     <h3>Cotización lista</h3>
     <div class="result-grid">
       <div class="metric"><b>Cotización</b><span>${displayQuoteLabel(quote)}</span></div>
+      <div class="metric"><b>Documento</b><span>${escapeHtml([quote.documentType, quote.clientDocument].filter(Boolean).join(' ') || '-')}</span></div>
+      <div class="metric"><b>Celular</b><span>${escapeHtml(quote.phone || '-')}</span></div>
       <div class="metric"><b>Perfil</b><span>${escapeHtml(quote.commercialProfile?.name || 'GENERAL')}</span></div>
       <div class="metric"><b>Correo</b><span>${escapeHtml(quote.email || '-')}</span></div>
       <div class="metric"><b>Fotos</b><span>${escapeHtml(String((quote.photos || []).length))}</span></div>
-      <div class="metric"><b>Subtotal</b><span>${money(quote.subtotal)}</span></div>
-      <div class="metric"><b>IGV</b><span>${money(quote.igv)}</span></div>
-      <div class="metric"><b>Total</b><span>${money(quote.total)}</span></div>
+      <div class="metric"><b>Base técnica</b><span>${money(quote.subtotalBeforeCountryAdjustments || quote.subtotal, quote.currency || quote.countryCode)}</span></div>
+      <div class="metric"><b>Ajustes CO</b><span>${money(quote.countryAdjustmentsTotal || 0, quote.currency || quote.countryCode)}</span></div>
+      <div class="metric"><b>Subtotal</b><span>${money(quote.subtotal, quote.currency || quote.countryCode)}</span></div>
+      <div class="metric"><b>IVA</b><span>${money(quote.igv, quote.currency || quote.countryCode)}</span></div>
+      <div class="metric"><b>Total</b><span>${money(quote.total, quote.currency || quote.countryCode)}</span></div>
+    </div>
+    <div class="catalog-section">
+      <h3>${quote.countryCode === 'CO' ? 'Ficha Colombia' : 'Ficha Perú'}</h3>
+      <div class="result-grid">
+        <div class="metric"><b>Ubicación</b><span>${escapeHtml([quote.city, quote.department, quote.locality].filter(Boolean).join(' / ') || '-')}</span></div>
+        <div class="metric"><b>Dirección</b><span>${escapeHtml(quote.address || '-')}</span></div>
+        <div class="metric"><b>Vehículo</b><span>${escapeHtml(quote.vehicleModel || '-')}</span></div>
+        <div class="metric"><b>VIN</b><span>${escapeHtml(quote.vin || '-')}</span></div>
+        <div class="metric"><b>Referencia cargador</b><span>${escapeHtml(quote.chargerReference || quote.charger?.label || '-')}</span></div>
+        <div class="metric"><b>Revisión</b><span>${quote.requiresReview ? 'Sí' : 'No'}</span></div>
+      </div>
+      ${(quote.countryAdjustments || []).length ? `
+        <div class="top-gap-sm">
+          <p><strong>${quote.countryCode === 'CO' ? 'Ajustes Colombia' : 'Ajustes por país'}</strong></p>
+          <ul class="included-list">${(quote.countryAdjustments || []).map((row) => `<li>${escapeHtml(row.label)} · ${money(row.total, quote.currency || quote.countryCode)}</li>`).join('')}</ul>
+        </div>
+      ` : ''}
+      ${(quote.reviewReasons || []).length ? `
+        <div class="top-gap-sm">
+          <p><strong>Motivos de revisión</strong></p>
+          <ul class="included-list">${(quote.reviewReasons || []).map((row) => `<li>${escapeHtml(row)}</li>`).join('')}</ul>
+        </div>
+      ` : ''}
     </div>
     <div class="catalog-section">
       <h3>Incluye en el precio base</h3>
@@ -661,8 +1075,35 @@ function renderQuoteResult(quote) {
   `;
 }
 
+async function loadClients() {
+  const res = await fetch(withCountryQuery('/api/clients'));
+  if (!res.ok) return;
+  const data = await res.json().catch(() => []);
+  state.clients = Array.isArray(data) ? data : [];
+  renderClients();
+}
+
+function renderClients() {
+  const wrap = el('clientsList');
+  if (!wrap) return;
+  wrap.innerHTML = state.clients.length
+    ? state.clients.slice(0, 12).map(renderClientCard).join('')
+    : '<p class="muted">Todavía no hay clientes registrados en esta base.</p>';
+}
+
+function renderClientCard(client) {
+  return `
+    <article class="quote-card">
+      <div class="row"><strong>${escapeHtml(client.fullName || '-')}</strong><span>${escapeHtml(client.countryCode || '-')}</span></div>
+      <div class="row"><span>${escapeHtml([client.documentType, client.documentNumber].filter(Boolean).join(' ') || '-')}</span><span>${escapeHtml(client.phone || '-')}</span></div>
+      <div class="row"><span>${escapeHtml(client.email || '-')}</span><span>${escapeHtml(client.city || '-')}</span></div>
+      <div class="row"><span>${escapeHtml(client.address || '-')}</span><span>${escapeHtml(client.lastQuoteId || 'Sin cotización')}</span></div>
+    </article>
+  `;
+}
+
 async function loadQuotes() {
-  const res = await fetch('/api/quotes');
+  const res = await fetch(withCountryQuery('/api/quotes'));
   if (!res.ok) return;
   const data = await res.json().catch(() => []);
   state.quotes = Array.isArray(data) ? data : [];
@@ -697,7 +1138,7 @@ function renderQuoteCard(rawQuote) {
       <div class="row"><span>${escapeHtml(quote.email || '-')}</span><span>${escapeHtml(quote.emailSent ? 'Correo enviado' : 'Correo pendiente')}</span></div>
       <div class="row"><span>${escapeHtml(quote.profileName || quote.commercialProfile?.name || 'GENERAL')}</span><span>${formatPercent(quote.marginPercent || 0)}</span></div>
       <div class="row"><span>${escapeHtml(quote.installationOrderId || 'Sin orden')}</span><span>${escapeHtml(quote.scheduledInstallationWindow || labelQuoteStatus(quote))}</span></div>
-      <div class="row"><span>${escapeHtml(quote.installationType || '')} · ${escapeHtml(quote.cable?.label || '')}</span><span><strong>${money(quote.total)}</strong></span></div>
+      <div class="row"><span>${escapeHtml(quote.installationType || '')} · ${escapeHtml(quote.cable?.label || '')}</span><span><strong>${money(quote.total, quote.currency || quote.countryCode)}</strong></span></div>
       ${quote.scheduledInstallationAt ? `<div class="row"><span>Instalación programada</span><span>${escapeHtml(formatDate(quote.scheduledInstallationAt))}</span></div>` : ''}
       <div class="row quote-card-actions">
         <a class="link" href="${quote.pdfPath}" target="_blank" rel="noreferrer">PDF</a>
@@ -708,6 +1149,7 @@ function renderQuoteCard(rawQuote) {
         ${quote.canCancel ? `<button class="secondary compact-btn" type="button" onclick="window.cancelQuote('${quote.id}')">Cancelar</button>` : ''}
         ${isAdminUser() && quote.normalizedStatus !== 'aceptada_cliente' && quote.normalizedStatus !== 'instalada' && !quote.hasOrder ? `<button class="secondary compact-btn" type="button" onclick="window.acceptQuote('${quote.id}')">Crear orden</button>` : ''}
         ${conformity ? `<a class="link" href="/api/conformities/${encodeURIComponent(conformity.id)}/pdf" target="_blank" rel="noreferrer">Conformidad</a>` : ''}
+        ${quote.warrantyPdfUrl || quote.warrantyCode ? `<a class="link" href="${escapeHtml(quote.warrantyPdfUrl || "/api/warranties/" + encodeURIComponent(quote.warrantyId || '') + "/pdf")}" target="_blank" rel="noreferrer">Garantía</a>` : ''}
       </div>
     </article>
   `;
@@ -798,7 +1240,7 @@ function labelQuoteStatus(quote) {
 }
 
 async function loadTechVisits() {
-  const res = await fetch('/api/tech/visits');
+  const res = await fetch(withCountryQuery('/api/tech/visits'));
   if (!res.ok) return;
   const data = await res.json().catch(() => []);
   state.techVisits = Array.isArray(data) ? data : [];
@@ -807,7 +1249,7 @@ async function loadTechVisits() {
 }
 
 async function loadInstallationOrders() {
-  const res = await fetch('/api/installation-orders');
+  const res = await fetch(withCountryQuery('/api/installation-orders'));
   if (!res.ok) return;
   const data = await res.json().catch(() => []);
   state.installationOrders = Array.isArray(data) ? data : [];
@@ -815,7 +1257,7 @@ async function loadInstallationOrders() {
 }
 
 async function loadConformities() {
-  const res = await fetch('/api/conformities');
+  const res = await fetch(withCountryQuery('/api/conformities'));
   if (!res.ok) return;
   const data = await res.json().catch(() => []);
   state.conformities = Array.isArray(data) ? data : [];
@@ -874,6 +1316,8 @@ function renderVisitCard(rawVisit, { compact = false } = {}) {
     const conformity = findConformityByOrderId(visit.installationOrderId);
     if (conformity) {
       actions.push(`<a class="link" href="/api/conformities/${encodeURIComponent(conformity.id)}/pdf" target="_blank" rel="noreferrer">PDF conformidad</a>`);
+    } else if (canGenerateConformity()) {
+      actions.push(`<button class="secondary compact-btn" type="button" onclick="window.openConformityModal('${visit.installationOrderId}')">Conformidad</button>`);
     }
   }
   return `
@@ -901,7 +1345,7 @@ function renderOperations() {
   const todayOpen = visits.filter((visit) => visit.isToday && !visit.isClosed);
   const quotePending = visits.filter((visit) => visit.needsQuote && !visit.isClosed);
   const closePending = visits.filter((visit) => (visit.isPendingClose || visit.status === 'visitada') && !visit.isClosed);
-  const conformityPending = orders.filter((order) => String(order.conformityStatus || 'not_started').toLowerCase() !== 'pdf_generated');
+  const conformityPending = orders.filter((order) => isOrderReadyForConformity(order) && String(order.conformityStatus || 'not_started').toLowerCase() !== 'pdf_generated');
   const recentConformities = conformities.slice(0, 5);
   const quoteFlowPending = quotes.filter((quote) => quote.canConfirmForSend || quote.canMarkClientAccepted || quote.canScheduleInstallation).slice(0, 6);
 
@@ -939,6 +1383,15 @@ function renderOperations() {
 
 function renderOrderCard(order) {
   const conformity = findConformityByOrderId(order.id);
+  const actions = [];
+  if (order.quotePdfUrl) actions.push(`<a class="link" href="${order.quotePdfUrl}" target="_blank" rel="noreferrer">PDF cotización</a>`);
+  if (conformity) {
+    actions.push(`<a class="link" href="/api/conformities/${encodeURIComponent(conformity.id)}/pdf" target="_blank" rel="noreferrer">PDF conformidad</a>`);
+  } else if (canGenerateConformity() && isOrderReadyForConformity(order)) {
+    actions.push(`<button class="secondary compact-btn" type="button" onclick="window.openConformityModal('${order.id}')">Generar conformidad</button>`);
+  } else {
+    actions.push(`<span class="muted">${isOrderReadyForConformity(order) ? 'Aún sin PDF' : 'Esperando cierre operativo'}</span>`);
+  }
   return `
     <article class="quote-card compact-card">
       <div class="row">
@@ -948,8 +1401,7 @@ function renderOrderCard(order) {
       <div class="row"><span>${escapeHtml(order.id)}</span><span>${escapeHtml(formatOptionalDate(order.updatedAt || order.createdAt, order.status || '-'))}</span></div>
       <div class="row"><span>${escapeHtml(order.address || '-')}</span><span>${escapeHtml(order.assignedTechnician || order.assignedTechEmail || '-')}</span></div>
       <div class="row quote-card-actions">
-        ${order.quotePdfUrl ? `<a class="link" href="${order.quotePdfUrl}" target="_blank" rel="noreferrer">PDF cotización</a>` : ''}
-        ${conformity ? `<a class="link" href="/api/conformities/${encodeURIComponent(conformity.id)}/pdf" target="_blank" rel="noreferrer">PDF conformidad</a>` : '<span class="muted">Aún sin PDF</span>'}
+        ${actions.join('')}
       </div>
     </article>
   `;
@@ -957,15 +1409,48 @@ function renderOrderCard(order) {
 
 function renderConformities() {
   const summary = el('conformitiesSummary');
+  const orderSelect = el('conformityOrderSelect');
+  const form = el('conformityForm');
+  const empty = el('conformityEmptyState');
+  const flowSummary = el('conformityFlowSummary');
   const list = el('conformitiesList');
   if (!summary || !list) return;
   const conformities = [...(state.conformities || [])];
+  const pendingOrders = [...(state.installationOrders || [])].filter((order) => isOrderReadyForConformity(order) && !findConformityByOrderId(order.id));
+  const readyCount = pendingOrders.length;
   summary.innerHTML = `
     <div class="metric"><b>Registradas</b><span>${conformities.length}</span></div>
     <div class="metric"><b>Con PDF</b><span>${conformities.filter((item) => item.hasPdfBase64 || item.pdfUrl).length}</span></div>
     <div class="metric"><b>Correo OK</b><span>${conformities.filter((item) => item.emailDelivery?.ok).length}</span></div>
-    <div class="metric"><b>Últimas 24h</b><span>${conformities.filter((item) => isWithinHours(item.createdAt, 24)).length}</span></div>
+    <div class="metric"><b>Pendientes</b><span>${readyCount}</span></div>
   `;
+  if (orderSelect) {
+    const previous = state.conformityOrderId;
+    orderSelect.innerHTML = [
+      '<option value="">Manual / sin orden</option>',
+      ...pendingOrders.map((order) => `<option value="${escapeHtml(order.id)}">${escapeHtml(order.id)} · ${escapeHtml(order.clientName || 'Cliente')} · ${escapeHtml(order.address || '-')}</option>`),
+    ].join('');
+    const nextId = pendingOrders.some((order) => order.id === previous) ? previous : '';
+    orderSelect.value = nextId;
+    state.conformityOrderId = nextId;
+  }
+  if (form) form.classList.toggle('hidden', !canGenerateConformity());
+  if (empty) {
+    empty.classList.toggle('hidden', canGenerateConformity());
+    empty.textContent = canGenerateConformity()
+      ? 'No hay órdenes listas para generar conformidad en este momento.'
+      : 'Tu usuario no tiene permiso para generar conformidades desde web.';
+  }
+  if (canGenerateConformity()) {
+    if (state.conformityOrderId) {
+      loadConformityForm(state.conformityOrderId);
+    } else {
+      resetConformityForm({ preserveSelection: true });
+    }
+    renderConformityPhotoPreview();
+    syncConformityAdditionalField();
+    updateConformityGuidedUi();
+  }
   list.innerHTML = conformities.length
     ? conformities.map(renderConformityCard).join('')
     : '<p class="muted">Todavía no hay conformidades sincronizadas en backend.</p>';
@@ -984,6 +1469,7 @@ function renderConformityCard(item) {
       <div class="row"><span>${escapeHtml(item.address || '-')}</span><span>${escapeHtml(item.emailDelivery?.ok ? 'Correo enviado' : (item.emailDelivery?.message || 'Sin envío'))}</span></div>
       <div class="row quote-card-actions">
         <a class="link" href="${downloadHref}" target="_blank" rel="noreferrer">Abrir PDF</a>
+        ${item.warrantyPdfUrl || item.warrantyCode ? `<a class="link" href="${escapeHtml(item.warrantyPdfUrl || "/api/warranties/" + encodeURIComponent(item.warrantyId || '') + "/pdf")}" target="_blank" rel="noreferrer">Garantía</a>` : ''}
       </div>
     </article>
   `;
@@ -1012,6 +1498,459 @@ function openVisitMaps(id) {
   const target = (visit.clientAddress || visit.reference || '').trim();
   if (!target) return alert('La visita no tiene una dirección útil todavía.');
   window.open(`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(target)}`, '_blank', 'noopener');
+}
+
+function findOrderById(id) {
+  return (state.installationOrders || []).find((item) => item.id === id) || null;
+}
+
+function findQuoteById(id) {
+  return (state.quotes || []).find((item) => item.id === id) || null;
+}
+
+function deliveredItemsToTextarea(value = []) {
+  return (Array.isArray(value) ? value : []).filter(Boolean).join('\n');
+}
+
+function textareaToDeliveredItems(value = '') {
+  return String(value || '')
+    .split(/\r?\n/)
+    .map((item) => item.replace(/^[-•\s]+/, '').trim())
+    .filter(Boolean);
+}
+
+function conformityDeliveredItemsFromForm(form) {
+  const items = [];
+  if (form.cajaCargador?.checked) items.push('Caja del cargador');
+  if (form.cargadorEvinka?.checked) items.push('Cargador Evinka');
+  if (form.manualCargador?.checked) items.push('Manual del cargador');
+  if (form.tarjetasCargador?.checked) items.push('Tarjetas del cargador');
+  if (form.adicional?.checked && String(form.adicionalDesc?.value || '').trim()) items.push(String(form.adicionalDesc.value).trim());
+  return items;
+}
+
+function setConformityImplementedChecks(form, deliveredItems = [], raw = {}) {
+  const list = Array.isArray(deliveredItems) ? deliveredItems.map((item) => String(item || '').trim().toLowerCase()) : [];
+  form.cajaCargador.checked = raw.cajaCargador === true || list.includes('caja del cargador');
+  form.cargadorEvinka.checked = raw.cargadorEvinka === true || list.includes('cargador evinka');
+  form.manualCargador.checked = raw.manualCargador === true || list.includes('manual del cargador');
+  form.tarjetasCargador.checked = raw.tarjetasCargador === true || list.includes('tarjetas del cargador');
+  const known = new Set(['caja del cargador', 'cargador evinka', 'manual del cargador', 'tarjetas del cargador']);
+  const adicionalDesc = String(raw.adicionalDesc || deliveredItems.find((item) => !known.has(String(item || '').trim().toLowerCase())) || '').trim();
+  form.adicional.checked = raw.adicional === true || Boolean(adicionalDesc);
+  form.adicionalDesc.value = adicionalDesc;
+}
+
+function conformityFlowMissingItems() {
+  const form = el('conformityForm');
+  if (!form) return [];
+  const list = [];
+  if (!String(form.clientName.value || '').trim()) list.push('Cliente');
+  if (!String(form.clientEmail.value || '').trim()) list.push('Correo');
+  if (!String(form.chargerBrand.value || '').trim()) list.push('Marca');
+  if (!String(form.serialNumber.value || '').trim()) list.push('Serie');
+  if (!state.conformitySignatureData.installer) list.push('Firma instalador');
+  if (!state.conformitySignatureData.client) list.push('Firma cliente');
+  return list;
+}
+
+function updateConformityGuidedUi() {
+  const flowSummary = el('conformityFlowSummary');
+  const syncState = el('conformitySyncState');
+  if (flowSummary) {
+    const missing = conformityFlowMissingItems();
+    flowSummary.innerHTML = `
+      <div class="quote-card compact-card">
+        <div class="row"><strong>Flujo guiado de conformidad</strong><span class="pill ${missing.length ? 'pill-pending' : 'pill-active'}">${missing.length ? 'Pendientes' : 'Listo para generar'}</span></div>
+        <div class="row">
+          <span>${state.conformityOrderId ? `Orden vinculada: ${escapeHtml(state.conformityOrderId)}` : 'Modo manual / sin orden'}</span>
+          <span>${missing.length ? `Faltan: ${escapeHtml(missing.slice(0, 4).join(', '))}${missing.length > 4 ? '...' : ''}` : 'Checklist completo'}</span>
+        </div>
+      </div>
+    `;
+  }
+  if (syncState && syncState.textContent) syncState.classList.remove('hidden');
+}
+
+function signaturePadRef(kind) {
+  return el(kind === 'installer' ? 'installerSignaturePad' : 'clientSignaturePad');
+}
+
+function initSignaturePad(kind) {
+  const canvas = signaturePadRef(kind);
+  if (!canvas || canvas.dataset.ready === 'true') return;
+  const ctx = canvas.getContext('2d');
+  const setup = () => {
+    const ratio = window.devicePixelRatio || 1;
+    const rect = canvas.getBoundingClientRect();
+    const width = Math.max(320, Math.round(rect.width || 520));
+    const height = Math.max(180, Math.round(rect.height || 180));
+    canvas.style.width = `${width}px`;
+    canvas.style.height = `${height}px`;
+    canvas.width = width * ratio;
+    canvas.height = height * ratio;
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.lineCap = 'round';
+    ctx.lineJoin = 'round';
+    ctx.lineWidth = 2.2 * ratio;
+    ctx.strokeStyle = '#181818';
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    canvas.dataset.pixelRatio = String(ratio);
+    canvas.classList.add('signature-pad--empty');
+  };
+  setup();
+  let drawing = false;
+  const point = (event) => {
+    const rect = canvas.getBoundingClientRect();
+    const source = event.touches?.[0] || event;
+    const scaleX = canvas.width / Math.max(rect.width, 1);
+    const scaleY = canvas.height / Math.max(rect.height, 1);
+    return {
+      x: (source.clientX - rect.left) * scaleX,
+      y: (source.clientY - rect.top) * scaleY,
+    };
+  };
+  const start = (event) => {
+    event.preventDefault();
+    drawing = true;
+    const p = point(event);
+    ctx.beginPath();
+    ctx.moveTo(p.x, p.y);
+  };
+  const move = (event) => {
+    if (!drawing) return;
+    event.preventDefault();
+    const p = point(event);
+    canvas.classList.remove('signature-pad--empty');
+    ctx.lineTo(p.x, p.y);
+    ctx.stroke();
+  };
+  const end = () => {
+    if (!drawing) return;
+    drawing = false;
+    state.conformitySignatureData[kind] = canvas.toDataURL('image/png');
+    updateConformityGuidedUi();
+  };
+  canvas.addEventListener('pointerdown', start);
+  canvas.addEventListener('pointermove', move);
+  window.addEventListener('pointerup', end);
+  canvas.addEventListener('touchstart', start, { passive: false });
+  canvas.addEventListener('touchmove', move, { passive: false });
+  canvas.addEventListener('touchend', end, { passive: false });
+  canvas.dataset.ready = 'true';
+}
+
+async function restoreSignaturePad(kind, dataUrl = '') {
+  const canvas = signaturePadRef(kind);
+  if (!canvas) return;
+  initSignaturePad(kind);
+  const ctx = canvas.getContext('2d');
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  if (!dataUrl) {
+    state.conformitySignatureData[kind] = '';
+    canvas.classList.add('signature-pad--empty');
+    updateConformityGuidedUi();
+    return;
+  }
+  const img = await loadImage(dataUrl);
+  ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+  canvas.classList.remove('signature-pad--empty');
+  state.conformitySignatureData[kind] = dataUrl;
+  updateConformityGuidedUi();
+}
+
+function clearSignaturePad(kind) {
+  restoreSignaturePad(kind, '');
+}
+
+async function onChangeConformityPhoto(event, index) {
+  const file = event.target?.files?.[0] || null;
+  if (file && !/^image\/(jpeg|jpg|png|webp)$/i.test(file.type || '')) {
+    alert('Solo se permiten imágenes JPG, PNG o WEBP.');
+    event.target.value = '';
+    return;
+  }
+  state.conformityPhotoFiles[index] = file;
+  await renderConformityPhotoPreview();
+}
+
+async function renderConformityPhotoPreview() {
+  const wrap = el('conformityPhotoPreview');
+  if (!wrap) return;
+  const cards = await Promise.all((state.conformityPhotoFiles || []).map(async (file, index) => {
+    if (!file) {
+      return `<div class="photo-preview-card"><div class="photo-preview-name">Foto ${index + 1}</div><div class="muted">Sin imagen cargada.</div></div>`;
+    }
+    const src = await fileToDataUrl(file);
+    return `
+      <div class="photo-preview-card">
+        <div class="photo-preview-name">Foto ${index + 1}</div>
+        <img src="${src}" alt="Foto ${index + 1}" style="width:100%;max-height:180px;object-fit:cover;border-radius:12px;margin-top:8px;" />
+        <div class="photo-preview-actions top-gap-sm"><button class="secondary compact-btn" type="button" data-remove-conformity-photo="${index}">Quitar</button></div>
+      </div>
+    `;
+  }));
+  wrap.innerHTML = cards.join('');
+  document.querySelectorAll('[data-remove-conformity-photo]').forEach((button) => {
+    button.onclick = () => {
+      const index = Number(button.dataset.removeConformityPhoto);
+      state.conformityPhotoFiles[index] = null;
+      const input = el(index === 0 ? 'conformityPhoto1' : 'conformityPhoto2');
+      if (input) input.value = '';
+      renderConformityPhotoPreview();
+    };
+  });
+}
+
+function syncConformityAdditionalField() {
+  const toggle = el('conformityAdditionalToggle');
+  const input = el('conformityAdditionalDescription');
+  if (!toggle || !input) return;
+  input.disabled = !toggle.checked;
+  if (!toggle.checked) input.value = '';
+}
+
+async function onLoadConformityOrder() {
+  const code = String(el('conformityOrderCode')?.value || '').trim();
+  if (!code) return alert('Ingresa un código de orden o cotización.');
+  const res = await fetch(withCountryQuery(`/api/installation-orders/${encodeURIComponent(code)}`));
+  let data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    const fallback = (state.installationOrders || []).find((item) => item.quoteId === code);
+    if (!fallback) return alert(data.error || 'No pude cargar la orden desde web.');
+    data = fallback;
+  }
+  const known = (state.installationOrders || []).some((item) => item.id === data.id);
+  if (!known) state.installationOrders.unshift(data);
+  state.conformityOrderId = data.id || '';
+  renderConformities();
+  loadConformityForm(data.id);
+}
+
+async function onGenerateWarranty() {
+  const form = el('conformityForm');
+  const syncState = el('conformitySyncState');
+  if (!form) return;
+  const payload = {
+    installationOrderId: form.installationOrderId.value,
+    date: form.date.value,
+    quoteId: form.quoteId.value,
+    clientName: form.clientName.value,
+    clientEmail: form.clientEmail.value,
+    clientDocument: form.ruc.value,
+    address: form.address.value,
+    chargerBrand: form.chargerBrand.value,
+    serialNumber: form.serialNumber.value,
+    voltage: form.voltage.value,
+    amperage: form.amperage.value,
+    powerKw: form.powerKw.value,
+    installerSignatureUrl: state.conformitySignatureData.installer,
+    clientSignatureUrl: state.conformitySignatureData.client,
+  };
+  if (!payload.clientName.trim()) return alert('Falta el cliente para generar la garantía.');
+  if (!payload.chargerBrand.trim()) return alert('Falta la marca del cargador para generar la garantía.');
+  if (syncState) {
+    syncState.textContent = 'Generando garantía de 2 años...';
+    syncState.className = 'hint top-gap-sm sync-state-warn';
+    syncState.classList.remove('hidden');
+  }
+  const res = await fetch(withCountryQuery('/api/warranties'), {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    if (syncState) syncState.textContent = data.error || 'No se pudo generar la garantía.';
+    return alert(data.error || 'No se pudo generar la garantía.');
+  }
+  if (syncState) {
+    syncState.textContent = 'Garantía generada correctamente.';
+    syncState.className = 'hint top-gap-sm sync-state-ok';
+    syncState.classList.remove('hidden');
+  }
+  if (data?.warranty?.id) window.open(`/api/warranties/${encodeURIComponent(data.warranty.id)}/pdf`, '_blank', 'noopener');
+}
+
+function linkedOrderSummary(order, quote = null) {
+  if (!order) return '';
+  return `
+    <strong>Orden: ${escapeHtml(order.id || '-')}</strong><br />
+    Cotización: ${escapeHtml(order.quoteId || quote?.id || '-')}<br />
+    Perfil comercial: ${escapeHtml(order.commercialProfileName || quote?.commercialProfile?.name || '-')}<br />
+    Cliente: ${escapeHtml(order.clientName || quote?.clientName || '-')}<br />
+    ${escapeHtml(order.clientEmail || quote?.email || '-')}
+  `;
+}
+
+function loadConformityForm(orderId) {
+  const order = findOrderById(orderId);
+  const form = el('conformityForm');
+  const orderSelect = el('conformityOrderSelect');
+  const orderCode = el('conformityOrderCode');
+  const linkedCard = el('conformityLinkedOrderCard');
+  if (!order || !form) return false;
+  const quote = findQuoteById(order.quoteId);
+  state.conformityOrderId = orderId;
+  if (orderSelect) orderSelect.value = orderId;
+  if (orderCode) orderCode.value = order.id || '';
+  form.installationOrderId.value = order.id || '';
+  form.date.value = todayInputValue();
+  form.quoteId.value = order.quoteId || quote?.id || '';
+  form.clientName.value = order.clientName || quote?.clientName || '';
+  form.clientEmail.value = order.clientEmail || quote?.email || '';
+  form.ruc.value = order.ruc || quote?.ruc || '';
+  form.address.value = order.address || quote?.clientAddress || '';
+  form.chargerBrand.value = order.chargerBrand || quote?.charger?.brand || quote?.charger?.label || 'GENERAL';
+  form.serialNumber.value = order.serialNumber || quote?.serialNumber || '';
+  form.voltage.value = order.voltage || quote?.voltage || 220;
+  form.amperage.value = order.amperage || quote?.current || 32;
+  form.other.value = order.other || quote?.other || '';
+  form.powerKw.value = order.powerKw || quote?.powerKw || '';
+  setConformityImplementedChecks(form, order.deliveredItems || [], order);
+  if (!String(form.observations.value || '').trim()) form.observations.value = '';
+  if (linkedCard) {
+    linkedCard.innerHTML = linkedOrderSummary(order, quote);
+    linkedCard.classList.remove('hidden');
+  }
+  updateConformityGuidedUi();
+  return true;
+}
+
+function onChangeConformityOrder(event) {
+  const orderId = String(event?.target?.value || '').trim();
+  if (!orderId) return resetConformityForm({ preserveSelection: true });
+  loadConformityForm(orderId);
+}
+
+function resetConformityForm({ preserveSelection = false } = {}) {
+  const form = el('conformityForm');
+  if (!form) return;
+  const orderSelect = el('conformityOrderSelect');
+  const orderCode = el('conformityOrderCode');
+  const linkedCard = el('conformityLinkedOrderCard');
+  const orderId = preserveSelection ? String(orderSelect?.value || '') : (state.conformityOrderId || String(orderSelect?.value || ''));
+  if (orderId) {
+    loadConformityForm(orderId);
+    form.observations.value = '';
+    return;
+  }
+  state.conformityOrderId = '';
+  if (orderSelect) orderSelect.value = '';
+  if (orderCode) orderCode.value = '';
+  form.reset();
+  form.installationOrderId.value = '';
+  form.quoteId.value = '';
+  form.date.value = todayInputValue();
+  if (linkedCard) {
+    linkedCard.innerHTML = '';
+    linkedCard.classList.add('hidden');
+  }
+  form.chargerBrand.value = 'GENERAL';
+  setConformityImplementedChecks(form, [], {});
+  state.conformityPhotoFiles = [null, null];
+  clearSignaturePad('installer');
+  clearSignaturePad('client');
+  renderConformityPhotoPreview();
+  syncConformityAdditionalField();
+  updateConformityGuidedUi();
+}
+
+function openConformityModal(orderId) {
+  const order = findOrderById(orderId);
+  if (!order) return alert('No encontré la orden para generar la conformidad.');
+  if (!canGenerateConformity()) return alert('Tu usuario no tiene permiso para generar conformidades desde web.');
+  if (!isOrderReadyForConformity(order)) return alert('La orden todavía no está lista para generar conformidad.');
+  const existing = findConformityByOrderId(orderId);
+  if (existing) {
+    window.open(`/api/conformities/${encodeURIComponent(existing.id)}/pdf`, '_blank', 'noopener');
+    return;
+  }
+  setTab('conformities');
+  loadConformityForm(orderId);
+  const form = el('conformityForm');
+  if (form) form.scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+
+async function onSubmitConformityForm(event) {
+  event.preventDefault();
+  const form = event.currentTarget;
+  const submitBtn = form.querySelector('button[type="submit"]');
+  const syncState = el('conformitySyncState');
+  const photoPayload = await Promise.all((state.conformityPhotoFiles || []).map((file) => file ? resizeImageFile(file, 1800, 0.84) : null));
+  const payload = {
+    installationOrderId: form.installationOrderId.value,
+    date: form.date.value,
+    quoteId: form.quoteId.value,
+    clientName: form.clientName.value,
+    clientEmail: form.clientEmail.value,
+    ruc: form.ruc.value,
+    address: form.address.value,
+    chargerBrand: form.chargerBrand.value,
+    serialNumber: form.serialNumber.value,
+    voltage: form.voltage.value,
+    amperage: form.amperage.value,
+    other: form.other.value,
+    powerKw: form.powerKw.value,
+    deliveredItems: conformityDeliveredItemsFromForm(form),
+    cajaCargador: form.cajaCargador.checked,
+    cargadorEvinka: form.cargadorEvinka.checked,
+    manualCargador: form.manualCargador.checked,
+    tarjetasCargador: form.tarjetasCargador.checked,
+    adicional: form.adicional.checked,
+    adicionalDesc: form.adicionalDesc.value,
+    photoUrls: photoPayload.filter(Boolean),
+    installerSignatureUrl: state.conformitySignatureData.installer,
+    clientSignatureUrl: state.conformitySignatureData.client,
+    observations: form.observations.value,
+  };
+  if (!payload.clientName.trim()) return alert('Falta el cliente.');
+  if (!payload.clientEmail.trim()) return alert('Falta el correo del cliente.');
+  if (!payload.chargerBrand.trim()) return alert('Falta la marca del cargador.');
+  if (!state.conformitySignatureData.installer || !state.conformitySignatureData.client) return alert('Faltan ambas firmas para generar la conformidad.');
+  if (submitBtn) {
+    submitBtn.disabled = true;
+    submitBtn.textContent = 'Generando...';
+  }
+  if (syncState) {
+    syncState.textContent = 'Generando PDF y sincronizando conformidad...';
+    syncState.className = 'hint top-gap-sm sync-state-warn';
+    syncState.classList.remove('hidden');
+  }
+  const res = await fetch(withCountryQuery('/api/conformities'), {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (submitBtn) {
+    submitBtn.disabled = false;
+    submitBtn.textContent = 'Generar conformidad';
+  }
+  if (!res.ok) {
+    if (res.status === 409 && data?.conformity?.id) {
+      await refreshOperationalData();
+      window.open(`/api/conformities/${encodeURIComponent(data.conformity.id)}/pdf`, '_blank', 'noopener');
+      return;
+    }
+    if (syncState) {
+      syncState.textContent = data.error || 'No se pudo generar la conformidad.';
+      syncState.className = 'hint top-gap-sm sync-state-warn';
+      syncState.classList.remove('hidden');
+    }
+    return alert(data.error || 'No se pudo generar la conformidad.');
+  }
+  const conformityId = data?.conformity?.id;
+  if (syncState) {
+    syncState.textContent = data?.emailDelivery?.message || 'Conformidad generada correctamente.';
+    syncState.className = 'hint top-gap-sm sync-state-ok';
+    syncState.classList.remove('hidden');
+  }
+  await refreshOperationalData();
+  if (conformityId) {
+    window.open(`/api/conformities/${encodeURIComponent(conformityId)}/pdf`, '_blank', 'noopener');
+  }
 }
 
 function prefillQuoteFromVisit(id) {
@@ -1048,6 +1987,7 @@ window.updateVisitStatus = updateVisitStatus;
 window.closeVisit = closeVisit;
 window.openVisitMaps = openVisitMaps;
 window.prefillQuoteFromVisit = prefillQuoteFromVisit;
+window.openConformityModal = openConformityModal;
 
 function displayQuoteLabel(quote) {
   const fromFile = String(quote?.pdfFilename || '').replace(/\.pdf$/i, '');
@@ -1202,12 +2142,40 @@ function normalizedRoleKey(role = state.user?.role || '') {
   return String(role || '').trim().toLowerCase().replace(/[\s-]+/g, '_');
 }
 
+function resolveRoleKey(role = state.user?.role || '') {
+  const normalized = normalizedRoleKey(role);
+  const definitions = state.config?.roleDefinitions || [];
+  for (const definition of definitions) {
+    const aliases = [definition.id, ...(definition.aliases || [])]
+      .map((item) => normalizedRoleKey(item));
+    if (aliases.includes(normalized)) return definition.id;
+  }
+  return normalized || 'tecnico_visitas';
+}
+
+function getRoleDefinition(role = state.user?.role || '') {
+  const key = resolveRoleKey(role);
+  return (state.config?.roleDefinitions || []).find((definition) => definition.id === key) || null;
+}
+
+function roleHasPermission(permission) {
+  return Boolean(getRoleDefinition()?.permissions?.includes(permission));
+}
+
+function canAccessTab(tab) {
+  return Boolean(getRoleDefinition()?.tabs?.includes(tab));
+}
+
+function roleLabel(role = state.user?.role || '') {
+  return getRoleDefinition(role)?.label || resolveRoleKey(role);
+}
+
 function normalizedEmail(value = '') {
   return String(value || '').trim().toLowerCase();
 }
 
 function isAdminUser() {
-  return normalizedRoleKey() === 'admin';
+  return resolveRoleKey() === 'admin';
 }
 
 function isLuisSupervisor() {
@@ -1215,18 +2183,27 @@ function isLuisSupervisor() {
 }
 
 function isTechSupervisor() {
-  return ['tecnico_supervisor', 'supervisor_tecnico', 'tech_supervisor', 'technical_supervisor', 'supervisor'].includes(normalizedRoleKey());
+  return resolveRoleKey() === 'supervisor';
 }
 
 function canEditCommercialFlow() {
-  return isAdminUser()
-    || isLuisSupervisor()
-    || isTechSupervisor()
-    || ['comercial', 'ventas', 'sales', 'commercial', 'asesor', 'advisor', 'asesor_humano', 'human_advisor'].includes(normalizedRoleKey());
+  return roleHasPermission('quotes.write') || isLuisSupervisor();
 }
 
 function canSeeOperations() {
-  return Boolean(state.user);
+  return canAccessTab('visits') || canAccessTab('ops') || canAccessTab('conformities');
+}
+
+function canGenerateConformity() {
+  return roleHasPermission('conformities.sign') || isTechSupervisor() || isAdminUser() || isLuisSupervisor();
+}
+
+function todayInputValue() {
+  return new Date().toISOString().slice(0, 10);
+}
+
+function isOrderReadyForConformity(order = {}) {
+  return ['cerrada', 'instalada', 'pendiente_cierre'].includes(String(order?.status || '').trim().toLowerCase());
 }
 
 function decorateQuote(quote = {}) {
@@ -1358,8 +2335,17 @@ function fillSelect(id, options, selectedValue = null) {
   if (nextValue != null) select.value = nextValue;
 }
 
-function money(value) {
-  return new Intl.NumberFormat('es-PE', { style: 'currency', currency: 'PEN', maximumFractionDigits: 2 }).format(Number(value || 0));
+function fillDatalist(id, values = []) {
+  const list = el(id);
+  if (!list) return;
+  list.innerHTML = (values || []).map((value) => `<option value="${escapeHtml(value)}"></option>`).join('');
+}
+
+function money(value, currencyHint = '') {
+  const normalizedHint = String(currencyHint || '').trim().toUpperCase();
+  const currency = normalizedHint === 'CO' ? 'COP' : normalizedHint === 'PE' ? 'PEN' : (normalizedHint || state.config?.currency || 'PEN');
+  const locale = currency === 'COP' ? 'es-CO' : 'es-PE';
+  return new Intl.NumberFormat(locale, { style: 'currency', currency, maximumFractionDigits: 2 }).format(Number(value || 0));
 }
 
 function formatPercent(value) {

@@ -4,7 +4,7 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>EVINKA Asesor</title>
-    <link rel="stylesheet" href="/styles.css" />
+    <link rel="stylesheet" href="/styles.css?v=20260518scroll4" />
   </head>
   <body>
     <div id="loginView" class="login-shell">
@@ -14,15 +14,16 @@
         <p class="muted">Bandeja humana tipo call center para tomar handoffs de WhatsApp.</p>
         <form id="loginForm" class="stack">
           <label>
-            Correo
-            <input type="email" name="email" placeholder="raul@evinka.tech" required />
+            Usuario
+            <input type="text" name="username" placeholder="LUI001" required />
           </label>
           <label>
-            Contraseña
+            PIN
             <input type="password" name="password" placeholder="••••••••" required />
           </label>
           <button type="submit" class="primary">Entrar</button>
         </form>
+        <div class="hint">Usuarios operativos ingresan con <strong>usuario + PIN</strong>. El admin conserva su acceso de respaldo.</div>
         <div id="loginError" class="error hidden"></div>
       </div>
     </div>
@@ -46,9 +47,10 @@
         <div class="toolbar">
           <input id="searchInput" type="search" placeholder="Buscar cliente o teléfono" />
           <select id="statusFilter">
+            <option value="all" selected>Todos · historial completo</option>
             <option value="active">Activos</option>
             <option value="resolved">Resueltos</option>
-            <option value="all">Todos</option>
+            <option value="bot">Todos los chats del bot</option>
           </select>
         </div>
 
@@ -65,6 +67,7 @@
 
         <section id="chatView" class="chat-view hidden">
           <header class="chat-header">
+            <button type="button" id="mobileBackBtn" class="ghost compact-icon-btn mobile-back-btn" aria-label="Volver a chats">←</button>
             <button type="button" id="profileSummaryBtn" class="chat-header-main profile-summary-btn">
               <div class="customer-avatar" id="customerAvatar">EV</div>
               <div>
@@ -75,6 +78,7 @@
             </button>
             <div class="header-actions">
               <button id="claimBtn" class="secondary">Tomar caso</button>
+              <button id="retakeBtn" class="secondary">Retomar</button>
               <button id="resolveBtn" class="secondary">Marcar resuelto</button>
               <button id="returnBotBtn" class="primary">Devolver al bot</button>
             </div>
@@ -170,6 +174,7 @@
                 <div class="direct-actions">
                   <button type="button" id="createVisitBtn" class="secondary full-width">Crear visita</button>
                   <button type="button" id="openQuoteBtn" class="secondary full-width">Abrir cotización</button>
+                  <button type="button" id="openRepositoryBtn" class="secondary full-width">Repositorio del cliente</button>
                   <button type="button" id="markReadyCloseBtn" class="secondary full-width">Listo para cierre</button>
                 </div>
               </section>
@@ -277,12 +282,24 @@
                 <span class="profile-label">Asignado a</span>
                 <strong id="drawerAssigned">-</strong>
               </div>
+              <div class="profile-block">
+                <div class="rail-title-row">
+                  <span class="profile-label">Repositorio del cliente</span>
+                </div>
+                <div id="drawerFiles" class="client-files-list"></div>
+              </div>
+              <div class="profile-block">
+                <div class="rail-title-row">
+                  <span class="profile-label">Contactos y datos compartidos</span>
+                </div>
+                <div id="drawerArtifacts" class="client-artifacts-list"></div>
+              </div>
             </div>
           </div>
         </aside>
       </main>
     </div>
 
-    <script src="/app.js" defer></script>
+    <script src="/app.js?v=20260518touchscroll5" defer></script>
   </body>
 </html>

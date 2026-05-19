@@ -3,12 +3,17 @@ import { MicrosoftGraphClient } from './microsoftGraph.mjs';
 const MENU = `¡Hola! 👋
 Bienvenido a EVINKA.
 
+Actualmente estamos probando una nueva automatización para atenderte más rápido.
+
+Si ya habías conversado antes con un asesor de EVINKA, o tienes una cotización / caso pendiente de seguimiento, solo escribe *ASESOR* y te derivaremos para revisar tu caso directamente.
+
 Te puedo ayudar con una de estas opciones:
 
 A. Instalar un cargador
 B. Reprogramar visita
 C. Cancelar visita
-D. Soporte humano
+D. Asistencia técnica
+E. Soporte humano
 Por favor responde con la letra de la opción que deseas.`;
 
 const CONSENT = `Perfecto 👍
@@ -53,6 +58,16 @@ Te puedo ayudar con una de estas opciones:
 
 A. Agendar una visita técnica para evaluar qué cargador necesitas
 B. Volver al menú principal
+
+Por favor responde con la letra de la opción que deseas.`;
+
+const SUPPORT_CASE_MENU = `Entendido 👍
+
+¿Qué necesitas reportar?
+
+A. Soporte técnico
+B. Emergencia
+C. Hablar con un asesor
 
 Por favor responde con la letra de la opción que deseas.`;
 
@@ -231,6 +246,26 @@ const ADVISOR_SHORTCUTS = new Set([
   'ayuda humana',
 ]);
 const COLOMBIA_SHARED_TECH_CAPACITY = 3;
+
+function normalizeDisplayName(value = '') {
+  const cleaned = String(value || '')
+    .replace(/[\u200B-\u200D\uFEFF]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+  if (!cleaned) return '';
+  if (/^\+?\d[\d\s()-]{6,}$/.test(cleaned)) return '';
+  if (cleaned.length < 2) return '';
+  return cleaned.slice(0, 80);
+}
+
+function hasKnownCustomerName(user = null, profile = null, fallbackName = '') {
+  return Boolean(
+    normalizeDisplayName(profile?.nombre_receptor)
+    || normalizeDisplayName(user?.nombre_visible)
+    || normalizeDisplayName(user?.nombre_usuario)
+    || normalizeDisplayName(fallbackName)
+  );
+}
 
 function toMeridiemLabel(time = '') {
   const [hourRaw = '0', minute = '00'] = String(time || '').split(':');
@@ -426,6 +461,18 @@ function isGreeting(text = '') {
   return ['hola', 'buenas', 'buenos dias', 'buenas tardes', 'buenas noches', 'hello', 'hi'].includes(normalize(text));
 }
 
+function shouldResetFlowOnGreeting(step = '', text = '') {
+  if (!isGreeting(text)) return false;
+  return [
+    'sin_agenda_por_ahora',
+    'retomar_o_reiniciar',
+    'cita_confirmada',
+    'cita_reprogramada',
+    'ticket_cancelado',
+    'sin_autorizacion',
+  ].includes(step);
+}
+
 const STEP_INTERACTIVE_CODE_MAP = {
   menu_principal: { menu_install: 'A', menu_reschedule: 'B', menu_cancel: 'C', menu_human: 'D' },
   seleccion_pais: { country_pe: 'A', country_co: 'B' },
@@ -451,7 +498,8 @@ const STEP_INTERACTIVE_CODE_MAP = {
   accion_ticket: { ticket_reschedule: 'A', ticket_cancel: 'B' },
   sin_citas_encontradas: { retry_lookup: 'A', menu_main: 'B' },
   retomar_o_reiniciar: { resume_bot: 'A', menu_main: 'B' },
-  handoff_asesor: { resume_bot: 'A', menu_main: 'B' },
+  esperando_timeout_asesor: { timeout_wait: 'A', timeout_menu: 'B' },
+  handoff_asesor: { menu_main: 'A' },
   cita_confirmada: { menu_main: 'A', post_reschedule: 'B' },
   cita_reprogramada: { menu_main: 'A', post_reschedule: 'B' },
   ticket_cancelado: { menu_main: 'A', post_reschedule: 'B' },
@@ -525,7 +573,45 @@ function pickLetter(text, payloadCrudo = null, step = '') {
     return null;
   }
   const v = normalize(text);
-  return ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i', 'j'].includes(v) ? v.toUpperCase() : null;
+  if (['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i', 'j'].includes(v)) return v.toUpperCase();
+
+  if (step === 'menu_principal' || ['cita_confirmada', 'cita_reprogramada', 'ticket_cancelado'].includes(step)) {
+    if (['reprogramar visita', 'reprogramar', 'reagendar visita', 'reagendar', 'cambiar cita', 'mover cita'].includes(v)) return 'B';
+    if (['cancelar visita', 'cancelar', 'anular cita', 'anular'].includes(v)) return 'C';
+    if (['asistencia tecnica', 'asistencia técnica', 'soporte tecnico', 'soporte técnico', 'falla', 'emergencia'].includes(v)) return 'D';
+    if (['soporte humano', 'asesor', 'hablar con asesor'].includes(v)) return 'E';
+  }
+
+  if (step === 'soporte_tipo') {
+    if (['soporte tecnico', 'soporte técnico', 'falla', 'averia', 'avería'].includes(v)) return 'A';
+    if (['emergencia', 'urgencia', 'riesgo'].includes(v)) return 'B';
+    if (['asesor', 'hablar con asesor', 'soporte humano'].includes(v)) return 'C';
+  }
+
+  if (step === 'soporte_equipo') {
+    if (['cargador', 'cargador evinka'].includes(v)) return 'A';
+    if (['punto de carga', 'punto'].includes(v)) return 'B';
+    if (['grifo', 'operacion de grifo', 'operación de grifo', 'operador de grifo'].includes(v)) return 'C';
+    if (['otro', 'otro equipo'].includes(v)) return 'D';
+  }
+
+  if (step === 'soporte_evidencia_opcion') {
+    if (['enviar evidencia', 'adjuntar', 'si', 'sí'].includes(v)) return 'A';
+    if (['omitir', 'no', 'sin evidencia'].includes(v)) return 'B';
+  }
+
+  if (step === 'soporte_confirmacion') {
+    if (['enviar caso', 'enviar', 'confirmar'].includes(v)) return 'A';
+    if (['volver a empezar', 'reiniciar', 'corregir'].includes(v)) return 'B';
+    if (['asesor', 'hablar con asesor', 'soporte humano'].includes(v)) return 'C';
+  }
+
+  if (step === 'seleccionando_bloque_horario_reprogramacion') {
+    if (['ver mas horarios', 'ver más horarios', 'mas horarios', 'más horarios', 'siguientes horarios'].includes(v)) return 'NEXT';
+    if (['ver anteriores', 'horarios anteriores', 'atras', 'atrás'].includes(v)) return 'PREV';
+  }
+
+  return null;
 }
 
 function includesNormalized(list = [], value = '') {
@@ -656,12 +742,22 @@ function resolveProfileZone(profile = {}, options = {}) {
     || null;
 }
 
-function nextDays(startDate = addDays(currentDateInLima(), 1)) {
+const TEMP_BLOCKED_APPOINTMENT_DATES = {
+  PE: new Set(['2026-05-18']),
+};
+
+function isTemporarilyBlockedAppointmentDate(date, zone = null) {
+  const country = inferCountryFromZone(zone) || null;
+  if (!country) return false;
+  return TEMP_BLOCKED_APPOINTMENT_DATES[country]?.has(date) === true;
+}
+
+function nextDays(startDate = addDays(currentDateInLima(), 1), zone = null) {
   const out = [];
   let current = startDate;
   while (out.length < 10) {
     const weekday = weekdayForDate(current);
-    if (SLOT_TEMPLATES[weekday]) {
+    if (SLOT_TEMPLATES[weekday] && !isTemporarilyBlockedAppointmentDate(current, zone)) {
       out.push({
         code: String.fromCharCode(65 + out.length),
         label: formatDateLabel(current, weekday),
@@ -674,8 +770,28 @@ function nextDays(startDate = addDays(currentDateInLima(), 1)) {
   return out;
 }
 
-function rescheduleDays() {
-  return nextDays(currentDateInLima());
+function rescheduleDays(zone = null) {
+  return nextDays(currentDateInLima(), zone);
+}
+
+function nextDaysThroughFriday(startDate = addDays(currentDateInLima(), 1), zone = null) {
+  const out = [];
+  let current = startDate;
+  let sawFriday = false;
+  while (!sawFriday) {
+    const weekday = weekdayForDate(current);
+    if (SLOT_TEMPLATES[weekday] && !isTemporarilyBlockedAppointmentDate(current, zone)) {
+      out.push({
+        code: String.fromCharCode(65 + out.length),
+        label: formatDateLabel(current, weekday),
+        date: current,
+        weekday,
+      });
+      if (weekday === 'viernes') sawFriday = true;
+    }
+    current = addDays(current, 1);
+  }
+  return out;
 }
 
 function slotTemplateForZone(zone = '') {
@@ -1082,7 +1198,7 @@ function highlightedFieldRequest(label = '', extra = '') {
 
 function receiptFieldPrompt(field) {
   const intro = 'Perfecto 👍\n\nPaso 1 de 5: datos del recibo';
-  if (field === 'direccion') return `${intro}\n\n${highlightedFieldRequest('Dirección del suministro')}`;
+  if (field === 'direccion') return `${intro}\n\n${highlightedFieldRequest('Dirección del recibo de luz', 'La dirección donde se instalará o se tiene previsto hacer la instalación.')}`;
   if (field === 'distrito') return `${intro}\n\n${highlightedFieldRequest('Distrito')}`;
   if (field === 'provincia') return `${intro}\n\n${highlightedFieldRequest('Provincia')}`;
   return `${intro}\n\n${highlightedFieldRequest('Potencia contratada', 'Ejemplo: 7.4 kW o 9.9 kW')}`;
@@ -1109,7 +1225,7 @@ function invalidReceiptFieldPrompt(field) {
 }
 
 function receiptCorrectionMenu(data = {}) {
-  return `Perfecto 👍\n\nIndícame qué dato deseas corregir del recibo:\n\nA. Dirección del suministro (${data.direccion || '(No identificada)'})\nB. Distrito (${data.distrito || '(No identificado)'})\nC. Provincia (${data.provincia || '(No identificada)'})\nD. Potencia contratada (${data.potencia ?? '(No identificada)'})\n\nPor favor responde con la letra de la opción que deseas.`;
+  return `Perfecto 👍\n\nIndícame qué dato deseas corregir del recibo:\n\nA. Dirección del recibo de luz (${data.direccion || '(No identificada)'})\nB. Distrito (${data.distrito || '(No identificado)'})\nC. Provincia (${data.provincia || '(No identificada)'})\nD. Potencia contratada (${data.potencia ?? '(No identificada)'})\n\nPor favor responde con la letra de la opción que deseas.`;
 }
 
 function vehicleTypeLabel(value = '') {
@@ -1261,6 +1377,199 @@ function bookingCorrectionMenu(data = {}) {
   return `Claro ✨\n\n¿Qué quieres corregir?\n\nA. Nombre (${data.nombre || '-'})\nB. Teléfono (${data.telefono || '-'})\nC. Correo (${data.correo || '-'})\nD. Dirección (${data.direccion || '-'})\n\nElige una opción.`;
 }
 
+function parseSupportCaseSummary(summary) {
+  try { return JSON.parse(summary || '{}'); } catch { return {}; }
+}
+
+function supportCaseModeLabel(mode = '') {
+  return mode === 'emergency' ? 'Emergencia' : 'Soporte técnico';
+}
+
+function supportEquipmentLabel(value = '') {
+  const normalized = String(value || '').trim().toLowerCase();
+  if (normalized === 'charger') return 'Cargador EVINKA';
+  if (normalized === 'charge_point') return 'Punto de carga';
+  if (normalized === 'gas_operator') return 'Operación de grifo';
+  if (normalized === 'other') return 'Otro';
+  return value || '-';
+}
+
+function supportNamePrompt(mode = 'technical') {
+  return `${mode === 'emergency' ? 'Entendido 🚨' : 'Perfecto 👍'}\n\nPaso 1 de ${mode === 'emergency' ? '4' : '5'}\n\nIndícame tu nombre completo.`;
+}
+
+function supportLocationPrompt(mode = 'technical') {
+  return `${mode === 'emergency' ? 'Gracias.' : 'Perfecto 👍'}\n\nPaso 2 de ${mode === 'emergency' ? '4' : '5'}\n\nIndícame la ubicación del problema${mode === 'emergency' ? ' o de la emergencia' : ''}.`;
+}
+
+function supportIssuePrompt(mode = 'technical') {
+  return `${mode === 'emergency' ? 'Gracias.' : 'Perfecto 👍'}\n\nPaso ${mode === 'emergency' ? '3 de 4' : '4 de 5'}\n\n${mode === 'emergency' ? 'Describe brevemente qué está ocurriendo ahora.' : 'Describe brevemente qué problema presenta.'}`;
+}
+
+function supportEvidencePrompt(mode = 'technical') {
+  return `${mode === 'emergency' ? 'Entendido.' : 'Gracias.'}\n\nPaso ${mode === 'emergency' ? '4 de 4' : '5 de 5'}\n\nSi deseas, puedes enviarme una foto o documento del problema como evidencia.`;
+}
+
+function supportEvidenceWaitPrompt(mode = 'technical') {
+  return `${mode === 'emergency' ? 'Entendido 🚨' : 'Perfecto 👍'}\n\nEnvíame ahora la foto o documento del problema. Si prefieres continuar sin adjunto, toca *Omitir*.`;
+}
+
+function supportCaseSummaryText(data = {}) {
+  const lines = [
+    `${data.mode === 'emergency' ? 'Entendido 🚨' : 'Perfecto 👍'}`,
+    '',
+    'Este es el resumen de tu caso:',
+    '',
+    `- Tipo: ${supportCaseModeLabel(data.mode)}`,
+    `- Nombre: ${data.name || '-'}`,
+    `- Ubicación: ${data.location || '-'}`,
+  ];
+  if (data.mode !== 'emergency') {
+    lines.push(`- Equipo: ${supportEquipmentLabel(data.equipment)}`);
+  }
+  lines.push(`- Detalle: ${data.issue || '-'}`);
+  lines.push(`- Evidencia: ${data.evidence ? 'Adjunta' : 'Sin adjunto'}`);
+  lines.push('', '¿Deseas enviarlo?');
+  return lines.join('\n');
+}
+
+function invalidSupportFieldPrompt(field = 'name') {
+  if (field === 'name') return 'No pude leer bien tu nombre completo. Envíamelo otra vez por favor.';
+  if (field === 'location') return 'No pude leer bien la ubicación. Envíamela otra vez con un poco más de detalle.';
+  return 'No pude leer bien la descripción del problema. Envíamela otra vez con un poco más de detalle.';
+}
+
+function parseSupportName(text) {
+  const name = normalizeNameCandidate(text);
+  return name && name.split(/\s+/).length >= 2 ? name : null;
+}
+
+function parseSupportLocation(text) {
+  const value = cleanTextValue(text);
+  return value && value.length >= 5 ? value : null;
+}
+
+function parseSupportIssue(text) {
+  const value = cleanTextValue(text);
+  return value && value.length >= 8 ? value : null;
+}
+
+function supportEvidenceFromPayload(payloadCrudo = null) {
+  const payload = payloadCrudo && typeof payloadCrudo === 'object' ? payloadCrudo : {};
+  const mediaUrl = String(payload.mediaUrl || '').trim();
+  if (!mediaUrl) return null;
+  return {
+    mediaUrl,
+    fileName: String(payload.fileName || '').trim(),
+    mimeType: String(payload.mimeType || '').trim(),
+    storageBucket: String(payload.storageBucket || '').trim(),
+    storagePath: String(payload.storagePath || '').trim(),
+  };
+}
+
+const CORPORATE_COMPANY_HINTS = [
+  'Astara',
+  'Grupo Pana',
+  'Telemundo',
+  'IPESA',
+  'Geely Wigo',
+  'La Positiva',
+  'Toyota',
+  'Geely',
+  'BYD',
+  'BMW',
+  'MINI',
+  'Volvo',
+  'Subaru',
+  'Chery',
+  'Omoda',
+  'Edificio Corporativo',
+  'Corporativo',
+];
+
+const CORPORATE_CONTEXT_HINTS = [
+  'empresa',
+  'cuenta corporativa',
+  'corporativo',
+  'flota',
+  'sede',
+  'sedes',
+  'concesionario',
+  'dealer',
+  'operador de grifo',
+  'grifo',
+  'estacion de servicio',
+  'estación de servicio',
+  'varios cargadores',
+  'nuestra empresa',
+  'nuestro local',
+  'nuestra sede',
+];
+
+const CORPORATE_SUFFIX_RE = /\b(sac|s\.a\.?c\.?|s\.a\.?|srl|eirl|corp|corporation|company|empresa|holding)\b/i;
+
+function cleanCorporateName(value = '') {
+  const cleaned = cleanTextValue(value)
+    .replace(/^(la\s+empresa|empresa|cuenta\s+corporativa|cuenta)\s+/i, '')
+    .replace(/[.,;:!?]+$/g, '')
+    .trim();
+  const exactHint = CORPORATE_COMPANY_HINTS.find((item) => normalize(cleaned).includes(normalize(item)));
+  if (exactHint) return exactHint;
+  return cleaned === cleaned.toLowerCase() ? titleCase(cleaned) : cleaned;
+}
+
+function extractCorporateLead(text = '') {
+  const raw = cleanTextValue(text);
+  const normalized = normalize(raw);
+  if (!normalized) return null;
+
+  const namedMatch = raw.match(/(?:^|\b)(?:hola|buenas|buen dia|buen día|buenas tardes|buenas noches)?\s*(?:soy|habla|hablo|mi nombre es)\s+([A-Za-zÁÉÍÓÚÜÑáéíóúüñ'´`.-]+(?:\s+[A-Za-zÁÉÍÓÚÜÑáéíóúüñ'´`.-]+){0,3})\s+de\s+([A-Za-zÁÉÍÓÚÜÑáéíóúüñ0-9&().,\-/ ]{2,80})/i);
+  if (namedMatch) {
+    return {
+      contactName: titleCase(normalizeDisplayName(namedMatch[1])),
+      companyName: cleanCorporateName(namedMatch[2]),
+      reason: 'intro_de_empresa',
+    };
+  }
+
+  const companyOnlyMatch = raw.match(/(?:^|\b)(?:somos|escribo|te escribo|escribimos|llamo|vengo|contacto)\s+(?:de|desde)\s+([A-Za-zÁÉÍÓÚÜÑáéíóúüñ0-9&().,\-/ ]{2,80})/i);
+  if (companyOnlyMatch) {
+    return {
+      contactName: '',
+      companyName: cleanCorporateName(companyOnlyMatch[1]),
+      reason: 'empresa_directa',
+    };
+  }
+
+  const companyHint = CORPORATE_COMPANY_HINTS.find((item) => normalized.includes(normalize(item)));
+  if (companyHint && (normalized.includes('empresa') || normalized.includes('de ') || normalized.includes('somos') || normalized.includes('corporativ') || normalized.includes('grifo') || normalized.includes('operador'))) {
+    return {
+      contactName: '',
+      companyName: cleanCorporateName(companyHint),
+      reason: 'empresa_conocida',
+    };
+  }
+
+  if (CORPORATE_SUFFIX_RE.test(raw) || CORPORATE_CONTEXT_HINTS.some((item) => normalized.includes(normalize(item)))) {
+    return {
+      contactName: '',
+      companyName: '',
+      reason: 'contexto_corporativo',
+    };
+  }
+
+  return null;
+}
+
+function corporateHandoffText({ contactName = '', companyName = '', country = null } = {}) {
+  const brand = country === 'CO' ? 'EVINKA Colombia' : 'EVINKA';
+  const hello = contactName ? `Gracias por escribirnos, ${contactName} 👍` : 'Gracias por escribirnos 👍';
+  const companyLine = companyName
+    ? `Veo que tu consulta parece corresponder a ${/^(el|la|los|las)\b/i.test(companyName) ? companyName : `la empresa ${companyName}`}.`
+    : 'Veo que tu consulta parece corresponder a una empresa o cuenta corporativa.';
+  return `${hello}\n\n${companyLine}\n\nEste canal está orientado a atención B2C, así que voy a derivarte directamente con un asesor de ${brand} para una atención personalizada.\n\nEn breve uno de nuestros asesores continuará contigo por este mismo chat.`;
+}
+
 function personCorrectionMenu(data) {
   return `Perfecto 👍\n\nIndícame qué dato deseas corregir:\n\nA. Nombre completo (${data.nombre})\nB. Documento (${data.doc})\nC. Teléfono de contacto (${data.telefono})\nD. Correo electrónico (${data.correo})\n\nPor favor responde con la letra de la opción que deseas.`;
 }
@@ -1311,6 +1620,38 @@ function hoursPrompt(date) {
 
 function combinedSlotsPrompt(zone, options = []) {
   return `Perfecto 👍\n\nEstos son los horarios disponibles para tu zona (${zone}):\n\n${options.map(o => `${o.code}. ${o.dateLabel} — ${o.hourLabel}`).join('\n')}\n\nPor favor elige una opción.`;
+}
+
+function buildPagedSlotSummary(items = [], page = 0) {
+  return JSON.stringify({ items, page });
+}
+
+function parsePagedSlotSummary(summary) {
+  const parsed = parseReplySummary(summary);
+  if (Array.isArray(parsed)) return { items: parsed, page: 0 };
+  return {
+    items: Array.isArray(parsed?.items) ? parsed.items : [],
+    page: Number.isInteger(parsed?.page) && parsed.page >= 0 ? parsed.page : 0,
+  };
+}
+
+function pagedSlotRows(summary) {
+  const items = Array.isArray(summary?.items) ? summary.items : [];
+  const page = Number.isInteger(summary?.page) && summary.page >= 0 ? summary.page : 0;
+  const pageSize = 9;
+  const start = page * pageSize;
+  const visible = items.slice(start, start + pageSize).map((item) => ({
+    id: item.code,
+    title: clipLabel(item.dateLabel, 24),
+    description: clipLabel(item.hourLabel, 48),
+  }));
+  if (page > 0) {
+    visible.push({ id: 'PREV', title: 'Ver anteriores', description: 'Mostrar horarios previos' });
+  }
+  if (start + pageSize < items.length) {
+    visible.push({ id: 'NEXT', title: 'Ver más horarios', description: 'Mostrar siguientes horarios' });
+  }
+  return visible;
 }
 
 function compactScheduleLabel(startTime = '', endTime = '') {
@@ -1365,16 +1706,55 @@ function isAdvisorRequest(text = '') {
   ].some((pattern) => pattern.test(normalized));
 }
 
+function isNegativeAttentionSignal(text = '') {
+  const normalized = normalize(text);
+  if (!normalized) return false;
+  return [
+    /\bdisgustad[oa]s?\b/,
+    /\bmolest[oa]s?\b/,
+    /\benojad[oa]s?\b/,
+    /\bindignad[oa]s?\b/,
+    /\binsatisfech[oa]s?\b/,
+    /\binconforme(s)?\b/,
+    /\bqueja(s)?\b/,
+    /\breclamo(s)?\b/,
+    /\bp[ée]sim[oa]s?\b/,
+    /\bterrible\b/,
+    /\bmala atencion\b/,
+    /\bmal servicio\b/,
+    /\bno me (ayudaron|resolvieron|atendieron)\b/,
+    /\bquiero (poner|hacer) (una )?(queja|reclamo)\b/,
+  ].some((pattern) => pattern.test(normalized));
+}
+
 function isContinueRequest(text = '', letter = null, payloadCrudo = null) {
-  return letter === 'A' || inputMatches(text, payloadCrudo, ['continuar', 'retomar', 'seguir', 'seguir esperando', 'resume_bot', 'retomar con bot']);
+  return letter === 'A' || inputMatches(text, payloadCrudo, [
+    'continuar',
+    'retomar',
+    'seguir',
+    'seguir esperando',
+    'si',
+    'sí',
+    'ok',
+    'okay',
+    'vale',
+    'dale',
+    'quiero seguir',
+    'quiero continuar',
+    'quiero seguir con el asesor',
+    'seguir con el asesor',
+    'continuar con el asesor',
+    'resume_bot',
+    'retomar con bot',
+  ]);
 }
 
 function isRestartRequest(text = '', letter = null, payloadCrudo = null) {
-  return letter === 'B' || inputMatches(text, payloadCrudo, ['reiniciar', 'empezar otra vez', 'empezar de nuevo', 'menu', 'menú', 'menu principal', 'menú principal', 'menu_main']);
+  return letter === 'B' || inputMatches(text, payloadCrudo, ['reiniciar', 'empezar otra vez', 'empezar de nuevo', 'menu', 'menú', 'menu principal', 'menú principal', 'menu_main', 'volver', 'salir']);
 }
 
 function isMainMenuRequest(text = '', payloadCrudo = null) {
-  return inputMatches(text, payloadCrudo, ['menu', 'menú', 'menu principal', 'menú principal', 'menu_main', 'buy_menu', 'post_menu']);
+  return inputMatches(text, payloadCrudo, ['menu', 'menú', 'menu principal', 'menú principal', 'menu_main', 'buy_menu', 'post_menu', 'volver', 'salir']);
 }
 
 function needsResumePrompt(conversation = null, inactivityMs = 0) {
@@ -1428,7 +1808,15 @@ function advisorHandoffText(country = null) {
 }
 
 function advisorInactiveText() {
-  return `Por el momento no tenemos un asesor activo en este canal.\n\n¿Qué deseas hacer ahora?\n\nA. Retomar con el bot\nB. Ir al menú principal`;
+  return `Por el momento no tenemos un asesor activo en este canal.\n\n¿Qué deseas hacer ahora?\n\nA. Volver al menú principal`;
+}
+
+function advisorWaitingText() {
+  return `Seguimos pendientes de tu caso 👍\n\nTu conversación sigue marcada para atención humana. En cuanto un asesor esté disponible, continuará contigo por este mismo chat.\n\nSi deseas salir de esta espera y volver al menú principal, escribe MENU.`;
+}
+
+function advisorTimeoutChoiceText() {
+  return `Parece que nuestros asesores se encuentran ocupados en este momento.\n\nPuedes elegir una opción:\nA. Seguir esperando atención humana\nB. Volver al menú principal\n\nResponde A o B.`;
 }
 
 function timeoutResetText() {
@@ -1446,6 +1834,13 @@ function ticketRequestPrompt(action = 'gestionar') {
 
 function ticketActionPrompt() {
   return `Perfecto 👍\n\n¿Qué deseas hacer con esta cita?`;
+}
+
+function extractTicketCode(value = '') {
+  const raw = String(value || '').trim().toUpperCase();
+  const match = raw.match(/\b[A-Z]{2,5}-\d{8}-[A-Z0-9]{6,12}\b/);
+  if (match) return match[0];
+  return null;
 }
 
 function bookingReminderPrompt({ ticket, dateLabel, hourLabel, address }) {
@@ -1505,8 +1900,38 @@ function interactiveReplyForStep(step, text, { resumen, subestado } = {}) {
         { id: 'A', title: 'Instalar cargador', description: 'Evaluar instalación y visita técnica' },
         { id: 'B', title: 'Reprogramar visita', description: 'Cambiar fecha u hora de una visita' },
         { id: 'C', title: 'Cancelar visita', description: 'Cancelar una cita existente' },
-        { id: 'D', title: 'Soporte humano', description: 'Hablar con un asesor EVINKA' },
+        { id: 'D', title: 'Asistencia técnica', description: 'Reportar falla o emergencia' },
+        { id: 'E', title: 'Soporte humano', description: 'Si ya tenías seguimiento, escribe ASESOR' },
       ], { title: 'Elige una opción', buttonText: 'Abrir menú' });
+    case 'soporte_tipo':
+      return makeStepButtons(step, text, [
+        { id: 'A', title: 'Soporte técnico' },
+        { id: 'B', title: 'Emergencia' },
+        { id: 'C', title: 'Hablar con asesor' },
+      ]);
+    case 'soporte_equipo':
+      return makeStepList(step, text, [
+        { id: 'A', title: 'Cargador EVINKA' },
+        { id: 'B', title: 'Punto de carga' },
+        { id: 'C', title: 'Operación de grifo' },
+        { id: 'D', title: 'Otro' },
+      ], { title: 'Equipo afectado', buttonText: 'Elegir equipo' });
+    case 'soporte_evidencia_opcion':
+      return makeStepButtons(step, text, [
+        { id: 'A', title: 'Enviar evidencia' },
+        { id: 'B', title: 'Omitir' },
+      ]);
+    case 'soporte_confirmacion':
+      return makeStepButtons(step, text, [
+        { id: 'A', title: 'Enviar caso' },
+        { id: 'B', title: 'Volver a empezar' },
+        { id: 'C', title: 'Asesor' },
+      ]);
+    case 'esperando_timeout_asesor':
+      return makeStepButtons(step, text, [
+        { id: 'timeout_wait', title: 'Seguir esperando' },
+        { id: 'timeout_menu', title: 'Menú principal' },
+      ]);
     case 'seleccion_pais':
       return makeStepButtons(step, text, [
         { id: 'A', title: 'Perú' },
@@ -1627,13 +2052,18 @@ function interactiveReplyForStep(step, text, { resumen, subestado } = {}) {
     }
     case 'seleccionando_bloque_horario':
     case 'seleccionando_bloque_horario_reprogramacion': {
-      const options = Array.isArray(parseReplySummary(resumen)) ? parseReplySummary(resumen) : [];
-      if (!options.length) return null;
-      return makeStepList(step, text, options.map((item) => ({
-        id: item.code,
-        title: clipLabel(item.dateLabel, 24),
-        description: clipLabel(item.hourLabel, 48),
-      })), { title: 'Horarios disponibles', buttonText: 'Elegir horario' });
+      const parsed = step === 'seleccionando_bloque_horario_reprogramacion'
+        ? parsePagedSlotSummary(resumen)
+        : { items: Array.isArray(parseReplySummary(resumen)) ? parseReplySummary(resumen) : [], page: 0 };
+      const rows = step === 'seleccionando_bloque_horario_reprogramacion'
+        ? pagedSlotRows(parsed)
+        : parsed.items.map((item) => ({
+            id: item.code,
+            title: clipLabel(item.dateLabel, 24),
+            description: clipLabel(item.hourLabel, 48),
+          }));
+      if (!rows.length) return null;
+      return makeStepList(step, text, rows, { title: 'Horarios disponibles', buttonText: 'Elegir horario' });
     }
     case 'seleccionando_hora':
     case 'seleccionando_hora_reprogramacion': {
@@ -1674,8 +2104,7 @@ function interactiveReplyForStep(step, text, { resumen, subestado } = {}) {
       ]);
     case 'handoff_asesor':
       return makeStepButtons(step, text, [
-        { id: 'A', title: 'Retomar con bot' },
-        { id: 'B', title: 'Menú principal' },
+        { id: 'A', title: 'Menú principal' },
       ]);
     case 'cita_confirmada':
     case 'cita_reprogramada':
@@ -1777,16 +2206,24 @@ function calendarDescription({ ticket, appointment, profile, dateLabel, hourLabe
   ].filter(Boolean).join('\n');
 }
 
+function calendarSyncNote(provider = '') {
+  const normalized = String(provider || '').trim().toLowerCase();
+  if (normalized === 'clickup') return 'Sincronizada con ClickUp.';
+  if (normalized === 'hybrid') return 'Sincronizada con ClickUp y Microsoft Calendar.';
+  return 'Sincronizada con Microsoft Calendar.';
+}
+
 export class ChatbotEngine {
-  constructor({ sb, calendar = null, reminderScheduler = null, visitPublisher = null }) {
+  constructor({ sb, calendar = null, reminderScheduler = null, visitPublisher = null, supportCasePublisher = null }) {
     this.sb = sb;
     this.calendar = calendar;
     this.reminderScheduler = reminderScheduler;
     this.visitPublisher = visitPublisher;
+    this.supportCasePublisher = supportCasePublisher;
   }
 
   async availableDaysForZone(zone, { includeToday = false } = {}) {
-    const days = includeToday ? rescheduleDays() : nextDays();
+    const days = includeToday ? rescheduleDays(zone) : nextDays(addDays(currentDateInLima(), 1), zone);
     if (!this.calendar) {
       return days
         .filter((day) => hoursForDate(day.date, zone).length)
@@ -1802,8 +2239,10 @@ export class ChatbotEngine {
     return out.map((day, index) => ({ ...day, code: String.fromCharCode(65 + index) }));
   }
 
-  async availableDateHourOptionsForZone(zone, { includeToday = false, excludeEventId = null, limit = 10 } = {}) {
-    const days = includeToday ? rescheduleDays() : nextDays();
+  async availableDateHourOptionsForZone(zone, { includeToday = false, excludeEventId = null, limit = 10, throughFriday = false } = {}) {
+    const days = throughFriday
+      ? nextDaysThroughFriday(includeToday ? currentDateInLima() : addDays(currentDateInLima(), 1), zone)
+      : (includeToday ? rescheduleDays(zone) : nextDays(addDays(currentDateInLima(), 1), zone));
     const options = [];
     for (const day of days) {
       const hours = await this.availableHoursForDate(day.date, { excludeEventId, clientZone: zone });
@@ -1817,7 +2256,7 @@ export class ChatbotEngine {
           time: hour.time,
           endTime: hour.endTime,
         });
-        if (options.length >= limit) return options;
+        if (!throughFriday && options.length >= limit) return options;
       }
     }
     return options;
@@ -1923,6 +2362,7 @@ export class ChatbotEngine {
       installationOrderId: '',
       assignedTechEmail: process.env.TECH_VISITS_DEFAULT_EMAIL || 'luis.campos@evinka.tech',
       assignedTechName: process.env.TECH_VISITS_DEFAULT_NAME || 'Luis Campos',
+      clickupTaskId: this.calendar?.provider === 'clickup' ? (appointment.microsoft_event_id || '') : '',
       checklist: [
         'Confirmar acceso al sitio',
         'Tomar fotos iniciales',
@@ -1932,6 +2372,18 @@ export class ChatbotEngine {
       ticket: appointment.codigo_cita,
       dateLabel,
       hourLabel,
+    });
+  }
+
+  async publishSupportCase({ conversation, profile, caseData, countryCode = null, userScope = 'default' }) {
+    if (typeof this.supportCasePublisher !== 'function') return null;
+    return this.supportCasePublisher({
+      conversation,
+      profile,
+      caseData,
+      countryCode,
+      userScope,
+      customerPhone: this.phoneForUserId(conversation?.id_usuario || ''),
     });
   }
 
@@ -1980,6 +2432,24 @@ export class ChatbotEngine {
     }
   }
 
+  async rememberUserName(user = null, candidateName = '', source = 'whatsapp_profile') {
+    const normalizedName = normalizeDisplayName(candidateName);
+    if (!user?.id_usuario || !normalizedName) return user;
+    const currentVisible = normalizeDisplayName(user.nombre_visible || '');
+    const currentStored = normalizeDisplayName(user.nombre_usuario || '');
+    if (currentVisible || currentStored) return user;
+    try {
+      const rows = await this.sb.update('usuarios', `id_usuario=eq.${encodeURIComponent(user.id_usuario)}`, {
+        nombre_visible: normalizedName,
+        nombre_usuario: normalizedName,
+      });
+      return rows[0] || { ...user, nombre_visible: normalizedName, nombre_usuario: normalizedName };
+    } catch (error) {
+      console.warn('rememberUserName skipped:', error?.message || error);
+      return { ...user, nombre_visible: normalizedName, nombre_usuario: normalizedName };
+    }
+  }
+
   async createConversation(user, overrides = {}) {
     const created = await this.sb.insert('conversaciones', {
       id_usuario: user.id_usuario,
@@ -1993,7 +2463,7 @@ export class ChatbotEngine {
   }
 
   async getOrCreateConversation(user) {
-    const rows = await this.sb.select('conversaciones', `id_usuario=eq.${encodeURIComponent(user.id_usuario)}&estado_conversacion=in.(open,paused)&order=creado_en.desc&limit=1`);
+    const rows = await this.sb.select('conversaciones', `id_usuario=eq.${encodeURIComponent(user.id_usuario)}&estado_conversacion=in.(open,paused,handoff)&order=creado_en.desc&limit=1`);
     if (rows.length) return rows[0];
     return this.createConversation(user);
   }
@@ -2113,8 +2583,11 @@ export class ChatbotEngine {
     return this.reply(conversation, receiptSummary(data), { paso_actual: 'confirmando_recibo', subestado_flujo: 'confirmacion_recibo_archivo' });
   }
 
-  async handleIncoming({ phone, text = '', media = null, payloadCrudo = null, defaultCountry = null, userScope = 'default' }) {
-    const user = await this.ensureUser(phone, userScope);
+  async handleIncoming({ phone, text = '', media = null, payloadCrudo = null, defaultCountry = null, userScope = 'default', profileName = '' }) {
+    let user = await this.ensureUser(phone, userScope);
+    if (profileName) {
+      user = await this.rememberUserName(user, profileName, 'whatsapp_profile');
+    }
     const latestConversation = await this.getLatestConversation(user);
     const latestLetter = pickLetter(text, payloadCrudo, latestConversation?.paso_actual || '');
     let conversation;
@@ -2142,6 +2615,9 @@ export class ChatbotEngine {
       ? String(defaultCountry || '').toUpperCase()
       : null;
     const selectedCountry = forcedChannelCountry || inferCountryFromZone(profile?.zona_cliente) || countryFromIntent(conversation.intencion_principal) || detectPhoneCountry(phone);
+    const step = conversation.paso_actual || 'menu_principal';
+    const letter = pickLetter(text, payloadCrudo, step);
+    const corporateLead = extractCorporateLead(text);
     const sendToAdvisor = (reason = 'Soporte humano solicitado') => this.reply(
       conversation,
       advisorHandoffText(selectedCountry),
@@ -2155,25 +2631,118 @@ export class ChatbotEngine {
       },
     );
 
+    const knownCustomerName = hasKnownCustomerName(user, profile, profileName);
+    const allowCorporateDetection = ['menu_principal', 'seleccion_pais', 'retomar_o_reiniciar', 'consentimiento', 'compra_menu'].includes(step);
+
     if (shouldForceReset) {
       return this.reply(conversation, timeoutResetText(), { paso_actual: 'menu_principal', subestado_flujo: 'reinicio_timeout_24h', estado_conversacion: 'open', resumen: null, intencion_principal: null });
     }
 
-    if (isAdvisorRequest(text)) {
+    if (allowCorporateDetection && corporateLead) {
+      if (!knownCustomerName && corporateLead.contactName) {
+        user = await this.rememberUserName(user, corporateLead.contactName, 'corporate_intro');
+      }
+      const contactName = corporateLead.contactName || normalizeDisplayName(user?.nombre_visible || profile?.nombre_receptor || profileName || '');
+      if (profile?.id_perfil && (contactName || corporateLead.companyName)) {
+        try {
+          profile = await this.patchProfile(conversation.id_conversacion, {
+            ...(contactName ? { nombre_receptor: profile?.nombre_receptor || contactName } : {}),
+            ...(corporateLead.companyName ? { nombre_empresa: corporateLead.companyName } : {}),
+          }) || profile;
+        } catch (error) {
+          console.warn('corporate profile patch skipped:', error?.message || error);
+        }
+      }
+      return this.reply(
+        conversation,
+        corporateHandoffText({ contactName, companyName: corporateLead.companyName, country: selectedCountry }),
+        {
+          paso_actual: 'handoff_asesor',
+          subestado_flujo: selectedCountry === 'CO' ? 'asesor_corporativo_co' : 'asesor_corporativo_pe',
+          estado_conversacion: 'handoff',
+          requiere_handoff: true,
+          motivo_handoff: `Contacto corporativo detectado${corporateLead.companyName ? `: ${corporateLead.companyName}` : ''}`,
+          intencion_principal: 'corporativo',
+          resumen: JSON.stringify({
+            tipo: 'corporativo',
+            empresa: corporateLead.companyName || null,
+            contacto: contactName || null,
+            origen: corporateLead.reason,
+          }),
+        },
+      );
+    }
+
+    if (step === 'capturando_nombre_handoff') {
+      if (isMainMenuRequest(text, payloadCrudo)) {
+        return this.reply(conversation, MENU, { paso_actual: 'menu_principal', subestado_flujo: 'menu_desde_nombre_handoff', estado_conversacion: 'open', resumen: null, requiere_handoff: false, motivo_handoff: null, intencion_principal: null });
+      }
+      if (isAdvisorRequest(text)) {
+        return this.reply(conversation, 'Antes de pasarte con un asesor, compárteme por favor tu nombre para identificar tu caso.', { paso_actual: 'capturando_nombre_handoff', subestado_flujo: 'nombre_asesor' });
+      }
+      const requestedName = normalizeDisplayName(text);
+      if (!requestedName) {
+        return this.reply(conversation, 'Antes de pasarte con un asesor, compárteme por favor tu nombre para identificar tu caso.', { paso_actual: 'capturando_nombre_handoff', subestado_flujo: 'nombre_asesor' });
+      }
+      user = await this.rememberUserName(user, requestedName, 'handoff_prompt');
+      try {
+        profile = await this.patchProfile(conversation.id_conversacion, { nombre_receptor: profile?.nombre_receptor || requestedName }) || profile;
+      } catch (error) {
+        console.warn('handoff profile name skipped:', error?.message || error);
+      }
       return sendToAdvisor('Soporte humano solicitado por el cliente');
     }
 
-    const step = conversation.paso_actual || 'menu_principal';
-    const letter = pickLetter(text, payloadCrudo, step);
+    if (step === 'esperando_timeout_asesor') {
+      if (letter === 'A' || isContinueRequest(text, letter, payloadCrudo)) {
+        return this.reply(conversation, 'Entendido 👍 Seguiremos buscando un asesor para atenderte por este mismo chat. Te avisaremos apenas uno tome tu caso.', {
+          paso_actual: 'handoff_asesor',
+          subestado_flujo: 'cliente_esperando',
+          estado_conversacion: 'handoff',
+          requiere_handoff: true,
+        });
+      }
+      if (letter === 'B' || isMainMenuRequest(text, payloadCrudo) || isRestartRequest(text, letter, payloadCrudo)) {
+        return this.reply(conversation, MENU, {
+          paso_actual: 'menu_principal',
+          subestado_flujo: 'menu_desde_timeout_asesor',
+          estado_conversacion: 'open',
+          requiere_handoff: false,
+          motivo_handoff: null,
+          resumen: null,
+          intencion_principal: null,
+        });
+      }
+      return this.reply(conversation, advisorTimeoutChoiceText(), {
+        paso_actual: 'esperando_timeout_asesor',
+        subestado_flujo: 'timeout_asesor_30m',
+        estado_conversacion: 'handoff',
+        requiere_handoff: true,
+      });
+    }
+
+    if (isAdvisorRequest(text)) {
+      if (!knownCustomerName) {
+        return this.reply(conversation, 'Claro 👍 Antes de pasarte con un asesor, compárteme por favor tu nombre para identificar tu caso.', { paso_actual: 'capturando_nombre_handoff', subestado_flujo: 'nombre_asesor', estado_conversacion: 'open' });
+      }
+      return sendToAdvisor('Soporte humano solicitado por el cliente');
+    }
+
+    if (isNegativeAttentionSignal(text)) {
+      if (!knownCustomerName) {
+        return this.reply(conversation, 'Lamento que hayas tenido una mala experiencia. Antes de pasarte con un asesor, compárteme por favor tu nombre para identificar tu caso y priorizarlo.', { paso_actual: 'capturando_nombre_handoff', subestado_flujo: 'nombre_asesor', estado_conversacion: 'open' });
+      }
+      return sendToAdvisor('Cliente reporta molestia o inconformidad en la atención');
+    }
 
     if (conversation.estado_conversacion === 'handoff' || conversation.paso_actual === 'handoff_asesor') {
-      if (letter === 'A' || isContinueRequest(text, letter, payloadCrudo)) {
-        return this.reply(conversation, MENU, { paso_actual: 'menu_principal', subestado_flujo: 'bot_desde_handoff', estado_conversacion: 'open', requiere_handoff: false, motivo_handoff: null, intencion_principal: null, resumen: null });
+      if (letter === 'A' || isRestartRequest(text, letter, payloadCrudo) || isMainMenuRequest(text, payloadCrudo)) {
+        return this.reply(conversation, MENU, { paso_actual: 'menu_principal', subestado_flujo: 'menu_desde_handoff', estado_conversacion: 'open', requiere_handoff: false, motivo_handoff: null, intencion_principal: null, resumen: null });
       }
-      if (letter === 'B' || isRestartRequest(text, letter, payloadCrudo)) {
-        return this.reply(conversation, MENU, { paso_actual: 'menu_principal', subestado_flujo: 'reinicio_desde_handoff', estado_conversacion: 'open', requiere_handoff: false, motivo_handoff: null, intencion_principal: null, resumen: null });
+      if (isContinueRequest(text, letter, payloadCrudo) || cleanTextValue(text)) {
+        return this.reply(conversation, advisorWaitingText(), { paso_actual: 'handoff_asesor', subestado_flujo: 'esperando_asesor', estado_conversacion: 'handoff', resumen: conversation.resumen || null, requiere_handoff: true, motivo_handoff: conversation.motivo_handoff || 'Soporte humano solicitado por el cliente', intencion_principal: conversation.intencion_principal || null });
       }
-      return this.reply(conversation, advisorInactiveText(), { paso_actual: 'retomar_o_reiniciar', subestado_flujo: 'asesor_inactivo', estado_conversacion: 'paused', resumen: resumePromptPayload(conversation, { previousStep: 'menu_principal', previousSubstate: 'inicio' }), requiere_handoff: false, motivo_handoff: null, intencion_principal: null });
+      return this.reply(conversation, advisorInactiveText(), { paso_actual: 'handoff_asesor', subestado_flujo: 'asesor_inactivo', estado_conversacion: 'handoff', resumen: conversation.resumen || null, requiere_handoff: true, motivo_handoff: conversation.motivo_handoff || 'Soporte humano solicitado por el cliente', intencion_principal: conversation.intencion_principal || null });
     }
 
     if (shouldResumePrompt && conversation.id_conversacion === latestConversation?.id_conversacion && conversation.paso_actual !== 'retomar_o_reiniciar') {
@@ -2194,7 +2763,20 @@ export class ChatbotEngine {
       if (menuOption === 'A') return this.reply(conversation, CONSENT, { intencion_principal: 'instalacion_cargador', paso_actual: 'consentimiento', subestado_flujo: 'instalacion' });
       if (menuOption === 'B') return this.reply(conversation, ticketRequestPrompt('reschedule'), { intencion_principal: 'otro', paso_actual: 'gestion_ticket', subestado_flujo: 'esperando_ticket', accion_ticket_actual: 'reschedule' });
       if (menuOption === 'C') return this.reply(conversation, ticketRequestPrompt('cancel'), { intencion_principal: 'otro', paso_actual: 'gestion_ticket', subestado_flujo: 'esperando_ticket', accion_ticket_actual: 'cancel' });
-      if (menuOption === 'D') return sendToAdvisor('Soporte humano solicitado desde el menú principal');
+      if (menuOption === 'D') {
+        return this.reply(conversation, SUPPORT_CASE_MENU, {
+          intencion_principal: 'asistencia_tecnica',
+          paso_actual: 'soporte_tipo',
+          subestado_flujo: country || selectedCountry || 'PE',
+          resumen: JSON.stringify({ mode: null }),
+        });
+      }
+      if (menuOption === 'E') {
+        if (!knownCustomerName) {
+          return this.reply(conversation, 'Claro 👍 Antes de pasarte con un asesor, compárteme por favor tu nombre para identificar tu caso.', { paso_actual: 'capturando_nombre_handoff', subestado_flujo: 'nombre_asesor', estado_conversacion: 'open' });
+        }
+        return sendToAdvisor('Soporte humano solicitado desde el menú principal');
+      }
       return this.reply(conversation, MENU, { paso_actual: 'menu_principal', subestado_flujo: 'reinicio' });
     };
 
@@ -2236,14 +2818,9 @@ export class ChatbotEngine {
         const cita = rows[0];
         if (!cita) return this.reply(conversation, 'No pude encontrar la cita a gestionar. Vuelve a ingresar tu ticket.', { paso_actual: 'gestion_ticket', subestado_flujo: 'esperando_ticket', accion_ticket_actual: 'reschedule' });
         const zone = cita.zona_cliente || resolveProfileZone(profile, { phone: this.phoneForUserId(conversation.id_usuario), country: selectedCountry }) || defaultZoneForCountry(selectedCountry);
-        if (inferCountryFromZone(zone) === 'CO') {
-          const options = await this.availableDateHourOptionsForZone(zone, { includeToday: true, excludeEventId: cita?.microsoft_event_id || null });
-          if (!options.length) return this.reply(conversation, 'Por ahora no encontré horarios disponibles en el calendario para reprogramar esa cita.\n\nTe llevo al menú principal para seguir con el bot.', { paso_actual: 'menu_principal', subestado_flujo: 'sin_disponibilidad_reprogramacion', estado_conversacion: 'open', requiere_handoff: false, motivo_handoff: null, resumen: null, intencion_principal: null });
-          return this.reply(conversation, combinedSlotsPrompt(zone, options), { paso_actual: 'seleccionando_bloque_horario_reprogramacion', subestado_flujo: ticket, accion_ticket_actual: 'reschedule', codigo_ticket_solicitado: ticket, resumen: JSON.stringify(options) });
-        }
-        const days = await this.availableDaysForZone(zone, { includeToday: true });
-        if (!days.length) return this.reply(conversation, 'Por ahora no encontré horarios disponibles en el calendario para reprogramar esa cita.\n\nTe llevo al menú principal para seguir con el bot.', { paso_actual: 'menu_principal', subestado_flujo: 'sin_disponibilidad_reprogramacion', estado_conversacion: 'open', requiere_handoff: false, motivo_handoff: null, resumen: null, intencion_principal: null });
-        return this.reply(conversation, daysPrompt(zone, days), { paso_actual: 'seleccionando_dia_reprogramacion', subestado_flujo: ticket, accion_ticket_actual: 'reschedule', codigo_ticket_solicitado: ticket, resumen: JSON.stringify(days) });
+        const options = await this.availableDateHourOptionsForZone(zone, { includeToday: false, excludeEventId: cita?.microsoft_event_id || null, throughFriday: true });
+        if (!options.length) return this.reply(conversation, 'Por ahora no encontré horarios disponibles en el calendario para reprogramar esa cita.\n\nTe llevo al menú principal para seguir con el bot.', { paso_actual: 'menu_principal', subestado_flujo: 'sin_disponibilidad_reprogramacion', estado_conversacion: 'open', requiere_handoff: false, motivo_handoff: null, resumen: null, intencion_principal: null });
+        return this.reply(conversation, combinedSlotsPrompt(zone, options), { paso_actual: 'seleccionando_bloque_horario_reprogramacion', subestado_flujo: ticket, accion_ticket_actual: 'reschedule', codigo_ticket_solicitado: ticket, resumen: buildPagedSlotSummary(options, 0) });
       }
       if (action === 'cancel') {
         const rows = await this.sb.select('citas', `codigo_cita=eq.${encodeURIComponent(ticket)}&select=*`);
@@ -2269,6 +2846,20 @@ export class ChatbotEngine {
     }
 
     if (media) {
+      if (step === 'soporte_evidencia_archivo') {
+        const summary = parseSupportCaseSummary(conversation.resumen);
+        const evidence = supportEvidenceFromPayload(payloadCrudo) || {
+          fileName: media.fileName || media.mimeType || 'archivo',
+          mimeType: media.mimeType || '',
+          mediaUrl: '',
+        };
+        summary.evidence = evidence;
+        return this.reply(conversation, supportCaseSummaryText(summary), {
+          paso_actual: 'soporte_confirmacion',
+          subestado_flujo: summary.mode || conversation.subestado_flujo,
+          resumen: JSON.stringify(summary),
+        });
+      }
       const canProcessReceiptFile = ['opcion_recibo', 'esperando_archivo_recibo', 'corrigiendo_recibo', 'esperando_datos_recibo_manual', 'confirmando_recibo'].includes(step);
       if (!canProcessReceiptFile) {
         return this.reply(conversation, `Recibí tu archivo 👍\n\nTodavía no estamos en el paso del recibo. Primero necesito que respondas la opción pendiente con A o B.\n\nCuando lleguemos al paso del recibo, podré revisarlo por aquí.\n\nFormatos soportados: ${RECEIPT_FILE_TYPES}.`);
@@ -2287,13 +2878,27 @@ export class ChatbotEngine {
       return this.applyReceiptData(conversation, extracted, media);
     }
 
-    if (isGreeting(text) && step !== 'menu_principal') {
+    if (shouldResetFlowOnGreeting(step, text)) {
       return this.reply(conversation, MENU, { paso_actual: 'menu_principal', subestado_flujo: 'reinicio_por_saludo', estado_conversacion: 'open' });
     }
 
     if (step === 'menu_principal') {
       if (!letter) return this.reply(conversation, MENU);
-      if (['A','B','C','D'].includes(letter)) {
+      if (letter === 'D') {
+        return this.reply(conversation, SUPPORT_CASE_MENU, {
+          intencion_principal: 'asistencia_tecnica',
+          paso_actual: 'soporte_tipo',
+          subestado_flujo: selectedCountry || forcedChannelCountry || 'PE',
+          resumen: JSON.stringify({ mode: null }),
+        });
+      }
+      if (letter === 'E') {
+        if (!knownCustomerName) {
+          return this.reply(conversation, 'Claro 👍 Antes de pasarte con un asesor, compárteme por favor tu nombre para identificar tu caso.', { paso_actual: 'capturando_nombre_handoff', subestado_flujo: 'nombre_asesor', estado_conversacion: 'open' });
+        }
+        return sendToAdvisor('Soporte humano solicitado desde el menú principal');
+      }
+      if (['A','B','C'].includes(letter)) {
         if (forcedChannelCountry) {
           return continueWithCountry(letter, forcedChannelCountry);
         }
@@ -2307,6 +2912,173 @@ export class ChatbotEngine {
       const country = forcedChannelCountry || (letter === 'B' ? 'CO' : letter === 'A' ? 'PE' : null);
       if (!country) return this.reply(conversation, COUNTRY_PROMPT);
       return continueWithCountry(menuOption, country);
+    }
+
+    if (step === 'soporte_tipo') {
+      if (!letter) return this.reply(conversation, SUPPORT_CASE_MENU, { paso_actual: 'soporte_tipo', subestado_flujo: conversation.subestado_flujo, resumen: conversation.resumen || JSON.stringify({ mode: null }) });
+      if (letter === 'C') {
+        if (!knownCustomerName) {
+          return this.reply(conversation, 'Claro 👍 Antes de pasarte con un asesor, compárteme por favor tu nombre para identificar tu caso.', { paso_actual: 'capturando_nombre_handoff', subestado_flujo: 'nombre_asesor', estado_conversacion: 'open' });
+        }
+        return sendToAdvisor('Asistencia técnica: cliente solicita asesor');
+      }
+      const mode = letter === 'B' ? 'emergency' : letter === 'A' ? 'technical' : null;
+      if (!mode) return this.reply(conversation, SUPPORT_CASE_MENU, { paso_actual: 'soporte_tipo', subestado_flujo: conversation.subestado_flujo, resumen: conversation.resumen || JSON.stringify({ mode: null }) });
+      return this.reply(conversation, supportNamePrompt(mode), {
+        paso_actual: 'soporte_nombre',
+        subestado_flujo: mode,
+        intencion_principal: 'asistencia_tecnica',
+        estado_conversacion: 'open',
+        resumen: JSON.stringify({ mode, country: conversation.subestado_flujo || selectedCountry || forcedChannelCountry || 'PE' }),
+      });
+    }
+
+    if (step === 'soporte_nombre') {
+      const summary = parseSupportCaseSummary(conversation.resumen);
+      const name = parseSupportName(text);
+      if (!name) return this.reply(conversation, `${invalidSupportFieldPrompt('name')}\n\n${supportNamePrompt(summary.mode || 'technical')}`, { paso_actual: 'soporte_nombre', subestado_flujo: summary.mode || conversation.subestado_flujo, resumen: conversation.resumen || null });
+      summary.name = name;
+      return this.reply(conversation, supportLocationPrompt(summary.mode || 'technical'), {
+        paso_actual: 'soporte_ubicacion',
+        subestado_flujo: summary.mode || conversation.subestado_flujo,
+        resumen: JSON.stringify(summary),
+      });
+    }
+
+    if (step === 'soporte_ubicacion') {
+      const summary = parseSupportCaseSummary(conversation.resumen);
+      const location = parseSupportLocation(text);
+      if (!location) return this.reply(conversation, `${invalidSupportFieldPrompt('location')}\n\n${supportLocationPrompt(summary.mode || 'technical')}`, { paso_actual: 'soporte_ubicacion', subestado_flujo: summary.mode || conversation.subestado_flujo, resumen: conversation.resumen || null });
+      summary.location = location;
+      if ((summary.mode || conversation.subestado_flujo) === 'emergency') {
+        return this.reply(conversation, supportIssuePrompt('emergency'), {
+          paso_actual: 'soporte_descripcion',
+          subestado_flujo: 'emergency',
+          resumen: JSON.stringify(summary),
+        });
+      }
+      return this.reply(conversation, 'Paso 3 de 5\n\n¿Qué equipo está afectado?', {
+        paso_actual: 'soporte_equipo',
+        subestado_flujo: 'technical',
+        resumen: JSON.stringify(summary),
+      });
+    }
+
+    if (step === 'soporte_equipo') {
+      const summary = parseSupportCaseSummary(conversation.resumen);
+      const equipment = letter === 'A'
+        ? 'charger'
+        : letter === 'B'
+          ? 'charge_point'
+          : letter === 'C'
+            ? 'gas_operator'
+            : letter === 'D'
+              ? 'other'
+              : null;
+      if (!equipment) return this.reply(conversation, 'Paso 3 de 5\n\n¿Qué equipo está afectado?', { paso_actual: 'soporte_equipo', subestado_flujo: 'technical', resumen: conversation.resumen || null });
+      summary.equipment = equipment;
+      return this.reply(conversation, supportIssuePrompt('technical'), {
+        paso_actual: 'soporte_descripcion',
+        subestado_flujo: 'technical',
+        resumen: JSON.stringify(summary),
+      });
+    }
+
+    if (step === 'soporte_descripcion') {
+      const summary = parseSupportCaseSummary(conversation.resumen);
+      const issue = parseSupportIssue(text);
+      if (!issue) return this.reply(conversation, `${invalidSupportFieldPrompt('issue')}\n\n${supportIssuePrompt(summary.mode || conversation.subestado_flujo || 'technical')}`, { paso_actual: 'soporte_descripcion', subestado_flujo: summary.mode || conversation.subestado_flujo, resumen: conversation.resumen || null });
+      summary.issue = issue;
+      return this.reply(conversation, supportEvidencePrompt(summary.mode || conversation.subestado_flujo || 'technical'), {
+        paso_actual: 'soporte_evidencia_opcion',
+        subestado_flujo: summary.mode || conversation.subestado_flujo,
+        resumen: JSON.stringify(summary),
+      });
+    }
+
+    if (step === 'soporte_evidencia_opcion') {
+      const summary = parseSupportCaseSummary(conversation.resumen);
+      if (letter === 'A') {
+        return this.reply(conversation, supportEvidenceWaitPrompt(summary.mode || conversation.subestado_flujo || 'technical'), {
+          paso_actual: 'soporte_evidencia_archivo',
+          subestado_flujo: summary.mode || conversation.subestado_flujo,
+          resumen: JSON.stringify(summary),
+        });
+      }
+      if (letter === 'B') {
+        summary.evidence = null;
+        return this.reply(conversation, supportCaseSummaryText(summary), {
+          paso_actual: 'soporte_confirmacion',
+          subestado_flujo: summary.mode || conversation.subestado_flujo,
+          resumen: JSON.stringify(summary),
+        });
+      }
+      return this.reply(conversation, supportEvidencePrompt(summary.mode || conversation.subestado_flujo || 'technical'), {
+        paso_actual: 'soporte_evidencia_opcion',
+        subestado_flujo: summary.mode || conversation.subestado_flujo,
+        resumen: conversation.resumen || null,
+      });
+    }
+
+    if (step === 'soporte_evidencia_archivo') {
+      const summary = parseSupportCaseSummary(conversation.resumen);
+      if (includesNormalized(['omitir', 'sin evidencia', 'continuar'], text)) {
+        summary.evidence = null;
+        return this.reply(conversation, supportCaseSummaryText(summary), {
+          paso_actual: 'soporte_confirmacion',
+          subestado_flujo: summary.mode || conversation.subestado_flujo,
+          resumen: JSON.stringify(summary),
+        });
+      }
+      return this.reply(conversation, `${supportEvidenceWaitPrompt(summary.mode || conversation.subestado_flujo || 'technical')}\n\nSi prefieres seguir sin adjunto, escribe *omitir*.`, {
+        paso_actual: 'soporte_evidencia_archivo',
+        subestado_flujo: summary.mode || conversation.subestado_flujo,
+        resumen: conversation.resumen || null,
+      });
+    }
+
+    if (step === 'soporte_confirmacion') {
+      const summary = parseSupportCaseSummary(conversation.resumen);
+      if (!letter) return this.reply(conversation, supportCaseSummaryText(summary), { paso_actual: 'soporte_confirmacion', subestado_flujo: summary.mode || conversation.subestado_flujo, resumen: conversation.resumen || null });
+      if (letter === 'B') {
+        return this.reply(conversation, SUPPORT_CASE_MENU, {
+          paso_actual: 'soporte_tipo',
+          subestado_flujo: summary.country || selectedCountry || forcedChannelCountry || 'PE',
+          intencion_principal: 'asistencia_tecnica',
+          estado_conversacion: 'open',
+          resumen: JSON.stringify({ mode: null }),
+        });
+      }
+      if (letter === 'C') {
+        if (!knownCustomerName && !summary.name) {
+          return this.reply(conversation, 'Claro 👍 Antes de pasarte con un asesor, compárteme por favor tu nombre para identificar tu caso.', { paso_actual: 'capturando_nombre_handoff', subestado_flujo: 'nombre_asesor', estado_conversacion: 'open' });
+        }
+        return sendToAdvisor(summary.mode === 'emergency' ? 'Emergencia técnica reportada por cliente' : 'Caso de soporte técnico solicitado por cliente');
+      }
+      if (letter === 'A') {
+        const published = await this.publishSupportCase({
+          conversation,
+          profile,
+          caseData: summary,
+          countryCode: summary.country || selectedCountry || forcedChannelCountry || 'PE',
+          userScope,
+        }).catch((error) => {
+          console.error('publishSupportCase failed:', error);
+          return null;
+        });
+        const caseCode = published?.caseCode || published?.ticketId || conversation.id_conversacion || 'caso-generado';
+        const finalText = summary.mode === 'emergency'
+          ? `Caso urgente registrado ✅\n\nCódigo: ${caseCode}\n\nLo estamos marcando como prioridad alta para revisión del equipo EVINKA.`
+          : `Listo ✅\n\nTu caso fue registrado correctamente.\n\nCódigo: ${caseCode}\n\nUn miembro del equipo de EVINKA lo revisará.`;
+        return this.reply(conversation, finalText, {
+          paso_actual: 'caso_soporte_registrado',
+          subestado_flujo: String(caseCode),
+          estado_conversacion: 'closed',
+          cerrada_en: new Date().toISOString(),
+          resumen: JSON.stringify({ ...summary, caseCode }),
+          intencion_principal: 'asistencia_tecnica',
+        });
+      }
     }
 
     if (step === 'capturando_localidad_co') {
@@ -2598,9 +3370,9 @@ export class ChatbotEngine {
     }
 
     if (step === 'seleccionando_dia') {
-      const days = (() => { try { return JSON.parse(conversation.resumen || '[]'); } catch { return nextDays(); } })();
-      const chosen = days.find(x => x.code === letter);
       const zone = resolveProfileZone(profile, { phone: this.phoneForUserId(conversation.id_usuario), country: selectedCountry }) || defaultZoneForCountry(selectedCountry);
+      const days = (() => { try { return JSON.parse(conversation.resumen || '[]'); } catch { return nextDays(addDays(currentDateInLima(), 1), zone); } })();
+      const chosen = days.find(x => x.code === letter);
       if (!chosen) return this.reply(conversation, daysPrompt(zone, days));
       const hours = await this.availableHoursForDate(chosen.date, { clientZone: zone });
       if (!hours.length) return this.reply(conversation, 'Ese día ya no tiene horarios disponibles. Elige otro día, por favor.', { paso_actual: 'seleccionando_dia', subestado_flujo: 'agenda_dia', resumen: JSON.stringify(days) });
@@ -2637,8 +3409,9 @@ export class ChatbotEngine {
     if (step === 'seleccionando_hora') {
       const date = conversation.subestado_flujo;
       const summary = (() => { try { return JSON.parse(conversation.resumen || '{}'); } catch { return {}; } })();
-      const day = summary.day || nextDays().find(x => x.date === date);
-      const availableHours = summary.hours || await this.availableHoursForDate(date, { clientZone: resolveProfileZone(profile, { phone: this.phoneForUserId(conversation.id_usuario), country: selectedCountry }) || null });
+      const zone = resolveProfileZone(profile, { phone: this.phoneForUserId(conversation.id_usuario), country: selectedCountry }) || defaultZoneForCountry(selectedCountry);
+      const day = summary.day || nextDays(addDays(currentDateInLima(), 1), zone).find(x => x.date === date);
+      const availableHours = summary.hours || await this.availableHoursForDate(date, { clientZone: zone });
       const chosen = availableHours.find(x => x.code === letter);
       if (!chosen || !day) return this.reply(conversation, hoursPrompt(availableHours));
       profile = await this.getOrCreateProfile(conversation);
@@ -2696,7 +3469,8 @@ export class ChatbotEngine {
       try {
         microsoftEventId = await this.ensureCalendarEvent({ appointment, profile, dateLabel: day.label, hourLabel: chosen.label, ticket: appointment.codigo_cita });
         if (microsoftEventId) {
-          await this.sb.update('citas', `id_cita=eq.${appointment.id_cita}`, { microsoft_event_id: microsoftEventId, observaciones: 'Sincronizada con Microsoft Calendar.' });
+          appointment.microsoft_event_id = microsoftEventId;
+          await this.sb.update('citas', `id_cita=eq.${appointment.id_cita}`, { microsoft_event_id: microsoftEventId, observaciones: calendarSyncNote(this.calendar?.provider) });
         }
       } catch (error) {
         console.error('ensureCalendarEvent failed:', error);
@@ -2796,7 +3570,8 @@ export class ChatbotEngine {
         try {
           microsoftEventId = await this.ensureCalendarEvent({ appointment, profile: { ...profile, nombre_receptor: draft.nombre, correo_receptor: draft.correo, telefono_receptor: draft.telefono, direccion_instalacion: draft.direccion, distrito_instalacion: draft.localidad || draft.zone, provincia_instalacion: 'Colombia', zona_cliente: draft.zone }, dateLabel: draft.dateLabel, hourLabel: draft.hourLabel, ticket: appointment.codigo_cita });
           if (microsoftEventId) {
-            await this.sb.update('citas', `id_cita=eq.${appointment.id_cita}`, { microsoft_event_id: microsoftEventId, observaciones: 'Sincronizada con Microsoft Calendar.' });
+            appointment.microsoft_event_id = microsoftEventId;
+            await this.sb.update('citas', `id_cita=eq.${appointment.id_cita}`, { microsoft_event_id: microsoftEventId, observaciones: calendarSyncNote(this.calendar?.provider) });
           }
         } catch (error) {
           console.error('ensureCalendarEvent failed:', error);
@@ -2826,7 +3601,7 @@ export class ChatbotEngine {
     }
 
     if (step === 'gestion_ticket') {
-      const ticket = text.trim();
+      const ticket = extractTicketCode(text) || text.trim().toUpperCase();
       const rows = await this.sb.select('citas', `codigo_cita=eq.${encodeURIComponent(ticket)}&select=*`);
       if (!rows.length) return this.reply(conversation, 'No pude encontrar una cita con ese ticket.\n\nPor favor envíame solo tu documento para ayudarte a buscar tus citas registradas.', { paso_actual: 'busqueda_por_identidad', subestado_flujo: 'ticket_no_encontrado' });
       const cita = rows[0];
@@ -2886,14 +3661,9 @@ export class ChatbotEngine {
           const cita = rows[0];
           if (!cita) return this.reply(conversation, 'No pude encontrar la cita a gestionar. Vuelve a ingresar tu ticket.', { paso_actual: 'gestion_ticket', subestado_flujo: 'esperando_ticket' });
           const zone = cita.zona_cliente || resolveProfileZone(profile, { phone: this.phoneForUserId(conversation.id_usuario), country: selectedCountry }) || defaultZoneForCountry(selectedCountry);
-          if (inferCountryFromZone(zone) === 'CO') {
-            const options = await this.availableDateHourOptionsForZone(zone, { includeToday: true, excludeEventId: cita?.microsoft_event_id || null });
-            if (!options.length) return this.reply(conversation, 'Por ahora no encontré horarios disponibles en el calendario para reprogramar esa cita.\n\nTe llevo al menú principal para seguir con el bot.', { paso_actual: 'menu_principal', subestado_flujo: 'sin_disponibilidad_reprogramacion', estado_conversacion: 'open', requiere_handoff: false, motivo_handoff: null, resumen: null, intencion_principal: null });
-            return this.reply(conversation, combinedSlotsPrompt(zone, options), { paso_actual: 'seleccionando_bloque_horario_reprogramacion', subestado_flujo: ticket, accion_ticket_actual: 'reschedule', codigo_ticket_solicitado: ticket, resumen: JSON.stringify(options) });
-          }
-          const days = await this.availableDaysForZone(zone, { includeToday: true });
-          if (!days.length) return this.reply(conversation, 'Por ahora no encontré horarios disponibles en el calendario para reprogramar esa cita.\n\nTe llevo al menú principal para seguir con el bot.', { paso_actual: 'menu_principal', subestado_flujo: 'sin_disponibilidad_reprogramacion', estado_conversacion: 'open', requiere_handoff: false, motivo_handoff: null, resumen: null, intencion_principal: null });
-          return this.reply(conversation, daysPrompt(zone, days), { paso_actual: 'seleccionando_dia_reprogramacion', subestado_flujo: ticket, accion_ticket_actual: 'reschedule', codigo_ticket_solicitado: ticket, resumen: JSON.stringify(days) });
+          const options = await this.availableDateHourOptionsForZone(zone, { includeToday: false, excludeEventId: cita?.microsoft_event_id || null, throughFriday: true });
+          if (!options.length) return this.reply(conversation, 'Por ahora no encontré horarios disponibles en el calendario para reprogramar esa cita.\n\nTe llevo al menú principal para seguir con el bot.', { paso_actual: 'menu_principal', subestado_flujo: 'sin_disponibilidad_reprogramacion', estado_conversacion: 'open', requiere_handoff: false, motivo_handoff: null, resumen: null, intencion_principal: null });
+          return this.reply(conversation, combinedSlotsPrompt(zone, options), { paso_actual: 'seleccionando_bloque_horario_reprogramacion', subestado_flujo: ticket, accion_ticket_actual: 'reschedule', codigo_ticket_solicitado: ticket, resumen: buildPagedSlotSummary(options, 0) });
         }
         if (conversation.accion_ticket_actual === 'cancel') {
           const ticket = conversation.subestado_flujo;
@@ -2919,14 +3689,9 @@ export class ChatbotEngine {
       if (!cita) return this.reply(conversation, 'No pude encontrar la cita a gestionar. Vuelve a ingresar tu ticket.', { paso_actual: 'gestion_ticket', subestado_flujo: 'esperando_ticket' });
       if (letter === 'A') {
         const zone = cita.zona_cliente || resolveProfileZone(profile, { phone: this.phoneForUserId(conversation.id_usuario), country: selectedCountry }) || defaultZoneForCountry(selectedCountry);
-        if (inferCountryFromZone(zone) === 'CO') {
-          const options = await this.availableDateHourOptionsForZone(zone, { includeToday: true, excludeEventId: cita?.microsoft_event_id || null });
-          if (!options.length) return this.reply(conversation, 'Por ahora no encontré horarios disponibles en el calendario para reprogramar esa cita.\n\nTe llevo al menú principal para seguir con el bot.', { paso_actual: 'menu_principal', subestado_flujo: 'sin_disponibilidad_reprogramacion', estado_conversacion: 'open', requiere_handoff: false, motivo_handoff: null, resumen: null, intencion_principal: null });
-          return this.reply(conversation, combinedSlotsPrompt(zone, options), { paso_actual: 'seleccionando_bloque_horario_reprogramacion', subestado_flujo: ticket, accion_ticket_actual: 'reschedule', codigo_ticket_solicitado: ticket, resumen: JSON.stringify(options) });
-        }
-        const days = await this.availableDaysForZone(zone, { includeToday: true });
-        if (!days.length) return this.reply(conversation, 'Por ahora no encontré horarios disponibles en el calendario para reprogramar esa cita.\n\nTe llevo al menú principal para seguir con el bot.', { paso_actual: 'menu_principal', subestado_flujo: 'sin_disponibilidad_reprogramacion', estado_conversacion: 'open', requiere_handoff: false, motivo_handoff: null, resumen: null, intencion_principal: null });
-        return this.reply(conversation, daysPrompt(zone, days), { paso_actual: 'seleccionando_dia_reprogramacion', subestado_flujo: ticket, accion_ticket_actual: 'reschedule', codigo_ticket_solicitado: ticket, resumen: JSON.stringify(days) });
+        const options = await this.availableDateHourOptionsForZone(zone, { includeToday: false, excludeEventId: cita?.microsoft_event_id || null, throughFriday: true });
+        if (!options.length) return this.reply(conversation, 'Por ahora no encontré horarios disponibles en el calendario para reprogramar esa cita.\n\nTe llevo al menú principal para seguir con el bot.', { paso_actual: 'menu_principal', subestado_flujo: 'sin_disponibilidad_reprogramacion', estado_conversacion: 'open', requiere_handoff: false, motivo_handoff: null, resumen: null, intencion_principal: null });
+        return this.reply(conversation, combinedSlotsPrompt(zone, options), { paso_actual: 'seleccionando_bloque_horario_reprogramacion', subestado_flujo: ticket, accion_ticket_actual: 'reschedule', codigo_ticket_solicitado: ticket, resumen: buildPagedSlotSummary(options, 0) });
       }
       if (letter === 'B') {
         if (cita.microsoft_event_id && this.calendar) {
@@ -2938,24 +3703,28 @@ export class ChatbotEngine {
     }
 
     if (step === 'seleccionando_dia_reprogramacion') {
-      const days = (() => { try { return JSON.parse(conversation.resumen || '[]'); } catch { return rescheduleDays(); } })();
-      const chosenDay = days.find(x => x.code === letter);
-      const zone = profile.zona_cliente || resolveProfileZone(profile, { phone: this.phoneForUserId(conversation.id_usuario), country: selectedCountry }) || defaultZoneForCountry(selectedCountry);
-      if (!chosenDay) return this.reply(conversation, daysPrompt(zone, days));
-      const rows = await this.sb.select('citas', `codigo_cita=eq.${encodeURIComponent(conversation.subestado_flujo)}&select=*`);
-      const old = rows[0];
-      const hours = await this.availableHoursForDate(chosenDay.date, { excludeEventId: old?.microsoft_event_id || null, clientZone: zone });
-      if (!hours.length) return this.reply(conversation, 'Ese día ya no tiene horarios disponibles para reprogramar. Elige otro día, por favor.', { paso_actual: 'seleccionando_dia_reprogramacion', subestado_flujo: conversation.subestado_flujo, resumen: JSON.stringify(days) });
-      return this.reply(conversation, hoursPrompt(hours), { paso_actual: 'seleccionando_hora_reprogramacion', subestado_flujo: JSON.stringify({ ticket: conversation.subestado_flujo, date: chosenDay.date, dateLabel: chosenDay.label }), accion_ticket_actual: 'reschedule', resumen: JSON.stringify(hours) });
-    }
-
-    if (step === 'seleccionando_bloque_horario_reprogramacion') {
-      const options = (() => { try { return JSON.parse(conversation.resumen || '[]'); } catch { return []; } })();
-      const chosen = options.find(x => x.code === letter);
       const rows = await this.sb.select('citas', `codigo_cita=eq.${encodeURIComponent(conversation.subestado_flujo)}&select=*`);
       const old = rows[0];
       const zone = old?.zona_cliente || profile.zona_cliente || resolveProfileZone(profile, { phone: this.phoneForUserId(conversation.id_usuario), country: selectedCountry }) || defaultZoneForCountry(selectedCountry);
-      if (!chosen) return this.reply(conversation, combinedSlotsPrompt(zone, options), { paso_actual: 'seleccionando_bloque_horario_reprogramacion', subestado_flujo: conversation.subestado_flujo, accion_ticket_actual: 'reschedule', resumen: conversation.resumen || null });
+      const options = await this.availableDateHourOptionsForZone(zone, { includeToday: false, excludeEventId: old?.microsoft_event_id || null });
+      if (!options.length) return this.reply(conversation, 'Por ahora no encontré horarios disponibles en el calendario para reprogramar esa cita.\n\nTe llevo al menú principal para seguir con el bot.', { paso_actual: 'menu_principal', subestado_flujo: 'sin_disponibilidad_reprogramacion', estado_conversacion: 'open', requiere_handoff: false, motivo_handoff: null, resumen: null, intencion_principal: null });
+      return this.reply(conversation, combinedSlotsPrompt(zone, options), { paso_actual: 'seleccionando_bloque_horario_reprogramacion', subestado_flujo: conversation.subestado_flujo, accion_ticket_actual: 'reschedule', codigo_ticket_solicitado: conversation.subestado_flujo, resumen: buildPagedSlotSummary(options, 0) });
+    }
+
+    if (step === 'seleccionando_bloque_horario_reprogramacion') {
+      const rows = await this.sb.select('citas', `codigo_cita=eq.${encodeURIComponent(conversation.subestado_flujo)}&select=*`);
+      const old = rows[0];
+      const zone = old?.zona_cliente || profile.zona_cliente || resolveProfileZone(profile, { phone: this.phoneForUserId(conversation.id_usuario), country: selectedCountry }) || defaultZoneForCountry(selectedCountry);
+      const summary = parsePagedSlotSummary(conversation.resumen || '[]');
+      const options = summary.items;
+      if (letter === 'NEXT') {
+        return this.reply(conversation, combinedSlotsPrompt(zone, options), { paso_actual: 'seleccionando_bloque_horario_reprogramacion', subestado_flujo: conversation.subestado_flujo, accion_ticket_actual: 'reschedule', codigo_ticket_solicitado: conversation.subestado_flujo, resumen: buildPagedSlotSummary(options, summary.page + 1) });
+      }
+      if (letter === 'PREV') {
+        return this.reply(conversation, combinedSlotsPrompt(zone, options), { paso_actual: 'seleccionando_bloque_horario_reprogramacion', subestado_flujo: conversation.subestado_flujo, accion_ticket_actual: 'reschedule', codigo_ticket_solicitado: conversation.subestado_flujo, resumen: buildPagedSlotSummary(options, Math.max(0, summary.page - 1)) });
+      }
+      const chosen = options.find(x => x.code === letter);
+      if (!chosen) return this.reply(conversation, combinedSlotsPrompt(zone, options), { paso_actual: 'seleccionando_bloque_horario_reprogramacion', subestado_flujo: conversation.subestado_flujo, accion_ticket_actual: 'reschedule', codigo_ticket_solicitado: conversation.subestado_flujo, resumen: conversation.resumen || null });
       if (!old) return this.reply(conversation, 'No pude encontrar la cita original. Vuelve a intentarlo con tu ticket.', { paso_actual: 'gestion_ticket', subestado_flujo: 'esperando_ticket' });
       await this.sb.update('citas', `id_cita=eq.${old.id_cita}`, {
         fecha_cita: chosen.date,

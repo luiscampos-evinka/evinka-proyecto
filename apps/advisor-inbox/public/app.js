@@ -30,11 +30,13 @@ const state = {
   conversations: [],
   activeId: null,
   activeConversation: null,
+  requestedConversationId: new URLSearchParams(window.location.search).get('conversation') || '',
   pollTimer: null,
   isLoadingConversation: false,
   isSendingMessage: false,
   pendingAttachment: null,
   savingMeta: false,
+  mobileView: 'list',
 };
 
 const els = {
@@ -49,6 +51,7 @@ const els = {
   customerMeta: document.getElementById('customerMeta'),
   chatSubmeta: document.getElementById('chatSubmeta'),
   customerAvatar: document.getElementById('customerAvatar'),
+  mobileBackBtn: document.getElementById('mobileBackBtn'),
   profileSummaryBtn: document.getElementById('profileSummaryBtn'),
   handoffReason: document.getElementById('handoffReason'),
   caseStatus: document.getElementById('caseStatus'),
@@ -65,6 +68,7 @@ const els = {
   statsBar: document.getElementById('statsBar'),
   logoutBtn: document.getElementById('logoutBtn'),
   claimBtn: document.getElementById('claimBtn'),
+  retakeBtn: document.getElementById('retakeBtn'),
   resolveBtn: document.getElementById('resolveBtn'),
   returnBotBtn: document.getElementById('returnBotBtn'),
   attachBtn: document.getElementById('attachBtn'),
@@ -84,6 +88,8 @@ const els = {
   drawerReason: document.getElementById('drawerReason'),
   drawerStatus: document.getElementById('drawerStatus'),
   drawerAssigned: document.getElementById('drawerAssigned'),
+  drawerFiles: document.getElementById('drawerFiles'),
+  drawerArtifacts: document.getElementById('drawerArtifacts'),
   snapshotPhone: document.getElementById('snapshotPhone'),
   snapshotEmail: document.getElementById('snapshotEmail'),
   snapshotLocation: document.getElementById('snapshotLocation'),
@@ -94,6 +100,7 @@ const els = {
   quickReplies: document.getElementById('quickReplies'),
   createVisitBtn: document.getElementById('createVisitBtn'),
   openQuoteBtn: document.getElementById('openQuoteBtn'),
+  openRepositoryBtn: document.getElementById('openRepositoryBtn'),
   markReadyCloseBtn: document.getElementById('markReadyCloseBtn'),
   internalNoteInput: document.getElementById('internalNoteInput'),
   nextActionSelect: document.getElementById('nextActionSelect'),
@@ -174,6 +181,77 @@ function autoResizeComposer() {
   els.composerInput.style.height = `${Math.min(els.composerInput.scrollHeight, 180)}px`;
 }
 
+function scrollMessageListToBottom({ smooth = false } = {}) {
+  const apply = () => {
+    if (!els.messageList) return;
+    els.messageList.scrollTo({
+      top: els.messageList.scrollHeight,
+      behavior: smooth ? 'smooth' : 'auto',
+    });
+  };
+  apply();
+  requestAnimationFrame(apply);
+  setTimeout(apply, 60);
+  setTimeout(apply, 180);
+}
+
+function enableTouchScroll(container, options = {}) {
+  if (!container || container.dataset.touchScrollBound === '1') return;
+  const resolveTarget = typeof options.resolveTarget === 'function'
+    ? options.resolveTarget
+    : () => container;
+  container.dataset.touchScrollBound = '1';
+
+  const touch = {
+    active: false,
+    moved: false,
+    startX: 0,
+    startY: 0,
+    startScrollTop: 0,
+    target: null,
+  };
+
+  container.addEventListener('touchstart', (event) => {
+    const first = event.touches?.[0];
+    const target = resolveTarget();
+    if (!first || !target) return;
+    touch.active = true;
+    touch.moved = false;
+    touch.startX = first.clientX;
+    touch.startY = first.clientY;
+    touch.startScrollTop = target.scrollTop;
+    touch.target = target;
+  }, { passive: true });
+
+  container.addEventListener('touchmove', (event) => {
+    if (!touch.active || !touch.target) return;
+    const first = event.touches?.[0];
+    if (!first) return;
+    const deltaX = first.clientX - touch.startX;
+    const deltaY = first.clientY - touch.startY;
+    if (Math.abs(deltaY) <= Math.abs(deltaX) || Math.abs(deltaY) < 6) return;
+    touch.moved = true;
+    touch.target.scrollTop = touch.startScrollTop - deltaY;
+    event.preventDefault();
+  }, { passive: false });
+
+  container.addEventListener('click', (event) => {
+    if (!touch.moved) return;
+    event.preventDefault();
+    event.stopPropagation();
+    touch.moved = false;
+  }, true);
+
+  const reset = () => {
+    touch.active = false;
+    touch.target = null;
+    setTimeout(() => { touch.moved = false; }, 0);
+  };
+
+  container.addEventListener('touchend', reset, { passive: true });
+  container.addEventListener('touchcancel', reset, { passive: true });
+}
+
 async function api(url, options = {}) {
   const headers = { ...(options.headers || {}) };
   if (!(options.body instanceof FormData) && !headers['Content-Type']) {
@@ -185,9 +263,22 @@ async function api(url, options = {}) {
   return data;
 }
 
+function isCompactViewport() {
+  return window.innerWidth <= 860;
+}
+
+function syncResponsiveShell() {
+  const chatOpen = !!state.activeConversation;
+  const showChat = !isCompactViewport() || state.mobileView === 'chat';
+  els.appView.classList.toggle('mobile-chat-open', isCompactViewport() && showChat && chatOpen);
+  els.appView.classList.toggle('mobile-list-open', isCompactViewport() && !showChat);
+}
+
 function setLoggedIn(on) {
   els.loginView.classList.toggle('hidden', on);
   els.appView.classList.toggle('hidden', !on);
+  if (!on) state.mobileView = 'list';
+  syncResponsiveShell();
 }
 
 function labelStatus(value) {
@@ -375,6 +466,7 @@ function renderConversationList() {
 
 function classifyMessage(message) {
   if (message.systemAction || message.role === 'system') return 'system';
+  if (message.source === 'advisor_forward_jeny') return 'advisor';
   if (message.role === 'assistant' && message.advisorName) return 'advisor';
   return message.role;
 }
@@ -413,44 +505,216 @@ function clearAttachment() {
   renderAttachmentPreview();
 }
 
+function inboundTypeLabel(message) {
+  return {
+    interactive: 'Opción seleccionada',
+    contacts: 'Contacto compartido',
+    location: 'Ubicación compartida',
+    audio: 'Audio recibido',
+    video: 'Video recibido',
+    sticker: 'Sticker recibido',
+  }[message.type] || '';
+}
+
+function contactSummary(message) {
+  const first = Array.isArray(message.sharedContacts) ? message.sharedContacts[0] : null;
+  const name = message.contactName || first?.name?.formatted_name || [first?.name?.first_name, first?.name?.last_name].filter(Boolean).join(' ') || 'Contacto compartido';
+  const phone = message.contactPhone || first?.phones?.[0]?.phone || first?.phones?.[0]?.wa_id || '';
+  return { name, phone, first };
+}
+
+function locationSummary(message) {
+  return {
+    name: message.locationName || 'Ubicación compartida',
+    address: message.locationAddress || '',
+    mapsUrl: message.latitude != null && message.longitude != null
+      ? `https://www.google.com/maps?q=${message.latitude},${message.longitude}`
+      : '',
+  };
+}
+
+function renderForwardToJenyBtn(message) {
+  if (!message?.id || message?.role === 'system' || !message?.mediaUrl) return '';
+  if (message?.source === 'advisor_forward_jeny') return '';
+  return `<button type="button" class="message-card-footer-btn forward-jeny-btn" data-message-id="${escapeHtml(message.id)}" data-conversation-id="${escapeHtml(message.conversationId || '')}">Reenviar</button>`;
+}
+
 function renderMessageBody(message) {
-  const rawText = message.text || '';
+  const resolvedInteractiveText = message.type === 'interactive'
+    ? (message.interactiveTitle || (message.text === '[mensaje interactivo]' ? '' : message.text) || '')
+    : '';
+  const forwardPrefix = message.source === 'advisor_forward_jeny'
+    ? `Reenviado a ${message.forwardedToLabel || 'Jeny'}${message.fileName ? ` · ${message.fileName}` : ''}`
+    : '';
+  const rawText = [forwardPrefix, resolvedInteractiveText || message.text || ''].filter(Boolean).join('\n');
+  const normalizedRawText = String(rawText || '').trim().toLowerCase();
   const text = linkifyText(rawText);
   const previewUrl = firstUrl(rawText);
   const previewCard = previewUrl
     ? `<a class="message-link-card" href="${previewUrl}" target="_blank" rel="noreferrer"><div class="message-link-host">${escapeHtml(compactHost(previewUrl))}</div><div class="message-link-url">${escapeHtml(previewUrl)}</div></a>`
     : '';
-  if (!message.mediaUrl) return `${previewCard}${text ? `<div class="message-text">${text}</div>` : ''}`;
+  const typeBadgeLabel = inboundTypeLabel(message);
+  const interactiveBadge = typeBadgeLabel
+    ? `<div class="message-interactive-badge">${escapeHtml(typeBadgeLabel)}</div>`
+    : '';
+  if (message.type === 'contacts') {
+    const contact = contactSummary(message);
+    return `
+      <div class="message-media">
+        <div class="message-media-card whatsapp-doc-card contact-card">
+          <div class="contact-card-head">
+            <div class="contact-avatar">👤</div>
+            <div class="message-file-meta">
+              <div class="message-file-name">${escapeHtml(contact.name)}</div>
+              <div class="message-file-size">${escapeHtml(contact.phone || 'Sin número visible')}</div>
+            </div>
+          </div>
+          <div class="message-card-footer-actions ${contact.phone ? '' : 'single-action'}">
+            ${contact.phone ? `<a class="message-card-footer-btn" href="https://wa.me/${String(contact.phone).replace(/\D+/g, '')}" target="_blank" rel="noreferrer">Abrir chat</a>` : ''}
+            <button type="button" class="message-card-footer-btn copy-contact-btn" data-copy="${escapeHtml(contact.phone || contact.name)}">Copiar</button>
+          </div>
+        </div>
+        ${interactiveBadge}
+        ${text ? `<div class="message-text">${text}</div>` : ''}
+      </div>
+    `;
+  }
+  if (message.type === 'location') {
+    const location = locationSummary(message);
+    return `
+      <div class="message-media">
+        <div class="message-media-card whatsapp-doc-card contact-card">
+          <div class="contact-card-head">
+            <div class="contact-avatar">📍</div>
+            <div class="message-file-meta">
+              <div class="message-file-name">${escapeHtml(location.name)}</div>
+              <div class="message-file-size">${escapeHtml(location.address || 'Ubicación recibida')}</div>
+            </div>
+          </div>
+          <div class="message-card-footer-actions ${location.mapsUrl ? '' : 'single-action'}">
+            ${location.mapsUrl ? `<a class="message-card-footer-btn" href="${location.mapsUrl}" target="_blank" rel="noreferrer">Abrir mapa</a>` : ''}
+          </div>
+        </div>
+        ${interactiveBadge}
+        ${text ? `<div class="message-text">${text}</div>` : ''}
+      </div>
+    `;
+  }
+  if (!message.mediaUrl) return `${interactiveBadge}${previewCard}${text ? `<div class="message-text">${text}</div>` : ''}`;
   const mediaType = mediaClassFromMessage(message);
+  const normalizedFileName = String(message.fileName || '').trim().toLowerCase();
+  const shouldHidePlaceholderText = ['[image/jpeg]', '[image/png]', '[image/webp]', '[archivo]', '[video]', '[audio]', '[sticker]'].includes(normalizedRawText);
+  let cleanedRawText = String(rawText || '').trim();
+  if (message.fileName) {
+    const bracketPrefix = `[${message.fileName}]`;
+    if (cleanedRawText.startsWith(bracketPrefix)) {
+      cleanedRawText = cleanedRawText.slice(bracketPrefix.length).trim();
+    }
+    if (cleanedRawText.trim().toLowerCase() === normalizedFileName) {
+      cleanedRawText = '';
+    }
+  }
+  const cleanedText = linkifyText(cleanedRawText);
+  const visibleText = shouldHidePlaceholderText ? '' : cleanedText;
+  const fileLabel = escapeHtml(message.fileName || (mediaType === 'image' ? 'Imagen enviada' : 'Documento adjunto'));
+  const fileMeta = [
+    mediaType === 'image' ? 'Imagen' : ((message.fileName?.split('.').pop() || 'Archivo').slice(0, 4).toUpperCase()),
+    formatSize(message.fileSize),
+  ].filter(Boolean).join(' · ');
   if (mediaType === 'image') {
     return `
       <div class="message-media">
-        <a href="${message.mediaUrl}" target="_blank" rel="noreferrer">
-          <img src="${message.mediaUrl}" alt="${escapeHtml(message.fileName || 'imagen')}" class="message-image" />
-        </a>
-        ${text ? `<div class="message-text">${text}</div>` : ''}
+        <div class="message-media-card image-card whatsapp-media-card">
+          <a href="${message.mediaUrl}" target="_blank" rel="noreferrer" class="message-image-link">
+            <img src="${message.mediaUrl}" alt="${fileLabel}" class="message-image" />
+          </a>
+          <div class="message-media-toolbar">
+            <div class="message-media-info">
+              <div class="message-media-title">${fileLabel}</div>
+              <div class="message-media-subtitle">${escapeHtml(fileMeta || 'Imagen')}</div>
+            </div>
+          </div>
+          <div class="message-card-footer-actions">
+            <a class="message-card-footer-btn" href="${message.mediaUrl}" target="_blank" rel="noreferrer">Ver</a>
+            <a class="message-card-footer-btn" href="${message.mediaUrl}" target="_blank" rel="noreferrer" download>Descargar</a>
+            ${renderForwardToJenyBtn(message)}
+          </div>
+        </div>
+        ${interactiveBadge}
+        ${visibleText ? `<div class="message-text">${visibleText}</div>` : ''}
       </div>
     `;
   }
   const iconLabel = (message.fileName?.split('.').pop() || 'DOC').slice(0, 4).toUpperCase();
   return `
     <div class="message-media">
-      <a class="message-file" href="${message.mediaUrl}" target="_blank" rel="noreferrer">
-        <div class="message-file-icon">${escapeHtml(iconLabel)}</div>
-        <div class="message-file-meta">
-          <div class="message-file-name">${escapeHtml(message.fileName || 'Documento')}</div>
-          <div class="message-file-size">${escapeHtml(formatSize(message.fileSize))}</div>
+      <div class="message-media-card file-card whatsapp-doc-card">
+        <a class="message-file" href="${message.mediaUrl}" target="_blank" rel="noreferrer">
+          <div class="message-file-icon whatsapp-doc-icon">${escapeHtml(iconLabel)}</div>
+          <div class="message-file-meta">
+            <div class="message-file-name">${fileLabel}</div>
+            <div class="message-file-size">${escapeHtml(fileMeta || 'Archivo')}</div>
+          </div>
+        </a>
+        <div class="message-card-footer-actions">
+          <a class="message-card-footer-btn" href="${message.mediaUrl}" target="_blank" rel="noreferrer">Abrir</a>
+          <a class="message-card-footer-btn" href="${message.mediaUrl}" target="_blank" rel="noreferrer" download>Guardar como…</a>
+          ${renderForwardToJenyBtn(message)}
         </div>
-      </a>
-      ${text && rawText !== (message.fileName || '') ? `<div class="message-text">${text}</div>` : ''}
+      </div>
+      ${interactiveBadge}
+      ${visibleText && rawText !== (message.fileName || '') ? `<div class="message-text">${visibleText}</div>` : ''}
     </div>
   `;
+}
+
+function bindMessageSpecialActions() {
+  document.querySelectorAll('.copy-contact-btn').forEach((button) => {
+    button.addEventListener('click', async () => {
+      const value = button.dataset.copy || '';
+      if (!value) return;
+      try {
+        await navigator.clipboard.writeText(value);
+        button.textContent = 'Copiado';
+        setTimeout(() => { button.textContent = 'Copiar'; }, 1200);
+      } catch {
+        button.textContent = 'No se pudo';
+        setTimeout(() => { button.textContent = 'Copiar'; }, 1200);
+      }
+    });
+  });
+
+  document.querySelectorAll('.forward-jeny-btn').forEach((button) => {
+    button.addEventListener('click', async () => {
+      if (!state.activeId || button.disabled) return;
+      const messageId = button.dataset.messageId || '';
+      if (!messageId) return;
+      const original = button.textContent;
+      button.disabled = true;
+      button.textContent = 'Reenviando...';
+      try {
+        await api(`/api/inbox/conversations/${encodeURIComponent(state.activeId)}/messages/${encodeURIComponent(messageId)}/forward-jeny`, {
+          method: 'POST',
+        });
+        button.textContent = 'Enviado a Jeny';
+        setTimeout(() => {
+          button.disabled = false;
+          button.textContent = original;
+        }, 1500);
+      } catch (error) {
+        button.disabled = false;
+        button.textContent = original;
+        alert(error.message || 'No pude reenviar a Jeny.');
+      }
+    });
+  });
 }
 
 function toggleActionButtons(detail) {
   const status = detail?.conversation?.status || 'new';
   const disabled = status === 'resolved';
   els.claimBtn.disabled = disabled;
+  els.retakeBtn.disabled = !disabled;
   els.resolveBtn.disabled = disabled;
   els.returnBotBtn.disabled = disabled;
   els.saveCaseMetaBtn.disabled = disabled || state.savingMeta;
@@ -460,7 +724,11 @@ function toggleActionButtons(detail) {
   els.composerInput.disabled = disabled || state.isSendingMessage;
   if (els.composerSendBtn) {
     els.composerSendBtn.disabled = disabled || state.isSendingMessage;
-    els.composerSendBtn.textContent = state.isSendingMessage ? 'Enviando...' : 'Enviar';
+    if (state.isSendingMessage) {
+      els.composerSendBtn.textContent = state.pendingAttachment ? 'Enviando archivo...' : 'Enviando...';
+    } else {
+      els.composerSendBtn.textContent = state.pendingAttachment ? 'Enviar archivo' : 'Enviar';
+    }
   }
 }
 
@@ -490,6 +758,63 @@ function closeProfileDrawer() {
   els.profileDrawer.classList.add('hidden');
 }
 
+function renderDrawerFiles(files = []) {
+  if (!els.drawerFiles) return;
+  if (!Array.isArray(files) || !files.length) {
+    els.drawerFiles.innerHTML = '<div class="muted small">No hay archivos asociados todavía.</div>';
+    return;
+  }
+  els.drawerFiles.innerHTML = files.map((file) => `
+    <div class="client-file-item">
+      <div class="client-file-main">
+        <div class="client-file-name">${escapeHtml(file.fileName || 'Archivo')}</div>
+        <div class="client-file-meta">${escapeHtml(file.fileType || file.mimeType || 'Documento')} · ${escapeHtml(formatDate(file.createdAt) || '-')}</div>
+      </div>
+      <div class="client-file-actions">
+        ${file.url ? `<a class="ghost compact-mini" href="${file.url}" target="_blank" rel="noreferrer">Ver</a>` : '<span class="muted small">No disponible</span>'}
+        ${file.url ? `<a class="ghost compact-mini" href="${file.url}" target="_blank" rel="noreferrer" download>Descargar</a>` : ''}
+      </div>
+    </div>
+  `).join('');
+}
+
+function renderDrawerArtifacts(artifacts = []) {
+  if (!els.drawerArtifacts) return;
+  if (!Array.isArray(artifacts) || !artifacts.length) {
+    els.drawerArtifacts.innerHTML = '<div class="muted small">Todavía no hay contactos o datos compartidos.</div>';
+    return;
+  }
+  els.drawerArtifacts.innerHTML = artifacts.map((artifact) => {
+    const payload = artifact.payload || {};
+    if (artifact.artifactType === 'contacts') {
+      const first = Array.isArray(payload.contacts) ? payload.contacts[0] : null;
+      const name = first?.name?.formatted_name || [first?.name?.first_name, first?.name?.last_name].filter(Boolean).join(' ') || artifact.title || 'Contacto compartido';
+      const phone = first?.phones?.[0]?.phone || first?.phones?.[0]?.wa_id || artifact.summary || '';
+      return `
+        <div class="client-artifact-item">
+          <div class="client-artifact-title">👤 ${escapeHtml(name)}</div>
+          <div class="client-artifact-meta">${escapeHtml(phone)} · ${escapeHtml(formatDate(artifact.createdAt) || '-')}</div>
+        </div>
+      `;
+    }
+    if (artifact.artifactType === 'location') {
+      const location = payload.location || {};
+      return `
+        <div class="client-artifact-item">
+          <div class="client-artifact-title">📍 ${escapeHtml(location.name || artifact.title || 'Ubicación compartida')}</div>
+          <div class="client-artifact-meta">${escapeHtml(location.address || artifact.summary || '')}</div>
+        </div>
+      `;
+    }
+    return `
+      <div class="client-artifact-item">
+        <div class="client-artifact-title">${escapeHtml(artifact.title || artifact.artifactType || 'Dato compartido')}</div>
+        <div class="client-artifact-meta">${escapeHtml(artifact.summary || '')}</div>
+      </div>
+    `;
+  }).join('');
+}
+
 function openProfileDrawer() {
   const detail = state.activeConversation;
   if (!detail) return;
@@ -503,7 +828,14 @@ function openProfileDrawer() {
   els.drawerReason.textContent = detail.conversation.handoffReason || '-';
   els.drawerStatus.textContent = labelStatus(detail.conversation.status);
   els.drawerAssigned.textContent = detail.conversation.assignedToLabel || 'Sin asignar';
+  renderDrawerFiles(detail.files || []);
+  renderDrawerArtifacts(detail.artifacts || []);
   els.profileDrawer.classList.remove('hidden');
+}
+
+function openRepositoryDrawer() {
+  openProfileDrawer();
+  els.drawerFiles?.scrollIntoView({ behavior: 'smooth', block: 'start' });
 }
 
 function renderQuickReplies() {
@@ -534,6 +866,7 @@ function renderConversationDetail({ preserveScroll = true } = {}) {
   if (!detail) {
     els.emptyState.classList.remove('hidden');
     els.chatView.classList.add('hidden');
+    syncResponsiveShell();
     return;
   }
   const shouldStick = preserveScroll ? isNearBottom(els.messageList) : true;
@@ -546,7 +879,12 @@ function renderConversationDetail({ preserveScroll = true } = {}) {
   els.chatView.classList.remove('hidden');
   els.customerName.textContent = detail.conversation.customerName;
   els.customerMeta.textContent = [detail.conversation.phonePretty, detail.conversation.email].filter(Boolean).join(' · ');
-  els.chatSubmeta.textContent = [detail.conversation.district, detail.conversation.province].filter(Boolean).join(' · ');
+  els.chatSubmeta.textContent = [
+    [detail.conversation.district, detail.conversation.province].filter(Boolean).join(' · '),
+    detail.conversation.historyMessageCount
+      ? `Historial completo: ${detail.conversation.historyMessageCount} mensajes · ${detail.conversation.historyConversationCount || 1} casos`
+      : '',
+  ].filter(Boolean).join(' · ');
   els.customerAvatar.textContent = initials(detail.conversation.customerName);
   els.handoffReason.textContent = detail.conversation.handoffReason || 'Solicitud manual del cliente';
   els.caseStatus.textContent = labelStatus(detail.conversation.status);
@@ -564,6 +902,7 @@ function renderConversationDetail({ preserveScroll = true } = {}) {
   els.summaryPriorityBadge.className = `badge priority ${priority}`;
   fillInternalMeta(detail);
   toggleActionButtons(detail);
+  syncResponsiveShell();
 
   els.messageList.innerHTML = detail.messages.map((message) => {
     const kind = classifyMessage(message);
@@ -584,9 +923,10 @@ function renderConversationDetail({ preserveScroll = true } = {}) {
       </div>
     `;
   }).join('');
+  bindMessageSpecialActions();
 
   if (shouldStick) {
-    els.messageList.scrollTop = els.messageList.scrollHeight;
+    scrollMessageListToBottom();
   } else {
     const delta = els.messageList.scrollHeight - previousHeight;
     els.messageList.scrollTop = previousScroll + Math.max(delta, 0);
@@ -614,6 +954,8 @@ async function loadConversations({ refreshActive = true } = {}) {
   renderConversationList();
   if (refreshActive && state.activeId && data.some((item) => item.id === state.activeId)) {
     await loadConversation(state.activeId, { skipRefreshList: true, preserveScroll: true });
+  } else if (refreshActive && state.requestedConversationId && data.some((item) => item.id === state.requestedConversationId)) {
+    await loadConversation(state.requestedConversationId, { skipRefreshList: true, preserveScroll: false });
   } else if (!state.activeConversation) {
     renderConversationDetail();
   }
@@ -623,7 +965,15 @@ async function loadConversation(id, { skipRefreshList = false, preserveScroll = 
   if (state.isLoadingConversation) return;
   state.isLoadingConversation = true;
   try {
+    if (state.activeId && state.activeId !== id && state.pendingAttachment) {
+      clearAttachment();
+    }
     state.activeId = id;
+    state.requestedConversationId = id;
+    if (isCompactViewport()) state.mobileView = 'chat';
+    const url = new URL(window.location.href);
+    url.searchParams.set('conversation', id);
+    window.history.replaceState({}, '', url);
     const detail = await api(`/api/inbox/conversations/${encodeURIComponent(id)}`);
     state.activeConversation = detail;
     renderConversationList();
@@ -788,7 +1138,7 @@ els.loginForm.addEventListener('submit', async (event) => {
     await api('/api/login', {
       method: 'POST',
       body: JSON.stringify({
-        email: form.get('email'),
+        username: form.get('username'),
         password: form.get('password'),
       }),
     });
@@ -811,6 +1161,12 @@ els.logoutBtn.addEventListener('click', async () => {
 });
 
 els.searchInput.addEventListener('input', renderConversationList);
+els.mobileBackBtn?.addEventListener('click', () => {
+  state.mobileView = 'list';
+  syncResponsiveShell();
+  els.conversationList?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+});
+window.addEventListener('resize', syncResponsiveShell);
 els.statusFilter.addEventListener('change', () => loadConversations({ refreshActive: true }));
 els.composerInput.addEventListener('input', autoResizeComposer);
 els.composerInput.addEventListener('keydown', (event) => {
@@ -844,15 +1200,18 @@ els.composerForm.addEventListener('submit', async (event) => {
   try {
     await sendCurrentPayload();
   } catch (error) {
-    alert(error.message || 'No pude enviar el mensaje.');
+    const fallback = state.pendingAttachment ? 'No pude enviar el archivo adjunto.' : 'No pude enviar el mensaje.';
+    alert(error.message || fallback);
   }
 });
 
 els.claimBtn.addEventListener('click', () => performAction('claim'));
+els.retakeBtn.addEventListener('click', () => performAction('retake'));
 els.resolveBtn.addEventListener('click', () => performAction('resolve'));
 els.returnBotBtn.addEventListener('click', () => performAction('return_to_bot'));
 els.profileSummaryBtn.addEventListener('click', openProfileDrawer);
 els.openProfileBtn?.addEventListener('click', openProfileDrawer);
+els.openRepositoryBtn?.addEventListener('click', openRepositoryDrawer);
 els.profileDrawerBackdrop.addEventListener('click', closeProfileDrawer);
 els.closeProfileDrawerBtn.addEventListener('click', closeProfileDrawer);
 els.saveCaseMetaBtn.addEventListener('click', () => saveCaseMeta());
