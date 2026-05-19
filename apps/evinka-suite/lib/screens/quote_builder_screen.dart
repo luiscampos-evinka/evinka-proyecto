@@ -7,6 +7,7 @@ import 'package:image_picker/image_picker.dart';
 import 'package:intl/intl.dart';
 import 'package:url_launcher/url_launcher.dart';
 
+import '../config/evinka_app_config.dart';
 import '../models/evinka_app_models.dart';
 import '../services/evinka_api_service.dart';
 import 'conformidad_module_screen.dart';
@@ -33,7 +34,7 @@ class _QuoteBuilderScreenState extends State<QuoteBuilderScreen> {
   final _clientCtrl = TextEditingController();
   final _emailCtrl = TextEditingController();
   final _documentCtrl = TextEditingController();
-  final _cityCtrl = TextEditingController(text: 'Lima');
+  final _cityCtrl = TextEditingController(text: EvinkaAppConfig.isColombia ? 'Bogotá' : 'Lima');
   final _distanceCtrl = TextEditingController(text: '0');
   final _voltageCtrl = TextEditingController(text: '220');
   final _currentCtrl = TextEditingController(text: '32');
@@ -511,7 +512,7 @@ class _QuoteBuilderScreenState extends State<QuoteBuilderScreen> {
                                                 required: true,
                                                 keyboardType:
                                                     TextInputType.emailAddress),
-                                            _field(_documentCtrl, 'RUC o DNI'),
+                                            _field(_documentCtrl, EvinkaAppConfig.documentLabel),
                                             _field(_cityCtrl, 'Ciudad'),
                                             _dateField(context),
                                             _dropdown(

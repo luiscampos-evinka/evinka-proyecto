@@ -1,7 +1,11 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:printing/printing.dart';
+import 'package:url_launcher/url_launcher.dart';
 
+import '../config/evinka_app_config.dart';
+import '../services/evinka_api_service.dart';
+import 'form_screen.dart';
 import '../services/historial_service.dart';
 
 class HistorialScreen extends StatefulWidget {
@@ -87,6 +91,82 @@ class _HistorialScreenState extends State<HistorialScreen> {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text('No pude reintentar la sync: $e')),
+      );
+    }
+  }
+
+  Future<void> _editarCotizacion(HistorialEntry entry) async {
+    String? visitDate;
+    if (entry.fecha.contains('/')) {
+      final parts = entry.fecha.split('/');
+      if (parts.length == 3) {
+        visitDate = '${parts[2]}-${parts[1].padLeft(2, '0')}-${parts[0].padLeft(2, '0')}';
+      }
+    }
+    final reference = entry.quoteId.trim().isNotEmpty
+        ? entry.quoteId.trim()
+        : entry.installationOrderId.trim().isNotEmpty
+            ? entry.installationOrderId.trim()
+            : entry.id;
+    final baseUri = Uri.parse(EvinkaApiService.instance.baseUrl);
+    final uri = baseUri.replace(path: '/', queryParameters: {
+      'source': 'advisor',
+      'country': EvinkaAppConfig.countryCode,
+      'reference': reference,
+      if (entry.cliente.isNotEmpty) 'clientName': entry.cliente,
+      if (entry.clientEmail.isNotEmpty) 'email': entry.clientEmail,
+      if (visitDate != null) 'visitDate': visitDate,
+      'technicianNotes': [
+        'Desde historial de conformidad.',
+        if (entry.installationOrderId.isNotEmpty)
+          'Orden: ${entry.installationOrderId}',
+        if (entry.quoteId.isNotEmpty) 'Cotización: ${entry.quoteId}',
+      ].join(' '),
+    });
+    try {
+      final opened = await launchUrl(uri, mode: LaunchMode.externalApplication)
+          .timeout(const Duration(seconds: 15), onTimeout: () {
+        throw TimeoutException('Tiempo agotado al abrir el editor de cotización.');
+      });
+      if (!opened && mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('No pude abrir el editor de cotización.')),
+        );
+      }
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('No pude editar la cotización: $e')),
+      );
+    }
+  }
+
+  Future<void> _abrirEditorConformidad(String draftId) async {
+    if (widget.onResumeDraft != null) {
+      widget.onResumeDraft!(draftId);
+      return;
+    }
+    await Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => FormScreen(initialDraftId: draftId),
+      ),
+    );
+    if (mounted) {
+      _cargar();
+    }
+  }
+
+  Future<void> _editarConformidad(HistorialEntry entry) async {
+    try {
+      final editable = entry.isDraft
+          ? entry
+          : await HistorialService.crearBorradorEditableDesde(entry);
+      if (!mounted) return;
+      await _abrirEditorConformidad(editable.id);
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('No pude abrir la conformidad para editar: $e')),
       );
     }
   }
@@ -232,12 +312,7 @@ class _HistorialScreenState extends State<HistorialScreen> {
     final onTap = entry.isDraft
         ? (widget.onResumeDraft == null
             ? () {
-                ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(
-                    content: Text(
-                        'Este borrador se reanuda desde el módulo de conformidad.'),
-                  ),
-                );
+                _abrirEditorConformidad(entry.id);
               }
             : () => widget.onResumeDraft!(entry.id))
         : () => _abrirPdf(entry);
@@ -375,7 +450,7 @@ class _HistorialScreenState extends State<HistorialScreen> {
           Padding(
             padding: const EdgeInsets.only(bottom: 2),
             child: Text(
-              'RUC / DNI: ${entry.ruc}',
+              '${EvinkaAppConfig.documentCompactLabel}: ${entry.ruc}',
               style: TextStyle(fontSize: 12, color: _mutedText),
             ),
           ),
@@ -450,18 +525,28 @@ class _HistorialScreenState extends State<HistorialScreen> {
     return Column(
       mainAxisSize: MainAxisSize.min,
       children: [
-        if (entry.isDraft)
+        IconButton(
+          icon: Icon(
+            entry.isDraft ? Icons.edit_note : Icons.fact_check_outlined,
+            color: const Color(0xFF9C6A33),
+            size: 22,
+          ),
+          onPressed: () => _editarConformidad(entry),
+          tooltip: entry.isDraft ? 'Reanudar borrador' : 'Editar conformidad',
+          padding: const EdgeInsets.all(6),
+          constraints: const BoxConstraints(),
+        ),
+        const SizedBox(height: 4),
+        if (entry.quoteId.isNotEmpty || entry.installationOrderId.isNotEmpty)
           IconButton(
-            icon:
-                const Icon(Icons.edit_note, color: Color(0xFF9C6A33), size: 22),
-            onPressed: widget.onResumeDraft == null
-                ? null
-                : () => widget.onResumeDraft!(entry.id),
-            tooltip: 'Reanudar borrador',
+            icon: const Icon(Icons.edit, color: Color(0xFF1565C0), size: 22),
+            onPressed: () => _editarCotizacion(entry),
+            tooltip: 'Editar cotización',
             padding: const EdgeInsets.all(6),
             constraints: const BoxConstraints(),
           ),
-        if (entry.isDraft) const SizedBox(height: 4),
+        if (entry.quoteId.isNotEmpty || entry.installationOrderId.isNotEmpty)
+          const SizedBox(height: 4),
         if (entry.needsSync)
           IconButton(
             icon: const Icon(Icons.sync, color: Color(0xFF9C6A33), size: 22),

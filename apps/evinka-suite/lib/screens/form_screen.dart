@@ -6,6 +6,7 @@ import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:intl/intl.dart';
 import 'package:printing/printing.dart';
+import '../config/evinka_app_config.dart';
 import '../models/installation_order_model.dart';
 import '../models/protocolo_model.dart';
 import '../services/cotizador_service.dart';
@@ -947,7 +948,7 @@ class _FormScreenState extends State<FormScreen> {
                 Row(
                   children: [
                     Expanded(
-                        child: _campo('RUC o DNI', _rucCtrl,
+                        child: _campo(EvinkaAppConfig.documentLabel, _rucCtrl,
                             teclado: TextInputType.text)),
                     const SizedBox(width: 12),
                     Expanded(child: _campo('Dirección', _direccionCtrl)),

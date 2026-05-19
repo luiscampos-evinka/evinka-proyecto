@@ -2,15 +2,20 @@ import 'package:flutter/services.dart';
 import 'package:intl/intl.dart';
 import 'package:pdf/pdf.dart';
 import 'package:pdf/widgets.dart' as pw;
+
+import '../config/evinka_app_config.dart';
 import '../models/installation_order_model.dart';
 import '../models/protocolo_model.dart';
 
 class PdfService {
+  static const String _evinkaLegalName = 'EVINKA Technology S.A.C.';
+  static const String _evinkaBotPhone = '+51 949 076 102';
+
   static Future<Uint8List> generarPdf(ProtocoloModel data) async {
     final pdf = pw.Document();
 
-    final watermarkData = await rootBundle.load('assets/watermark.jpeg');
-    final watermarkImage = pw.MemoryImage(watermarkData.buffer.asUint8List());
+    final logoData = await rootBundle.load('assets/logo.png');
+    final logoImage = pw.MemoryImage(logoData.buffer.asUint8List());
 
     pdf.addPage(
       pw.Page(
@@ -19,15 +24,7 @@ class PdfService {
         build: (pw.Context context) {
           return pw.Stack(
             children: [
-              pw.Positioned(
-                left: -32,
-                top: -32,
-                child: pw.Opacity(
-                  opacity: 0.85,
-                  child: pw.Image(watermarkImage,
-                      width: 595, height: 842, fit: pw.BoxFit.fill),
-                ),
-              ),
+              _conformidadFooterOverlay(),
               pw.Column(
                 crossAxisAlignment: pw.CrossAxisAlignment.start,
                 children: [
@@ -43,7 +40,7 @@ class PdfService {
                   _campoLinea('Cliente', data.cliente),
                   pw.SizedBox(height: 4),
                   _dosColumnas(
-                      'RUC o DNI', data.ruc, 'Correo', data.clientEmail),
+                      EvinkaAppConfig.documentLabel, data.ruc, 'WhatsApp EVINKA', _evinkaBotPhone),
                   pw.SizedBox(height: 4),
                   _campoLinea('Dirección', data.direccion),
                   pw.SizedBox(height: 8),
@@ -69,6 +66,7 @@ class PdfService {
                   _textoLegal(),
                   pw.SizedBox(height: 20),
                   _firmas(data),
+                  pw.SizedBox(height: 34),
                 ],
               ),
             ],
@@ -77,72 +75,34 @@ class PdfService {
       ),
     );
 
-    final tieneFotos = (data.foto1 != null && data.foto1!.isNotEmpty) ||
-        (data.foto2 != null && data.foto2!.isNotEmpty);
+    final fotos = <({String label, List<int> bytes})>[
+      if (data.foto1 != null && data.foto1!.isNotEmpty)
+        (label: 'Foto 1', bytes: data.foto1!),
+      if (data.foto2 != null && data.foto2!.isNotEmpty)
+        (label: 'Foto 2', bytes: data.foto2!),
+    ];
 
-    if (tieneFotos) {
+    for (final foto in fotos) {
       pdf.addPage(
         pw.Page(
           pageFormat: PdfPageFormat.a4,
-          margin: const pw.EdgeInsets.all(32),
+          margin: const pw.EdgeInsets.fromLTRB(32, 28, 32, 32),
           build: (pw.Context context) {
             return pw.Stack(
               children: [
-                pw.Positioned(
-                  left: -32,
-                  top: -32,
-                  child: pw.Opacity(
-                    opacity: 0.85,
-                    child: pw.Image(watermarkImage,
-                        width: 595, height: 842, fit: pw.BoxFit.fill),
-                  ),
-                ),
+                _conformidadFooterOverlay(),
                 pw.Column(
-                  crossAxisAlignment: pw.CrossAxisAlignment.center,
+                  crossAxisAlignment: pw.CrossAxisAlignment.stretch,
                   children: [
-                    pw.Center(
-                      child: pw.Text(
-                        'REGISTRO FOTOGRÁFICO DE LA INSTALACIÓN',
-                        style: pw.TextStyle(
-                            fontSize: 13, fontWeight: pw.FontWeight.bold),
+                    _conformidadPhotoHeader(logoImage),
+                    pw.SizedBox(height: 18),
+                    pw.Expanded(
+                      child: _conformidadPhotoCard(
+                        label: foto.label,
+                        image: pw.MemoryImage(Uint8List.fromList(foto.bytes)),
                       ),
                     ),
-                    pw.SizedBox(height: 6),
-                    pw.Divider(thickness: 1.5),
-                    pw.SizedBox(height: 16),
-                    if (data.foto1 != null && data.foto1!.isNotEmpty) ...[
-                      pw.Text('Foto 1',
-                          style: pw.TextStyle(
-                              fontWeight: pw.FontWeight.bold, fontSize: 10)),
-                      pw.SizedBox(height: 6),
-                      pw.Center(
-                        child: pw.ConstrainedBox(
-                          constraints: const pw.BoxConstraints(
-                              maxHeight: 300, maxWidth: 500),
-                          child: pw.Image(
-                            pw.MemoryImage(Uint8List.fromList(data.foto1!)),
-                            fit: pw.BoxFit.contain,
-                          ),
-                        ),
-                      ),
-                      pw.SizedBox(height: 20),
-                    ],
-                    if (data.foto2 != null && data.foto2!.isNotEmpty) ...[
-                      pw.Text('Foto 2',
-                          style: pw.TextStyle(
-                              fontWeight: pw.FontWeight.bold, fontSize: 10)),
-                      pw.SizedBox(height: 6),
-                      pw.Center(
-                        child: pw.ConstrainedBox(
-                          constraints: const pw.BoxConstraints(
-                              maxHeight: 300, maxWidth: 500),
-                          child: pw.Image(
-                            pw.MemoryImage(Uint8List.fromList(data.foto2!)),
-                            fit: pw.BoxFit.contain,
-                          ),
-                        ),
-                      ),
-                    ],
+                    pw.SizedBox(height: 38),
                   ],
                 ),
               ],
@@ -153,6 +113,89 @@ class PdfService {
     }
 
     return pdf.save();
+  }
+
+  static pw.Widget _conformidadFooterOverlay() {
+    return pw.Positioned(
+      left: -4,
+      right: -4,
+      bottom: -4,
+      child: pw.Container(
+        height: 42,
+        color: PdfColors.white,
+        padding: const pw.EdgeInsets.symmetric(horizontal: 20, vertical: 10),
+        child: pw.Center(
+          child: pw.Text(
+            '$_evinkaLegalName · WhatsApp $_evinkaBotPhone',
+            style: pw.TextStyle(
+              fontSize: 8.8,
+              fontWeight: pw.FontWeight.bold,
+              color: const PdfColor(0.55, 0.42, 0.24),
+            ),
+            textAlign: pw.TextAlign.center,
+          ),
+        ),
+      ),
+    );
+  }
+
+  static pw.Widget _conformidadPhotoHeader(pw.MemoryImage logoImage) {
+    return pw.Column(
+      children: [
+        pw.Row(
+          mainAxisAlignment: pw.MainAxisAlignment.center,
+          children: [
+            pw.Image(logoImage, width: 118, fit: pw.BoxFit.contain),
+          ],
+        ),
+        pw.SizedBox(height: 12),
+        pw.Text(
+          'REGISTRO FOTOGRÁFICO DE LA INSTALACIÓN',
+          textAlign: pw.TextAlign.center,
+          style: pw.TextStyle(fontSize: 13, fontWeight: pw.FontWeight.bold),
+        ),
+        pw.SizedBox(height: 8),
+        pw.Divider(thickness: 1.2),
+      ],
+    );
+  }
+
+  static pw.Widget _conformidadPhotoCard({
+    required String label,
+    required pw.MemoryImage image,
+  }) {
+    return pw.Container(
+      padding: const pw.EdgeInsets.fromLTRB(18, 18, 18, 16),
+      decoration: pw.BoxDecoration(
+        color: PdfColors.white,
+        borderRadius: pw.BorderRadius.circular(18),
+        border: pw.Border.all(color: const PdfColor(0.86, 0.78, 0.66)),
+      ),
+      child: pw.Column(
+        crossAxisAlignment: pw.CrossAxisAlignment.stretch,
+        children: [
+          pw.Text(
+            label,
+            textAlign: pw.TextAlign.center,
+            style: pw.TextStyle(fontSize: 10.5, fontWeight: pw.FontWeight.bold),
+          ),
+          pw.SizedBox(height: 12),
+          pw.Expanded(
+            child: pw.Container(
+              padding: const pw.EdgeInsets.all(10),
+              decoration: pw.BoxDecoration(
+                color: const PdfColor(0.985, 0.98, 0.97),
+                borderRadius: pw.BorderRadius.circular(14),
+                border: pw.Border.all(color: const PdfColor(0.9, 0.85, 0.78)),
+              ),
+              child: pw.Center(
+                child: pw.Image(image, fit: pw.BoxFit.contain),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
   }
 
   static pw.Widget _titulo() {
@@ -360,10 +403,8 @@ class PdfService {
     InstallationOrderModel? order,
   }) async {
     final pdf = pw.Document();
-    final logoData = await rootBundle.load('assets/logo.png');
-    final watermarkData = await rootBundle.load('assets/watermark.jpeg');
-    final logo = pw.MemoryImage(logoData.buffer.asUint8List());
-    final watermark = pw.MemoryImage(watermarkData.buffer.asUint8List());
+    final logoLightData = await rootBundle.load('assets/logo_light.png');
+    final logo = pw.MemoryImage(logoLightData.buffer.asUint8List());
 
     final fechaInstalacion = _parseFecha(data.fecha);
     final fechaVigencia = DateTime(
@@ -387,104 +428,96 @@ class PdfService {
       [order?.clientPhone],
       fallback: 'No registrado',
     );
-    final ciudad = _firstNonEmpty([order?.city], fallback: 'Lima, Perú');
+    final ciudad = _firstNonEmpty(
+      [order?.city],
+      fallback: EvinkaAppConfig.defaultCity,
+    );
 
     pdf.addPage(
       pw.Page(
         pageFormat: PdfPageFormat.a4,
         margin: pw.EdgeInsets.zero,
         build: (context) {
-          return pw.Stack(
-            children: [
-              pw.Positioned.fill(
-                child: pw.Opacity(
-                  opacity: 0.045,
-                  child: pw.Image(watermark, fit: pw.BoxFit.cover),
+          return pw.Container(
+            color: PdfColors.white,
+            child: pw.Column(
+              crossAxisAlignment: pw.CrossAxisAlignment.start,
+              children: [
+                _garantiaHeader(
+                  logo: logo,
+                  codigoGarantia: codigoGarantia,
+                  ciudad: ciudad,
+                  vigencia: vigenciaTexto,
                 ),
-              ),
-              pw.Container(
-                color: PdfColors.white,
-                child: pw.Column(
-                  crossAxisAlignment: pw.CrossAxisAlignment.start,
-                  children: [
-                    _garantiaHeader(
-                      logo: logo,
-                      codigoGarantia: codigoGarantia,
-                      ciudad: ciudad,
-                      vigencia: vigenciaTexto,
-                    ),
-                    pw.Padding(
-                      padding: const pw.EdgeInsets.fromLTRB(36, 18, 36, 0),
-                      child: pw.Row(
-                        crossAxisAlignment: pw.CrossAxisAlignment.start,
-                        children: [
-                          pw.Expanded(
-                            flex: 5,
-                            child: _garantiaInfoEquipo(
-                              producto: producto,
-                              modelo: modelo,
-                              serie: data.numeroSerie,
-                              fechaInstalacion: data.fecha,
-                              vigencia: vigenciaTexto,
-                            ),
-                          ),
-                          pw.SizedBox(width: 16),
-                          pw.Expanded(
-                            flex: 4,
-                            child: _garantiaProductCard(data, order),
-                          ),
-                        ],
-                      ),
-                    ),
-                    pw.Padding(
-                      padding: const pw.EdgeInsets.fromLTRB(36, 14, 36, 0),
-                      child: _garantiaClienteBlock(data, order),
-                    ),
-                    pw.Padding(
-                      padding: const pw.EdgeInsets.fromLTRB(36, 14, 36, 0),
-                      child: pw.Row(
-                        crossAxisAlignment: pw.CrossAxisAlignment.start,
-                        children: [
-                          pw.Expanded(
-                            child: _legalCard(
-                              number: '3',
-                              title: 'Validación inicial de seguridad',
-                              text:
-                                  'Previo a la emisión de este certificado, EVINKA valida la identificación visible del equipo, la correspondencia de serie, el punto de instalación y la revisión visual inicial de energización, fijación, entorno y cableado accesible.',
-                              fill: const PdfColor(0.97, 0.985, 1),
-                              stroke: const PdfColor(0.86, 0.91, 0.96),
-                            ),
-                          ),
-                          pw.SizedBox(width: 14),
-                          pw.Expanded(
-                            child: _legalCard(
-                              number: '4',
-                              title: 'Condiciones base de operación',
-                              text:
-                                  'La operación segura del equipo exige uso conforme a la capacidad instalada, área libre de manipulación indebida, ausencia de humedad directa, acceso razonable para mantenimiento y conservación del presente certificado para trazabilidad futura.',
-                              fill: const PdfColor(1, 0.98, 0.95),
-                              stroke: const PdfColor(0.95, 0.87, 0.78),
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                    pw.Spacer(),
-                    pw.Padding(
-                      padding: const pw.EdgeInsets.fromLTRB(36, 0, 36, 24),
-                      child: pw.Center(
-                        child: pw.Text(
-                          'EVINKA · Documento emitido para control de garantía y trazabilidad del equipo instalado.',
-                          style: pw.TextStyle(
-                              fontSize: 8.5, color: PdfColors.grey700),
-                          textAlign: pw.TextAlign.center,
+                pw.Padding(
+                  padding: const pw.EdgeInsets.fromLTRB(36, 18, 36, 0),
+                  child: pw.Row(
+                    crossAxisAlignment: pw.CrossAxisAlignment.start,
+                    children: [
+                      pw.Expanded(
+                        flex: 5,
+                        child: _garantiaInfoEquipo(
+                          producto: producto,
+                          modelo: modelo,
+                          serie: data.numeroSerie,
+                          fechaInstalacion: data.fecha,
+                          vigencia: vigenciaTexto,
                         ),
                       ),
-                    ),
-                  ],
+                      pw.SizedBox(width: 16),
+                      pw.Expanded(
+                        flex: 4,
+                        child: _garantiaProductCard(data, order),
+                      ),
+                    ],
+                  ),
                 ),
-              ),
-            ],
+                pw.Padding(
+                  padding: const pw.EdgeInsets.fromLTRB(36, 14, 36, 0),
+                  child: _garantiaClienteBlock(data, order),
+                ),
+                pw.Padding(
+                  padding: const pw.EdgeInsets.fromLTRB(36, 14, 36, 0),
+                  child: pw.Row(
+                    crossAxisAlignment: pw.CrossAxisAlignment.start,
+                    children: [
+                      pw.Expanded(
+                        child: _legalCard(
+                          number: '3',
+                          title: 'Validación inicial de seguridad',
+                          text:
+                              'Previo a la emisión de este certificado, EVINKA valida la identificación visible del equipo, la correspondencia de serie, el punto de instalación y la revisión visual inicial de energización, fijación, entorno y cableado accesible.',
+                          fill: const PdfColor(0.97, 0.985, 1),
+                          stroke: const PdfColor(0.86, 0.91, 0.96),
+                        ),
+                      ),
+                      pw.SizedBox(width: 14),
+                      pw.Expanded(
+                        child: _legalCard(
+                          number: '4',
+                          title: 'Condiciones base de operación',
+                          text:
+                              'La operación segura del equipo exige uso conforme a la capacidad instalada, área libre de manipulación indebida, ausencia de humedad directa, acceso razonable para mantenimiento y conservación del presente certificado para trazabilidad futura.',
+                          fill: const PdfColor(1, 0.98, 0.95),
+                          stroke: const PdfColor(0.95, 0.87, 0.78),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                pw.Spacer(),
+                pw.Padding(
+                  padding: const pw.EdgeInsets.fromLTRB(36, 0, 36, 24),
+                  child: pw.Center(
+                    child: pw.Text(
+                      'EVINKA · Documento emitido para control de garantía y trazabilidad del equipo instalado.',
+                      style: pw.TextStyle(fontSize: 8.5, color: PdfColors.grey700),
+                      textAlign: pw.TextAlign.center,
+                    ),
+                  ),
+                ),
+              ],
+            ),
           );
         },
       ),
@@ -946,6 +979,15 @@ class PdfService {
     final source = '${data.marca} ${order?.chargerBrand ?? ''}'.toLowerCase();
     final isAlien = source.contains('alien');
     final modelName = isAlien ? 'Alien X' : 'MiniBox';
+    final lineLabel = isAlien ? 'Línea DC rápida' : 'Línea AC residencial';
+    final brandLabel = _firstNonEmpty(
+      [order?.chargerBrand, data.marca],
+      fallback: 'EVINKA',
+    );
+    final serialLabel = _firstNonEmpty(
+      [data.numeroSerie],
+      fallback: 'No registrada',
+    );
     return pw.Container(
       padding: const pw.EdgeInsets.all(16),
       decoration: pw.BoxDecoration(
@@ -953,144 +995,90 @@ class PdfService {
         borderRadius: pw.BorderRadius.circular(18),
         border: pw.Border.all(color: const PdfColor(0.86, 0.91, 0.96)),
       ),
-      child: pw.Column(
-        children: [
-          pw.Container(
-            height: 170,
-            padding: const pw.EdgeInsets.symmetric(horizontal: 12),
-            decoration: pw.BoxDecoration(
-              color: PdfColors.white,
-              borderRadius: pw.BorderRadius.circular(18),
-              border: pw.Border.all(color: const PdfColor(0.86, 0.91, 0.96)),
-            ),
-            child: pw.Row(
-              children: [
-                pw.Container(
-                  width: 86,
-                  height: 122,
-                  child: pw.Stack(
-                    alignment: pw.Alignment.center,
-                    children: [
-                      pw.Positioned(
-                        top: 8,
-                        child: pw.Container(
-                          width: 58,
-                          height: 94,
-                          decoration: pw.BoxDecoration(
-                            color: const PdfColor(0.10, 0.16, 0.30),
-                            borderRadius: pw.BorderRadius.circular(12),
-                            border: pw.Border.all(
-                                color: const PdfColor(0.91, 0.82, 0.70),
-                                width: 1.2),
-                          ),
-                        ),
-                      ),
-                      pw.Positioned(
-                        top: 21,
-                        child: pw.Container(
-                          width: 26,
-                          height: 18,
-                          decoration: pw.BoxDecoration(
-                            color: const PdfColor(0.87, 0.92, 0.98),
-                            borderRadius: pw.BorderRadius.circular(4),
-                          ),
-                        ),
-                      ),
-                      pw.Positioned(
-                        bottom: 10,
-                        child: pw.Container(
-                          width: 38,
-                          height: 8,
-                          decoration: pw.BoxDecoration(
-                            color: const PdfColor(0.07, 0.11, 0.21),
-                            borderRadius: pw.BorderRadius.circular(999),
-                          ),
-                        ),
-                      ),
-                      pw.Positioned(
-                        right: 4,
-                        top: 40,
-                        child: pw.Container(
-                          width: 18,
-                          height: 40,
-                          decoration: pw.BoxDecoration(
-                            border: pw.Border.all(
-                                color: const PdfColor(0.10, 0.16, 0.30),
-                                width: 2),
-                            borderRadius: pw.BorderRadius.circular(999),
-                          ),
-                        ),
-                      ),
-                      pw.Positioned(
-                        right: 0,
-                        top: 72,
-                        child: pw.Container(
-                          width: 12,
-                          height: 12,
-                          decoration: pw.BoxDecoration(
-                            color: const PdfColor(0.91, 0.82, 0.70),
-                            borderRadius: pw.BorderRadius.circular(999),
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
+      child: pw.Container(
+        padding: const pw.EdgeInsets.all(18),
+        decoration: pw.BoxDecoration(
+          color: PdfColors.white,
+          borderRadius: pw.BorderRadius.circular(18),
+          border: pw.Border.all(color: const PdfColor(0.86, 0.91, 0.96)),
+        ),
+        child: pw.Column(
+          crossAxisAlignment: pw.CrossAxisAlignment.start,
+          children: [
+            pw.Container(
+              padding:
+                  const pw.EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+              decoration: pw.BoxDecoration(
+                color: const PdfColor(1, 0.98, 0.95),
+                borderRadius: pw.BorderRadius.circular(999),
+              ),
+              child: pw.Text(
+                lineLabel,
+                style: pw.TextStyle(
+                  fontSize: 8.5,
+                  fontWeight: pw.FontWeight.bold,
+                  color: const PdfColor(0.65, 0.42, 0.15),
                 ),
-                pw.SizedBox(width: 12),
-                pw.Expanded(
-                  child: pw.Column(
-                    mainAxisAlignment: pw.MainAxisAlignment.center,
-                    crossAxisAlignment: pw.CrossAxisAlignment.start,
-                    children: [
-                      pw.Container(
-                        padding: const pw.EdgeInsets.symmetric(
-                            horizontal: 8, vertical: 4),
-                        decoration: pw.BoxDecoration(
-                          color: const PdfColor(1, 0.98, 0.95),
-                          borderRadius: pw.BorderRadius.circular(999),
-                        ),
-                        child: pw.Text(
-                          isAlien ? 'Línea DC rápida' : 'Línea AC residencial',
-                          style: pw.TextStyle(
-                            fontSize: 8.5,
-                            fontWeight: pw.FontWeight.bold,
-                            color: const PdfColor(0.65, 0.42, 0.15),
-                          ),
-                        ),
-                      ),
-                      pw.SizedBox(height: 10),
-                      pw.Text(
-                        modelName,
-                        style: pw.TextStyle(
-                          fontSize: 24,
-                          fontWeight: pw.FontWeight.bold,
-                          color: const PdfColor(0.07, 0.11, 0.21),
-                        ),
-                      ),
-                      pw.SizedBox(height: 6),
-                      pw.Text(
-                        'Equipo certificado EVINKA',
-                        style: pw.TextStyle(
-                          fontSize: 10.2,
-                          fontWeight: pw.FontWeight.bold,
-                          color: const PdfColor(0.10, 0.16, 0.30),
-                        ),
-                      ),
-                      pw.SizedBox(height: 4),
-                      pw.Text(
-                        'Representación referencial para esta garantía',
-                        style: const pw.TextStyle(
-                          fontSize: 8.5,
-                          color: PdfColor(0.40, 0.44, 0.50),
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              ],
+              ),
             ),
-          ),
-        ],
+            pw.SizedBox(height: 16),
+            pw.Text(
+              modelName,
+              maxLines: 1,
+              style: pw.TextStyle(
+                fontSize: 24,
+                fontWeight: pw.FontWeight.bold,
+                color: const PdfColor(0.07, 0.11, 0.21),
+              ),
+            ),
+            pw.SizedBox(height: 6),
+            pw.Text(
+              'Equipo certificado EVINKA',
+              style: pw.TextStyle(
+                fontSize: 10.2,
+                fontWeight: pw.FontWeight.bold,
+                color: const PdfColor(0.10, 0.16, 0.30),
+              ),
+            ),
+            pw.SizedBox(height: 12),
+            pw.Container(
+              width: double.infinity,
+              padding: const pw.EdgeInsets.all(12),
+              decoration: pw.BoxDecoration(
+                color: const PdfColor(0.97, 0.98, 0.99),
+                borderRadius: pw.BorderRadius.circular(12),
+              ),
+              child: pw.Column(
+                crossAxisAlignment: pw.CrossAxisAlignment.start,
+                children: [
+                  pw.Text('MARCA',
+                      style: pw.TextStyle(
+                          fontSize: 8.2,
+                          fontWeight: pw.FontWeight.bold,
+                          color: PdfColors.grey700)),
+                  pw.SizedBox(height: 4),
+                  pw.Text(brandLabel, style: const pw.TextStyle(fontSize: 11)),
+                  pw.SizedBox(height: 10),
+                  pw.Text('SERIE',
+                      style: pw.TextStyle(
+                          fontSize: 8.2,
+                          fontWeight: pw.FontWeight.bold,
+                          color: PdfColors.grey700)),
+                  pw.SizedBox(height: 4),
+                  pw.Text(serialLabel, style: const pw.TextStyle(fontSize: 11)),
+                ],
+              ),
+            ),
+            pw.SizedBox(height: 10),
+            pw.Text(
+              'Representación documental para esta garantía',
+              style: const pw.TextStyle(
+                fontSize: 8.5,
+                color: PdfColor(0.40, 0.44, 0.50),
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -1151,24 +1139,30 @@ class PdfService {
         children: [
           _sectionCaption('Registro', 'Registro técnico resumido'),
           pw.SizedBox(height: 12),
-          _tripleRow(
+          _pairRow(
             'Código',
             codigoGarantia,
             'Serie',
             _firstNonEmpty([data.numeroSerie], fallback: 'No registrada'),
+          ),
+          pw.SizedBox(height: 10),
+          _pairRow(
             'Ciudad',
             _firstNonEmpty([ciudad], fallback: 'No registrada'),
+            'Titular',
+            titular,
           ),
           pw.SizedBox(height: 10),
           _pairRow(
             'Código de orden',
-            _firstNonEmpty([data.installationOrderId, order?.id], fallback: 'No registrado'),
+            _firstNonEmpty([data.installationOrderId, order?.id],
+                fallback: 'No registrado'),
             'Cotización',
-            _firstNonEmpty([data.quoteId, order?.quoteId, order?.quoteNumber], fallback: 'No registrada'),
+            _firstNonEmpty([data.quoteId, order?.quoteId, order?.quoteNumber],
+                fallback: 'No registrada'),
           ),
           pw.SizedBox(height: 10),
-          _tripleRow('Titular', titular, 'Correo', correoContacto, 'Teléfono',
-              telefonoContacto),
+          _pairRow('Correo', correoContacto, 'Teléfono', telefonoContacto),
         ],
       ),
     );

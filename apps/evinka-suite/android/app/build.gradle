@@ -7,6 +7,7 @@ plugins {
 android {
     namespace "com.evinka.conformidad"
     compileSdkVersion flutter.compileSdkVersion
+    flavorDimensions "country"
 
     compileOptions {
         sourceCompatibility JavaVersion.VERSION_1_8
@@ -27,6 +28,21 @@ android {
         targetSdkVersion flutter.targetSdkVersion
         versionCode flutter.versionCode
         versionName flutter.versionName
+        resValue "string", "app_name", "EVINKA Suite PE"
+        resValue "string", "evinka_country", "PE"
+    }
+
+    productFlavors {
+        pe {
+            dimension "country"
+            resValue "string", "app_name", "EVINKA Suite PE"
+            resValue "string", "evinka_country", "PE"
+        }
+        co {
+            dimension "country"
+            resValue "string", "app_name", "EVINKA Suite CO"
+            resValue "string", "evinka_country", "CO"
+        }
     }
 
     buildTypes {

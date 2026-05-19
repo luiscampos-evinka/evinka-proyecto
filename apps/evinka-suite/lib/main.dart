@@ -2,6 +2,7 @@ import 'package:firebase_core/firebase_core.dart';
 import 'package:flutter/material.dart';
 import 'package:intl/date_symbol_data_local.dart';
 
+import 'config/evinka_app_config.dart';
 import 'models/evinka_app_models.dart';
 import 'screens/login_screen.dart';
 import 'screens/suite_dashboard_screen.dart';
@@ -22,6 +23,7 @@ Future<void> main() async {
   } catch (_) {
     // La app igual puede operar en módulo cotizador aunque Firebase no esté disponible.
   }
+  await EvinkaAppConfig.init();
   await EvinkaApiService.instance.init();
   await NetworkStatusService.instance.init();
   await HistorialService.startAutoQueueRunner();
@@ -37,7 +39,7 @@ class EvinkaSuiteApp extends StatelessWidget {
     return ValueListenableBuilder<ThemeMode>(
       valueListenable: AppSettingsService.instance.themeMode,
       builder: (context, mode, _) => MaterialApp(
-        title: 'EVINKA Suite',
+        title: EvinkaAppConfig.appName,
         debugShowCheckedModeBanner: false,
         themeMode: mode,
         theme: _buildLightTheme(),

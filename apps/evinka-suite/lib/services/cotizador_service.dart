@@ -2,29 +2,34 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:typed_data';
 import 'package:http/http.dart' as http;
+
+import '../config/evinka_app_config.dart';
 import '../models/installation_order_model.dart';
 import '../models/protocolo_model.dart';
 import 'firebase_service.dart';
 
 class CotizadorService {
-  static const String baseUrl = 'https://cotizador.evinka.net';
+  static String get baseUrl => EvinkaAppConfig.baseUrl;
   static const String appKey = 'EvinkaConformidad#2026';
   static const Duration _timeout = Duration(seconds: 35);
 
   static Future<InstallationOrderModel> cargarOrden(String code) async {
-    final uri = Uri.parse('$baseUrl/api/mobile/orders/${Uri.encodeComponent(code.trim())}');
+    final uri = Uri.parse(
+        '$baseUrl/api/mobile/orders/${Uri.encodeComponent(code.trim())}');
     late final http.Response res;
     try {
       res = await http.get(uri, headers: {
         'x-evinka-app-key': appKey,
         'Accept': 'application/json',
       }).timeout(_timeout, onTimeout: () {
-        throw TimeoutException('Tiempo agotado al cargar la orden desde el cotizador.');
+        throw TimeoutException(
+            'Tiempo agotado al cargar la orden desde el cotizador.');
       });
     } on TimeoutException {
       rethrow;
     } catch (e) {
-      throw Exception('No se pudo conectar al cotizador para cargar la orden: $e');
+      throw Exception(
+          'No se pudo conectar al cotizador para cargar la orden: $e');
     }
     final raw = res.body.trim();
     final data = raw.isEmpty
@@ -33,7 +38,8 @@ class CotizadorService {
             try {
               return jsonDecode(raw);
             } catch (e) {
-              throw Exception('El cotizador respondió un formato inválido al cargar la orden: $e');
+              throw Exception(
+                  'El cotizador respondió un formato inválido al cargar la orden: $e');
             }
           })();
     if (res.statusCode < 200 || res.statusCode >= 300) {
@@ -57,7 +63,8 @@ class CotizadorService {
     if (data.cargadorEvinka) deliveredItems.add('Cargador Evinka');
     if (data.manualCargador) deliveredItems.add('Manual del cargador');
     if (data.tarjetasCargador) deliveredItems.add('Tarjetas del cargador');
-    if (data.adicional && data.adicionalDesc.trim().isNotEmpty) deliveredItems.add(data.adicionalDesc.trim());
+    if (data.adicional && data.adicionalDesc.trim().isNotEmpty)
+      deliveredItems.add(data.adicionalDesc.trim());
 
     final body = jsonEncode({
       'id': id,
@@ -84,16 +91,22 @@ class CotizadorService {
 
     late final http.Response res;
     try {
-      res = await http.post(uri, headers: {
-        'x-evinka-app-key': appKey,
-        'Content-Type': 'application/json',
-      }, body: body).timeout(_timeout, onTimeout: () {
-        throw TimeoutException('Tiempo agotado al sincronizar la conformidad con el cotizador.');
+      res = await http
+          .post(uri,
+              headers: {
+                'x-evinka-app-key': appKey,
+                'Content-Type': 'application/json',
+              },
+              body: body)
+          .timeout(_timeout, onTimeout: () {
+        throw TimeoutException(
+            'Tiempo agotado al sincronizar la conformidad con el cotizador.');
       });
     } on TimeoutException {
       rethrow;
     } catch (e) {
-      throw Exception('No se pudo conectar al cotizador para sincronizar la conformidad: $e');
+      throw Exception(
+          'No se pudo conectar al cotizador para sincronizar la conformidad: $e');
     }
     if (res.statusCode < 200 || res.statusCode >= 300) {
       final raw = res.body.trim();
@@ -102,10 +115,12 @@ class CotizadorService {
         try {
           final parsed = jsonDecode(raw);
           if (parsed is Map<String, dynamic> && parsed['error'] != null) {
-            message = 'No se pudo sincronizar la conformidad con el cotizador: ${parsed['error']}';
+            message =
+                'No se pudo sincronizar la conformidad con el cotizador: ${parsed['error']}';
           }
         } catch (e) {
-          message = 'No se pudo sincronizar la conformidad con el cotizador: respuesta inválida ($e)';
+          message =
+              'No se pudo sincronizar la conformidad con el cotizador: respuesta inválida ($e)';
         }
       }
       throw Exception(message);
@@ -145,16 +160,22 @@ class CotizadorService {
 
     late final http.Response res;
     try {
-      res = await http.post(uri, headers: {
-        'x-evinka-app-key': appKey,
-        'Content-Type': 'application/json',
-      }, body: body).timeout(_timeout, onTimeout: () {
-        throw TimeoutException('Tiempo agotado al sincronizar la garantía con el cotizador.');
+      res = await http
+          .post(uri,
+              headers: {
+                'x-evinka-app-key': appKey,
+                'Content-Type': 'application/json',
+              },
+              body: body)
+          .timeout(_timeout, onTimeout: () {
+        throw TimeoutException(
+            'Tiempo agotado al sincronizar la garantía con el cotizador.');
       });
     } on TimeoutException {
       rethrow;
     } catch (e) {
-      throw Exception('No se pudo conectar al cotizador para sincronizar la garantía: $e');
+      throw Exception(
+          'No se pudo conectar al cotizador para sincronizar la garantía: $e');
     }
     if (res.statusCode < 200 || res.statusCode >= 300) {
       final raw = res.body.trim();
@@ -163,10 +184,12 @@ class CotizadorService {
         try {
           final parsed = jsonDecode(raw);
           if (parsed is Map<String, dynamic> && parsed['error'] != null) {
-            message = 'No se pudo sincronizar la garantía con el cotizador: ${parsed['error']}';
+            message =
+                'No se pudo sincronizar la garantía con el cotizador: ${parsed['error']}';
           }
         } catch (e) {
-          message = 'No se pudo sincronizar la garantía con el cotizador: respuesta inválida ($e)';
+          message =
+              'No se pudo sincronizar la garantía con el cotizador: respuesta inválida ($e)';
         }
       }
       throw Exception(message);

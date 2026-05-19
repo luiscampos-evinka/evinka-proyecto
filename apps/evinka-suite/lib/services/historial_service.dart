@@ -281,6 +281,37 @@ class HistorialService {
     }
   }
 
+  static Future<HistorialEntry> crearBorradorEditableDesde(
+    HistorialEntry source,
+  ) async {
+    final now = DateTime.now();
+    final newId =
+        'BOR-EDIT-${now.millisecondsSinceEpoch}-${source.installationOrderId.isNotEmpty ? source.installationOrderId : source.id}';
+    final draft = HistorialEntry(
+      id: newId,
+      cliente: source.cliente,
+      ruc: source.ruc,
+      fecha: source.fecha,
+      fechaGenerado:
+          '${now.day.toString().padLeft(2, '0')}/${now.month.toString().padLeft(2, '0')}/${now.year} ${now.hour.toString().padLeft(2, '0')}:${now.minute.toString().padLeft(2, '0')}',
+      archivo: 'Borrador_$newId.json',
+      installationOrderId: source.installationOrderId,
+      quoteId: source.quoteId,
+      clientEmail: source.clientEmail,
+      documentType: source.documentType,
+      documentState: 'draft',
+      syncPayload: source.syncPayload,
+      syncStatus: 'local',
+      syncMessage: 'Borrador creado desde una conformidad existente.',
+      syncRetryCount: 0,
+      syncLastAttemptAt: '',
+      syncNextAttemptAt: '',
+      syncLastError: '',
+    );
+    await guardarBorrador(draft);
+    return draft;
+  }
+
   static Future<void> actualizarEstadoSync(
     String id, {
     required String syncStatus,

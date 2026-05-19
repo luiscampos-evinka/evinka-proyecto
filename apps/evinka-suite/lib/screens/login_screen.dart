@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../config/evinka_app_config.dart';
 import '../services/app_settings_service.dart';
 
 class LoginScreen extends StatefulWidget {
@@ -111,7 +112,7 @@ class _LoginScreenState extends State<LoginScreen> {
                                   crossAxisAlignment: CrossAxisAlignment.start,
                                   children: [
                                     Text(
-                                      'EVINKA Suite',
+                                      EvinkaAppConfig.appName,
                                       style: theme.textTheme.headlineSmall
                                           ?.copyWith(
                                         fontWeight: FontWeight.w800,
@@ -119,7 +120,7 @@ class _LoginScreenState extends State<LoginScreen> {
                                     ),
                                     const SizedBox(height: 4),
                                     Text(
-                                      'Ingreso rápido por código + PIN',
+                                      'Ingreso rápido por usuario + PIN',
                                       style: theme.textTheme.bodyMedium,
                                     ),
                                   ],
@@ -143,12 +144,12 @@ class _LoginScreenState extends State<LoginScreen> {
                             controller: _identifierCtrl,
                             textCapitalization: TextCapitalization.characters,
                             decoration: const InputDecoration(
-                              labelText: 'Código',
+                              labelText: 'Usuario',
                               hintText: 'Ej. TEC014',
                             ),
                             validator: (value) =>
                                 (value == null || value.trim().isEmpty)
-                                    ? 'Ingresa tu código'
+                                    ? 'Ingresa tu usuario'
                                     : null,
                           ),
                           const SizedBox(height: 16),
@@ -205,14 +206,14 @@ class _LoginScreenState extends State<LoginScreen> {
                               crossAxisAlignment: CrossAxisAlignment.start,
                               children: [
                                 Text(
-                                  '¿No tienes código o PIN?',
+                                  '¿No tienes usuario o PIN?',
                                   style: theme.textTheme.titleMedium?.copyWith(
                                     fontWeight: FontWeight.w800,
                                   ),
                                 ),
                                 const SizedBox(height: 6),
                                 Text(
-                                  'El administrador crea la cuenta y te asigna el código y el PIN. Después del primer ingreso online, la app puede volver a abrir sin internet.',
+                                  'El administrador crea la cuenta y te asigna el usuario y el PIN. Después del primer ingreso online, la app puede volver a abrir sin internet.',
                                   style: theme.textTheme.bodySmall,
                                 ),
                               ],

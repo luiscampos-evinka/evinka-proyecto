@@ -1,11 +1,13 @@
 import 'package:flutter/material.dart';
 
+import '../config/evinka_app_config.dart';
 import '../models/evinka_app_models.dart';
 import '../services/app_settings_service.dart';
 import '../services/evinka_api_service.dart';
 import '../services/historial_service.dart';
 import '../services/network_status_service.dart';
 import 'admin_panel_screen.dart';
+import 'advisor_inbox_screen.dart';
 import 'conformidad_module_screen.dart';
 import 'historial_screen.dart';
 import 'tech_visits_screen.dart';
@@ -44,6 +46,11 @@ class _SuiteDashboardScreenState extends State<SuiteDashboardScreen> {
       ? const Color(0x1FFFFFFF)
       : const Color(0x1F5A4632);
 
+  bool get _canSeeVisitsModule =>
+      widget.user.hasFullAccess ||
+      widget.user.isTechSupervisor ||
+      widget.user.isTech;
+
   @override
   void initState() {
     super.initState();
@@ -70,7 +77,7 @@ class _SuiteDashboardScreenState extends State<SuiteDashboardScreen> {
       final pendingSync = await HistorialService.cargarPendientesSync();
       var activeVisits = 0;
       TechVisit? nextVisit;
-      if (widget.user.isTech) {
+      if (_canSeeVisitsModule) {
         final visits = await _api.getTechVisits();
         activeVisits = visits.where((item) => !item.isClosed).length;
         visits.sort((a, b) {
@@ -130,13 +137,15 @@ class _SuiteDashboardScreenState extends State<SuiteDashboardScreen> {
         ? (widget.user.isTech ? _supervisorTechCards() : _adminCards())
         : (widget.user.isTechSupervisor
             ? _techSupervisorCards()
+            : (widget.user.isAdvisor
+                ? _advisorCards()
             : (widget.user.canSeeCommercialData
                 ? _commercialCards()
-                : _techCards()));
+                : _techCards())));
 
     return Scaffold(
       appBar: AppBar(
-        title: const Text('EVINKA Suite'),
+        title: Text(EvinkaAppConfig.appName),
         actions: [
           IconButton(
             tooltip: 'Cambiar tema',
@@ -173,7 +182,7 @@ class _SuiteDashboardScreenState extends State<SuiteDashboardScreen> {
                   const SizedBox(height: 18),
                   _connectivityBanner(),
                   const SizedBox(height: 18),
-                  if (widget.user.isTech) ...[
+                  if (_canSeeVisitsModule) ...[
                     _actionNowCard(),
                     const SizedBox(height: 18),
                   ],
@@ -338,6 +347,14 @@ class _SuiteDashboardScreenState extends State<SuiteDashboardScreen> {
 
   List<_ModuleCardData> _adminCards() {
     return [
+      _advisorModuleCard(),
+      _ModuleCardData(
+        title: 'Visitas',
+        subtitle:
+            'Agenda, pendientes y seguimiento técnico completo dentro del mismo panel admin.',
+        icon: Icons.calendar_month_outlined,
+        builder: (_) => VisitsModuleScreen(user: widget.user),
+      ),
       _ModuleCardData(
         title: 'Cotizaciones',
         subtitle:
@@ -368,6 +385,7 @@ class _SuiteDashboardScreenState extends State<SuiteDashboardScreen> {
 
   List<_ModuleCardData> _commercialCards() {
     return [
+      _advisorModuleCard(),
       _ModuleCardData(
         title: 'Cotizaciones',
         subtitle:
@@ -388,6 +406,34 @@ class _SuiteDashboardScreenState extends State<SuiteDashboardScreen> {
         builder: (_) => const HistorialScreen(),
       ),
     ];
+  }
+
+  List<_ModuleCardData> _advisorCards() {
+    return [
+      _advisorModuleCard(),
+      _ModuleCardData(
+        title: 'Conformidad',
+        subtitle: 'Consulta cierres y documentos sin salir de la app.',
+        icon: Icons.fact_check_outlined,
+        builder: (_) => const ConformidadModuleScreen(),
+      ),
+      _ModuleCardData(
+        title: 'Sincronización',
+        subtitle: 'Revisa pendientes locales y estado de envío.',
+        icon: Icons.sync_outlined,
+        builder: (_) => const HistorialScreen(),
+      ),
+    ];
+  }
+
+  _ModuleCardData _advisorModuleCard() {
+    return _ModuleCardData(
+      title: 'Inbox asesor',
+      subtitle:
+          'Atiende WhatsApp desde EVINKA Suite con una vista tipo app y acceso directo al inbox.',
+      icon: Icons.forum_outlined,
+      builder: (_) => AdvisorInboxScreen(user: widget.user),
+    );
   }
 
   Widget _connectivityBanner() {
@@ -574,7 +620,7 @@ class _SuiteDashboardScreenState extends State<SuiteDashboardScreen> {
           value: _pendingOrders.toString(),
           icon: Icons.assignment_outlined,
           builder: (_) => const ConformidadModuleScreen(initialIndex: 1)),
-      if (widget.user.isTech)
+      if (_canSeeVisitsModule)
         _SummaryCardData(
             label: 'Visitas activas',
             value: _activeVisits.toString(),

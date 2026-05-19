@@ -5,6 +5,7 @@ import 'dart:io';
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 
+import '../config/evinka_app_config.dart';
 import '../models/evinka_app_models.dart';
 
 class EvinkaApiService {
@@ -12,7 +13,6 @@ class EvinkaApiService {
 
   static final EvinkaApiService instance = EvinkaApiService._();
 
-  static const String _baseUrl = 'https://cotizador.evinka.net';
   static const String _cookieKey = 'evinka_suite_cookie';
   static const String _cachedUserKey = 'evinka_suite_cached_user';
 
@@ -31,7 +31,23 @@ class EvinkaApiService {
     }
   }
 
-  String get baseUrl => _baseUrl;
+  String get baseUrl => EvinkaAppConfig.baseUrl;
+
+  String? get sessionCookie =>
+      (_cookie == null || _cookie!.isEmpty) ? null : _cookie;
+
+  String? get sessionToken {
+    final cookie = _cookie;
+    if (cookie == null || cookie.isEmpty) return null;
+    final parts = cookie.split(';');
+    for (final part in parts) {
+      final trimmed = part.trim();
+      if (trimmed.startsWith('cotizador_session=')) {
+        return Uri.decodeComponent(trimmed.substring('cotizador_session='.length));
+      }
+    }
+    return null;
+  }
 
   Future<void> _persistCookie() async {
     final prefs = await SharedPreferences.getInstance();
@@ -61,6 +77,19 @@ class EvinkaApiService {
       HttpHeaders.acceptHeader: 'application/json',
       if (auth && _cookie != null && _cookie!.isNotEmpty)
         HttpHeaders.cookieHeader: _cookie!,
+    };
+  }
+
+  String _scopedPath(String path) {
+    final separator = path.contains('?') ? '&' : '?';
+    if (path.contains('country=')) return path;
+    return '$path${separator}country=${Uri.encodeQueryComponent(EvinkaAppConfig.countryCode)}';
+  }
+
+  Map<String, dynamic> _scopedBody(Map<String, dynamic> body) {
+    return {
+      ...body,
+      'countryCode': EvinkaAppConfig.countryCode,
     };
   }
 
@@ -98,7 +127,7 @@ class EvinkaApiService {
     Object? body,
     bool auth = true,
   }) async {
-    final uri = Uri.parse('$_baseUrl$path');
+    final uri = Uri.parse('${baseUrl}$path');
     final request = http.Request(method, uri)
       ..headers.addAll({
         ..._headers(auth: auth),
@@ -139,7 +168,7 @@ class EvinkaApiService {
     Object? body,
     bool auth = true,
   }) async {
-    final uri = Uri.parse('$_baseUrl$path');
+    final uri = Uri.parse('${baseUrl}$path');
     final request = http.Request(method, uri)
       ..headers.addAll({
         ..._headers(auth: auth),
@@ -177,7 +206,7 @@ class EvinkaApiService {
     if (_cookie == null || _cookie!.isEmpty) return _cachedUser;
     Map<String, dynamic> data;
     try {
-      data = await _jsonRequest('/api/me');
+      data = await _jsonRequest(_scopedPath('/api/me'));
     } catch (error) {
       if (_isOfflineError(error)) {
         return _cachedUser;
@@ -204,7 +233,8 @@ class EvinkaApiService {
         'secret': secret,
       },
     );
-    final user = EvinkaUser.fromJson(Map<String, dynamic>.from(data['user'] as Map));
+    final user =
+        EvinkaUser.fromJson(Map<String, dynamic>.from(data['user'] as Map));
     await _persistCachedUser(user);
     return user;
   }
@@ -241,37 +271,50 @@ class EvinkaApiService {
   }
 
   Future<EvinkaConfig> getCatalog() async {
-    final data = await _jsonRequest('/api/catalog');
+    final data = await _jsonRequest(_scopedPath('/api/catalog'));
     return EvinkaConfig.fromJson(data);
   }
 
   Future<EvinkaConfig> updateCatalog(EvinkaConfig config) async {
-    final data = await _jsonRequest('/api/catalog',
-        method: 'PUT', body: config.toJson());
+    final data = await _jsonRequest(
+      '/api/catalog',
+      method: 'PUT',
+      body: _scopedBody(config.toJson()),
+    );
     return EvinkaConfig.fromJson(data);
   }
 
   Future<List<QuoteRecord>> getQuotes() async {
-    final data = await _jsonListRequest('/api/quotes');
+    final data = await _jsonListRequest(_scopedPath('/api/quotes'));
     return data
+        .where((e) {
+          final raw = Map<String, dynamic>.from(e as Map);
+          final country = raw['countryCode']?.toString().trim().toUpperCase();
+          return country == null || country.isEmpty || country == EvinkaAppConfig.countryCode;
+        })
         .map((e) => QuoteRecord.fromJson(Map<String, dynamic>.from(e as Map)))
         .toList();
   }
 
   Future<QuoteRecord> getQuote(String id) async {
-    final data = await _jsonRequest('/api/quotes/${Uri.encodeComponent(id)}');
+    final data = await _jsonRequest(
+      _scopedPath('/api/quotes/${Uri.encodeComponent(id)}'),
+    );
     return QuoteRecord.fromJson(data);
   }
 
   Future<QuoteRecord> createQuote(Map<String, dynamic> payload) async {
-    final data =
-        await _jsonRequest('/api/quotes', method: 'POST', body: payload);
+    final data = await _jsonRequest(
+      '/api/quotes',
+      method: 'POST',
+      body: _scopedBody(payload),
+    );
     return QuoteRecord.fromJson(data);
   }
 
   Future<String> acceptQuote(String id) async {
     final data = await _jsonRequest(
-        '/api/quotes/${Uri.encodeComponent(id)}/accept',
+        _scopedPath('/api/quotes/${Uri.encodeComponent(id)}/accept'),
         method: 'POST');
     final order =
         Map<String, dynamic>.from(data['installationOrder'] as Map? ?? {});
@@ -287,11 +330,11 @@ class EvinkaApiService {
     final data = await _jsonRequest(
       '/api/quotes/${Uri.encodeComponent(id)}/status',
       method: 'PATCH',
-      body: {
+      body: _scopedBody({
         'status': status,
         if (visitId != null) 'visitId': visitId,
         if (reference != null) 'reference': reference,
-      },
+      }),
     );
     return QuoteRecord.fromJson(
       Map<String, dynamic>.from(data['quote'] as Map? ?? {}),
@@ -311,7 +354,7 @@ class EvinkaApiService {
     return _jsonRequest(
       '/api/quotes/${Uri.encodeComponent(quoteId)}/schedule-installation',
       method: 'POST',
-      body: {
+      body: _scopedBody({
         'scheduledAt': scheduledAt,
         'timeWindow': timeWindow,
         if (visitId != null) 'visitId': visitId,
@@ -319,13 +362,18 @@ class EvinkaApiService {
         if (clientPhone != null) 'clientPhone': clientPhone,
         if (clientAddress != null) 'clientAddress': clientAddress,
         if (assignedTechEmail != null) 'assignedTechEmail': assignedTechEmail,
-      },
+      }),
     );
   }
 
   Future<List<TechVisit>> getTechVisits() async {
-    final data = await _jsonListRequest('/api/tech/visits');
+    final data = await _jsonListRequest(_scopedPath('/api/tech/visits'));
     return data
+        .where((e) {
+          final raw = Map<String, dynamic>.from(e as Map);
+          final country = raw['countryCode']?.toString().trim().toUpperCase();
+          return country == null || country.isEmpty || country == EvinkaAppConfig.countryCode;
+        })
         .map((e) => TechVisit.fromJson(Map<String, dynamic>.from(e as Map)))
         .toList();
   }
@@ -342,7 +390,7 @@ class EvinkaApiService {
     final data = await _jsonRequest(
       '/api/tech/visits/${Uri.encodeComponent(id)}',
       method: 'PATCH',
-      body: {
+      body: _scopedBody({
         'status': status,
         if (notes != null) 'notes': notes,
         if (resolution != null) 'resolution': resolution,
@@ -350,7 +398,7 @@ class EvinkaApiService {
         if (installationOrderId != null)
           'installationOrderId': installationOrderId,
         if (checklist != null) 'checklist': checklist,
-      },
+      }),
     );
     return TechVisit.fromJson(data);
   }
