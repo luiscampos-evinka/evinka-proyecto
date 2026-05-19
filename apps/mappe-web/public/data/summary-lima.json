@@ -1,0 +1,94 @@
+{
+  "generatedAt": "2026-05-19T16:50:37.044Z",
+  "total": 9163,
+  "cities": [
+    "Lima"
+  ],
+  "country": "Perú",
+  "methodology": {
+    "extraction": "Extracción OSM/Overpass sobre Lima Metropolitana con categorías base de MapCo.",
+    "territory": "Asignación territorial preliminar por distritos OSM dentro de bbox metropolitana.",
+    "scoring": "Scoring inicial heredando la lógica comercial general de MapCo, ajustado como baseline para Lima."
+  },
+  "extractionSummary": [
+    {
+      "city": "Lima",
+      "category": "Grifo / estación de servicio",
+      "totalRaw": 836,
+      "kept": 727
+    },
+    {
+      "city": "Lima",
+      "category": "Centro comercial / strip mall",
+      "totalRaw": 278,
+      "kept": 261
+    },
+    {
+      "city": "Lima",
+      "category": "Supermercado",
+      "totalRaw": 302,
+      "kept": 296
+    },
+    {
+      "city": "Lima",
+      "category": "Cadena comida rápida",
+      "totalRaw": 769,
+      "kept": 682
+    },
+    {
+      "city": "Lima",
+      "category": "Cadena café/restaurante",
+      "totalRaw": 5841,
+      "kept": 5275
+    },
+    {
+      "city": "Lima",
+      "category": "Clínica / hospital",
+      "totalRaw": 945,
+      "kept": 906
+    },
+    {
+      "city": "Lima",
+      "category": "Universidad",
+      "totalRaw": 143,
+      "kept": 142
+    },
+    {
+      "city": "Lima",
+      "category": "Parqueadero público",
+      "totalRaw": 3004,
+      "kept": 219
+    },
+    {
+      "city": "Lima",
+      "category": "Concesionario",
+      "totalRaw": 220,
+      "kept": 212
+    },
+    {
+      "city": "Lima",
+      "category": "Hotel",
+      "totalRaw": 528,
+      "kept": 443
+    }
+  ],
+  "counts": {
+    "super": {
+      "A": 0,
+      "B": 2183,
+      "C": 1023,
+      "descartar": 5957
+    },
+    "premium": {
+      "atacar_ya": 1822,
+      "revisar": 1384,
+      "descartar": 5957
+    },
+    "viability": {
+      "high": 1822,
+      "medium": 1384,
+      "low": 5957,
+      "discard": 0
+    }
+  }
+}

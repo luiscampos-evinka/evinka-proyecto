@@ -32,6 +32,9 @@ node_modules/
 
 # Runtime data / generated content
 **/data/
+!apps/mappe-web/public/data/
+!apps/mappe-web/public/data/places-lima.json
+!apps/mappe-web/public/data/summary-lima.json
 **/storage/
 deliverables/
 memory/
