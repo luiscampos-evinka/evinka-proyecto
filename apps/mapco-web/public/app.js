@@ -30,12 +30,45 @@ const state = {
     error: '',
     message: '',
   },
+  admin: {
+    users: [],
+    loading: false,
+    savingEmail: '',
+    error: '',
+  },
 };
 
 const DEFAULT_COLOMBIA_BOUNDS = [
   [ -4.3, -79.3 ],
   [ 13.6, -66.7 ],
 ];
+
+const BOGOTA_LOCALITY_ESTRATO = {
+  'antonio narino': 3,
+  'aurora alta': 5,
+  'barrios unidos': 4,
+  'bosa': 2,
+  'chapinero': 5,
+  'ciudad bolivar': 1,
+  'engativa': 3,
+  'fontibon': 3,
+  'kennedy': 3,
+  'la candelaria': 3,
+  'los martires': 3,
+  'puente aranda': 3,
+  'rafael uribe uribe': 2,
+  'san cristobal': 2,
+  'suba': 4,
+  'teusaquillo': 4,
+  'tunjuelito': 2,
+  'usaquen': 5,
+};
+
+const CALI_COMUNA_ESTRATO = {
+  '1': 1, '2': 4, '3': 3, '4': 2, '5': 3, '6': 2, '7': 3, '8': 3, '9': 3,
+  '10': 3, '11': 3, '12': 3, '13': 2, '14': 1, '15': 2, '16': 2, '17': 5,
+  '18': 1, '19': 4, '20': 1, '21': 1, '22': 6,
+};
 
 const debouncedApplyFilters = debounce(applyFilters, 180);
 
@@ -60,10 +93,11 @@ async function bootApp() {
   }
   if (!window.L?.map) throw new Error('No se pudo cargar Leaflet');
   const [rows, summary] = await Promise.all([
-    fetchJson('./data/places-colombia-multicity.json'),
+    fetchJson('./data/places-colombia-multicity.estrato-medellin.json'),
     fetchJson('./data/summary-colombia-multicity.json'),
   ]);
-  state.rows = rows.map(enrichTerritoryRow);
+  const medellinModes = buildMedellinModeMap(rows);
+  state.rows = rows.map((row) => enrichTerritoryRow(row, medellinModes));
   assignRelativeTerritorialTiers(state.rows);
   state.summary = summary;
   buildFilters();
@@ -83,6 +117,34 @@ function buildFilters() {
   rebuildDataStateSelect();
   rebuildNseSelect();
   rebuildGoogleValidationSelect();
+  updateNseFilterNote();
+}
+
+function getNseCoverage(city = 'Todos') {
+  const rows = city === 'Todos' ? state.rows : state.rows.filter((row) => row.city === city);
+  const withOfficial = rows.filter((row) => row.estrato_entorno != null).length;
+  return { total: rows.length, withOfficial };
+}
+
+function updateNseFilterNote() {
+  const el = document.getElementById('nseFilterNote');
+  if (!el) return;
+  const city = document.getElementById('cityFilter')?.value || 'Todos';
+  const current = getNseCoverage(city);
+  const medellin = getNseCoverage('Medellín');
+  if (city === 'Medellín') {
+    el.textContent = `Medellín: estrato activo con consulta oficial y completado por moda territorial donde faltaba dato (${current.withOfficial}/${current.total} con fuente puntual oficial).`;
+    return;
+  }
+  if (city === 'Cali') {
+    el.textContent = 'Cali: nivel socioeconómico activo con base oficial por comuna (estrato moda oficial).';
+    return;
+  }
+  if (city === 'Bogotá') {
+    el.textContent = 'Bogotá: nivel socioeconómico activo por referencia territorial de localidad para operación comercial.';
+    return;
+  }
+  el.textContent = `Filtro socioeconómico activo para Bogotá, Medellín y Cali. Medellín conserva ${medellin.withOfficial} de ${medellin.total} puntos con fuente puntual oficial.`;
 }
 
 function rebuildUbigeoSelect() {
@@ -192,16 +254,22 @@ function rebuildNseSelect() {
   const rows = filterRowsExcept('nseFilter');
   const counts = {
     all: rows.length,
-    alto: rows.filter((r) => r.nivel_socioeconomico === 'alto').length,
-    medio: rows.filter((r) => r.nivel_socioeconomico === 'medio').length,
-    bajo: rows.filter((r) => r.nivel_socioeconomico === 'bajo').length,
-    sin_dato: rows.filter((r) => !r.nivel_socioeconomico).length,
+    1: rows.filter((r) => Number(r.estrato_entorno) === 1).length,
+    2: rows.filter((r) => Number(r.estrato_entorno) === 2).length,
+    3: rows.filter((r) => Number(r.estrato_entorno) === 3).length,
+    4: rows.filter((r) => Number(r.estrato_entorno) === 4).length,
+    5: rows.filter((r) => Number(r.estrato_entorno) === 5).length,
+    6: rows.filter((r) => Number(r.estrato_entorno) === 6).length,
+    sin_dato: rows.filter((r) => r.estrato_entorno == null || r.estrato_entorno === '').length,
   };
   const values = [
     ['all', 'Todos'],
-    ['alto', 'Alto'],
-    ['medio', 'Medio'],
-    ['bajo', 'Bajo'],
+    ['1', 'Estrato 1'],
+    ['2', 'Estrato 2'],
+    ['3', 'Estrato 3'],
+    ['4', 'Estrato 4'],
+    ['5', 'Estrato 5'],
+    ['6', 'Estrato 6'],
     ['sin_dato', 'Sin dato'],
   ];
   el.innerHTML = values.map(([value, label]) => {
@@ -246,6 +314,7 @@ function bindUI() {
   document.getElementById('cityFilter').addEventListener('change', () => {
     updateDivisionFilterLabel();
     rebuildProvinceFilter();
+    updateNseFilterNote();
     applyFilters();
   });
   ['provinceFilter', 'ubigeoFilter', 'categoryFilter', 'dataStateFilter', 'nseFilter', 'reviewFilter', 'googleValidationFilter', 'viabilityFilter', 'premiumFilter', 'superFilter'].forEach((id) => document.getElementById(id).addEventListener('change', applyFilters));
@@ -274,6 +343,7 @@ function bindUI() {
     document.getElementById('premiumOnlyFilter').checked = false;
     document.getElementById('mapsUriOnlyFilter').checked = false;
     state.activeGroup = '';
+    updateNseFilterNote();
     applyFilters();
   });
 }
@@ -327,8 +397,8 @@ function applyFilters() {
     if (dataStateFilter === 'validated_any' && !['validated', 'validated_auto'].includes(row.googleValidationStatus)) return false;
     if (dataStateFilter === 'with_real_link' && !row.googleMapsUri) return false;
     if (dataStateFilter === 'pending' && (['validated', 'validated_auto'].includes(row.googleValidationStatus) || row.googleMapsUri)) return false;
-    if (nseFilter === 'sin_dato' && row.nivel_socioeconomico) return false;
-    if (nseFilter !== 'all' && nseFilter !== 'sin_dato' && row.nivel_socioeconomico !== nseFilter) return false;
+    if (nseFilter === 'sin_dato' && row.estrato_entorno != null && row.estrato_entorno !== '') return false;
+    if (nseFilter !== 'all' && nseFilter !== 'sin_dato' && Number(row.estrato_entorno) !== Number(nseFilter)) return false;
     if (parkingOnly && row.parkingProbability === 'low') return false;
     if (reviewFilter !== 'all' && row.reviewStatus !== reviewFilter) return false;
     if (googleValidationFilter === 'with_real_link' && !row.googleMapsUri) return false;
@@ -354,6 +424,7 @@ function applyFilters() {
   renderPremiumSummary();
   renderSuperSummary();
   renderLocations();
+  updateNseFilterNote();
   updateExportStatus();
   renderMap();
 }
@@ -387,8 +458,8 @@ function filterRowsExcept(skipId) {
       if (dataStateFilter === 'pending' && (['validated', 'validated_auto'].includes(row.googleValidationStatus) || row.googleMapsUri)) return false;
     }
     if (skipId !== 'nseFilter') {
-      if (nseFilter === 'sin_dato' && row.nivel_socioeconomico) return false;
-      if (nseFilter !== 'all' && nseFilter !== 'sin_dato' && row.nivel_socioeconomico !== nseFilter) return false;
+      if (nseFilter === 'sin_dato' && row.estrato_entorno != null && row.estrato_entorno !== '') return false;
+      if (nseFilter !== 'all' && nseFilter !== 'sin_dato' && Number(row.estrato_entorno) !== Number(nseFilter)) return false;
     }
     if (parkingOnly && row.parkingProbability === 'low') return false;
     if (reviewFilter !== 'all' && row.reviewStatus !== reviewFilter) return false;
@@ -551,7 +622,9 @@ function renderLocations() {
   const mapsUriOnly = document.getElementById('mapsUriOnlyFilter').checked;
   const city = document.getElementById('cityFilter').value;
   const province = document.getElementById('provinceFilter').value;
-  document.getElementById('resultsSummary').textContent = `${state.filtered.length} oportunidades · ${superA} territorial alta · ${premium} leads listos · ${viable} listos para carga pública · ${googleValidated} validados Google · ${mapsReal} con link real · base raw ${rawTotal} registros · lista ${visibleRows.length} · mapa ${mapRows.length}` + (city !== 'Todos' ? ` · ciudad: ${city}` : '') + (province !== 'Todos' ? ` · territorio: ${province}` : '') + (publicOnly ? ' · filtro: solo listos para carga pública' : '') + (premiumOnly ? ' · filtro: solo leads listos' : '') + (mapsUriOnly ? ' · filtro: solo con link real' : '') + (state.activeGroup ? ` · grupo: ${state.activeGroup}` : '') + (state.filtered.length > visibleRows.length ? ' · usa filtros para afinar' : '');
+  const nseCovered = state.filtered.filter((row) => row.nivel_socioeconomico).length;
+  const officialNse = state.filtered.filter((row) => row.estrato_fuente === 'medellin_oficial').length;
+  document.getElementById('resultsSummary').textContent = `${state.filtered.length} oportunidades · ${superA} territorial alta · ${premium} leads listos · ${viable} listos para carga pública · ${googleValidated} validados Google · ${mapsReal} con link real · NSE cubierto ${nseCovered} · fuente puntual oficial ${officialNse} · base raw ${rawTotal} registros · lista ${visibleRows.length} · mapa ${mapRows.length}` + (city !== 'Todos' ? ` · ciudad: ${city}` : '') + (province !== 'Todos' ? ` · territorio: ${province}` : '') + (publicOnly ? ' · filtro: solo listos para carga pública' : '') + (premiumOnly ? ' · filtro: solo leads listos' : '') + (mapsUriOnly ? ' · filtro: solo con link real' : '') + (state.activeGroup ? ` · grupo: ${state.activeGroup}` : '') + (state.filtered.length > visibleRows.length ? ' · usa filtros para afinar' : '');
   wrap.innerHTML = visibleRows.length ? visibleRows.map((row) => `
     <div class="location-card" data-id="${escapeHtml(row.id)}">
       <h3>${escapeHtml(row.name)}</h3>
@@ -1131,7 +1204,88 @@ function googleValidationPillClass(value) {
 }
 function formatCommercialNotes(notes) { return notes.map((note) => note.replaceAll('_', ' ')).join(' · '); }
 function labelReview(value) { if (value === 'review_light') return 'Dato con duda'; return 'Dato limpio'; }
-function enrichTerritoryRow(row) { return { ...row, commercialBranch: row.commercialBranch || 'Otros', commercialBranchDetail: row.commercialBranchDetail || labelCategory(row.category), commercialScale: row.commercialScale || 'mediano', commercialScaleLabel: row.commercialScaleLabel || 'Formato mediano', officialDivisionType: row.officialDivisionType || inferDivisionType(row), officialDivisionName: row.officialDivisionName || row.provinceCommercial || row.localityName || row.zone || 'Sin división' }; }
+function normalizeTerritoryKey(value = '') {
+  return String(value || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+}
+function nseGroupFromEstrato(estrato) {
+  const n = Number(estrato || 0);
+  if (n === 1 || n === 2) return 'bajo';
+  if (n === 3 || n === 4) return 'medio';
+  if (n === 5 || n === 6) return 'alto';
+  return null;
+}
+function buildMedellinModeMap(rows = []) {
+  const buckets = new Map();
+  rows.forEach((row) => {
+    if (row.city !== 'Medellín' || row.estrato_entorno == null) return;
+    const key = normalizeTerritoryKey(row.officialDivisionName || row.estrato_comuna || '');
+    if (!key) return;
+    const counter = buckets.get(key) || new Map();
+    const estrato = Number(row.estrato_entorno || 0);
+    counter.set(estrato, (counter.get(estrato) || 0) + 1);
+    buckets.set(key, counter);
+  });
+  const modes = {};
+  buckets.forEach((counter, key) => {
+    const best = [...counter.entries()].sort((a, b) => (b[1] - a[1]) || (a[0] - b[0]))[0];
+    if (best?.[0]) modes[key] = best[0];
+  });
+  return modes;
+}
+function extractCaliComunaCode(row) {
+  const raw = String(row.officialDivisionName || row.address || '');
+  const match = raw.match(/comuna\s*(\d{1,2})/i);
+  return match ? match[1] : '';
+}
+function inferFallbackNse(row, medellinModes = {}) {
+  if (row.nivel_socioeconomico) return {};
+  if (row.city === 'Medellín') {
+    const key = normalizeTerritoryKey(row.officialDivisionName || row.estrato_comuna || '');
+    const estrato = medellinModes[key];
+    if (estrato) {
+      return {
+        estrato_entorno: row.estrato_entorno ?? estrato,
+        nivel_socioeconomico: nseGroupFromEstrato(estrato),
+        estrato_fuente: row.estrato_fuente || 'medellin_moda_comuna',
+      };
+    }
+  }
+  if (row.city === 'Cali') {
+    const comuna = extractCaliComunaCode(row);
+    const estrato = CALI_COMUNA_ESTRATO[comuna];
+    if (estrato) {
+      return {
+        estrato_entorno: estrato,
+        nivel_socioeconomico: nseGroupFromEstrato(estrato),
+        estrato_fuente: 'cali_oficial_comuna_moda',
+      };
+    }
+  }
+  if (row.city === 'Bogotá') {
+    const key = normalizeTerritoryKey(row.officialDivisionName || row.localityName || '');
+    const estrato = BOGOTA_LOCALITY_ESTRATO[key];
+    if (estrato) {
+      return {
+        estrato_entorno: estrato,
+        nivel_socioeconomico: nseGroupFromEstrato(estrato),
+        estrato_fuente: 'bogota_localidad_referencia',
+      };
+    }
+  }
+  return {};
+}
+function enrichTerritoryRow(row, medellinModes = {}) {
+  const base = {
+    ...row,
+    commercialBranch: row.commercialBranch || 'Otros',
+    commercialBranchDetail: row.commercialBranchDetail || labelCategory(row.category),
+    commercialScale: row.commercialScale || 'mediano',
+    commercialScaleLabel: row.commercialScaleLabel || 'Formato mediano',
+    officialDivisionType: row.officialDivisionType || inferDivisionType(row),
+    officialDivisionName: row.officialDivisionName || row.provinceCommercial || row.localityName || row.zone || 'Sin división',
+  };
+  return { ...base, ...inferFallbackNse(base, medellinModes) };
+}
 function googleMapsUrl(row) {
   if (row.googleMapsUri) return row.googleMapsUri;
   const placeId = row.placeId || row.googlePlaceId || row.google_place_id;
@@ -1264,6 +1418,7 @@ function debounce(fn, wait = 150) {
 
 function bindShellUI() {
   document.getElementById('logoutBtn')?.addEventListener('click', onLogout);
+  document.getElementById('adminRefreshBtn')?.addEventListener('click', () => loadAdminUsers());
 }
 
 function bindAuthUI() {
@@ -1277,12 +1432,21 @@ async function refreshSession() {
     const session = await authApi('/api/auth/session', { method: 'GET' });
     state.auth.authenticated = Boolean(session.authenticated && session.user);
     state.auth.user = session.authenticated ? session.user : null;
+    if (state.auth.user?.role === 'admin') {
+      await loadAdminUsers();
+    } else {
+      state.admin.users = [];
+      state.admin.error = '';
+    }
   } catch {
     state.auth.authenticated = false;
     state.auth.user = null;
+    state.admin.users = [];
+    state.admin.error = '';
   } finally {
     state.auth.checked = true;
     renderAuthUI();
+    renderAdminPanel();
   }
 }
 
@@ -1344,6 +1508,13 @@ function showAuthError(message) {
   renderAuthUI();
 }
 
+function formatDate(value) {
+  if (!value) return '—';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return String(value);
+  return new Intl.DateTimeFormat('es-CO', { dateStyle: 'medium', timeStyle: 'short' }).format(date);
+}
+
 function renderAuthUI() {
   const gate = document.getElementById('authGate');
   const sessionBar = document.getElementById('sessionBar');
@@ -1351,6 +1522,7 @@ function renderAuthUI() {
   const panel = document.getElementById('authPanel');
   if (sessionEmail) sessionEmail.textContent = state.auth.user?.email || '—';
   if (sessionBar) sessionBar.hidden = !state.auth.authenticated;
+  renderAdminPanel();
   if (state.auth.authenticated) {
     gate.hidden = true;
     return;
@@ -1358,6 +1530,101 @@ function renderAuthUI() {
   gate.hidden = false;
   panel.innerHTML = renderAuthPanel();
   bindRenderedAuthPanel();
+}
+
+function renderAdminPanel() {
+  const panel = document.getElementById('adminPanel');
+  const status = document.getElementById('adminStatus');
+  const list = document.getElementById('adminUsersList');
+  if (!panel || !status || !list) return;
+  const isAdmin = state.auth.authenticated && state.auth.user?.role === 'admin';
+  panel.hidden = !isAdmin;
+  if (!isAdmin) return;
+  status.textContent = state.admin.loading
+    ? 'Cargando usuarios…'
+    : state.admin.error
+      ? state.admin.error
+      : `${state.admin.users.length} usuarios registrados.`;
+  if (!state.admin.users.length) {
+    list.innerHTML = '<div class="admin-user-card"><strong>No hay usuarios todavía.</strong><span class="muted">Cuando alguien cree cuenta en MapCo aparecerá aquí.</span></div>';
+    return;
+  }
+  list.innerHTML = state.admin.users.map((user) => {
+    const disabled = state.admin.savingEmail === user.email ? 'disabled' : '';
+    const accessLabel = user.accessEnabled ? 'Acceso activo' : 'Acceso deshabilitado';
+    return `
+      <article class="admin-user-card">
+        <div class="admin-user-top">
+          <div>
+            <strong>${escapeHtml(user.email)}</strong>
+            <div class="muted">${user.verifiedAt ? `Verificado ${escapeHtml(formatDate(user.verifiedAt))}` : 'Pendiente de verificación'}</div>
+          </div>
+          <span class="pill ${user.accessEnabled ? 'approved_auto' : 'discard'}">${escapeHtml(accessLabel)}</span>
+        </div>
+        <div class="admin-user-controls">
+          <label>
+            Rol
+            <select data-admin-role="${escapeHtml(user.email)}" ${disabled}>
+              <option value="user" ${user.role === 'user' ? 'selected' : ''}>Usuario</option>
+              <option value="admin" ${user.role === 'admin' ? 'selected' : ''}>Admin</option>
+            </select>
+          </label>
+          <button class="${user.accessEnabled ? 'ghost-btn' : 'primary'}" type="button" data-admin-toggle="${escapeHtml(user.email)}" ${disabled}>${user.accessEnabled ? 'Deshabilitar' : 'Habilitar'}</button>
+        </div>
+      </article>
+    `;
+  }).join('');
+
+  list.querySelectorAll('[data-admin-toggle]').forEach((button) => {
+    button.addEventListener('click', async () => {
+      const email = button.getAttribute('data-admin-toggle');
+      const user = state.admin.users.find((item) => item.email === email);
+      if (!user) return;
+      await updateAdminUser(email, { accessEnabled: !user.accessEnabled });
+    });
+  });
+  list.querySelectorAll('[data-admin-role]').forEach((select) => {
+    select.addEventListener('change', async () => {
+      const email = select.getAttribute('data-admin-role');
+      await updateAdminUser(email, { role: select.value });
+    });
+  });
+}
+
+async function loadAdminUsers() {
+  if (!state.auth.authenticated || state.auth.user?.role !== 'admin') return;
+  state.admin.loading = true;
+  state.admin.error = '';
+  renderAdminPanel();
+  try {
+    const data = await authApi('/api/auth/admin/users', { method: 'GET' });
+    state.admin.users = Array.isArray(data.users) ? data.users : [];
+  } catch (error) {
+    state.admin.error = error.message || 'No pude cargar usuarios de MapCo.';
+  } finally {
+    state.admin.loading = false;
+    renderAdminPanel();
+  }
+}
+
+async function updateAdminUser(email, patch) {
+  if (!email) return;
+  state.admin.savingEmail = email;
+  state.admin.error = '';
+  renderAdminPanel();
+  try {
+    const data = await authApi('/api/auth/admin/users', {
+      method: 'PATCH',
+      body: JSON.stringify({ email, ...patch }),
+    });
+    const updated = data.user;
+    state.admin.users = state.admin.users.map((item) => item.email === updated.email ? updated : item);
+  } catch (error) {
+    state.admin.error = error.message || 'No pude actualizar ese usuario.';
+  } finally {
+    state.admin.savingEmail = '';
+    renderAdminPanel();
+  }
 }
 
 function renderAuthPanel() {

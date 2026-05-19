@@ -10,7 +10,7 @@ const DATA_PATH = process.env.STATUS_OVERVIEW_DATA_PATH || '/var/www/status.evin
 const PREFS_PATH = path.resolve(WORKDIR, 'data/status-notification-prefs.json');
 const STATE_PATH = path.resolve(WORKDIR, 'data/status-notification-state.json');
 const CONFIG_PATH = path.resolve(WORKDIR, 'data/status-notification-config.json');
-const DEFAULT_TARGET = '51904432138';
+const DEFAULT_TARGETS = ['51904432138'];
 const ALERT_REPEAT_WINDOW_MS = 6 * 60 * 60 * 1000;
 const STATUS_REPEAT_WINDOW_MS = 3 * 60 * 60 * 1000;
 const MAX_SUMMARY_ITEMS = 3;
@@ -72,7 +72,7 @@ function meaningForTone(tone) {
 
 function loadConfig() {
   return readJson(CONFIG_PATH, {
-    targetPhone: DEFAULT_TARGET,
+    targetPhones: DEFAULT_TARGETS,
     summaryHours: [8, 18],
   });
 }
@@ -93,6 +93,54 @@ function loadPrefs() {
 
 function normalizePhone(value) {
   return String(value || '').replace(/\D/g, '');
+}
+
+const EXCLUDED_STATUS_PATTERN = /\b(?:test|prueba|demo|qa|sandbox|lab)\b/i;
+
+function matchesExcludedStatusPattern(...values) {
+  const haystack = values.filter((value) => value != null).map((value) => String(value)).join(' ').trim();
+  return haystack ? EXCLUDED_STATUS_PATTERN.test(haystack) : false;
+}
+
+function isExcludedStatusStation(station = {}) {
+  return matchesExcludedStatusPattern(
+    station?.name,
+    station?.merchantName,
+    station?.merchantId,
+    station?.plazaName,
+    station?.address,
+    station?.locationText,
+    station?.summaryStatus,
+  );
+}
+
+function sanitizeStatusSnapshot(data = {}) {
+  const stations = Array.isArray(data?.stations) ? data.stations.filter((station) => !isExcludedStatusStation(station)) : [];
+  const stationIds = new Set(stations.map((station) => String(station?.id || '')).filter(Boolean));
+  const alerts = Array.isArray(data?.alerts)
+    ? data.alerts.filter((alert) => {
+      const stationId = String(alert?.stationId || '');
+      if (stationId && !stationIds.has(stationId)) return false;
+      return !matchesExcludedStatusPattern(alert?.title, alert?.detail, alert?.stationName);
+    })
+    : [];
+  const totals = {
+    stations: stations.length,
+    connectors: stations.reduce((sum, station) => sum + (Array.isArray(station?.connectors) ? station.connectors.length : 0), 0),
+    available: stations.filter((station) => station?.tone === 'available').length,
+    offline: stations.filter((station) => station?.tone === 'offline').length,
+    charging: stations.filter((station) => station?.tone === 'charging').length,
+    preparing: stations.filter((station) => station?.tone === 'preparing').length,
+    faulted: stations.filter((station) => station?.tone === 'faulted').length,
+  };
+  return { ...data, stations, alerts, totals };
+}
+
+function resolveTargetPhones(config = {}) {
+  const source = Array.isArray(config.targetPhones) && config.targetPhones.length
+    ? config.targetPhones
+    : [config.targetPhone || DEFAULT_TARGETS[0]];
+  return [...new Set(source.map(normalizePhone).filter(Boolean))];
 }
 
 function isMuted(pref, field) {
@@ -224,11 +272,10 @@ async function sendButtonsMessage(to, body) {
 }
 
 async function runCheck() {
-  const data = readJson(DATA_PATH, {});
+  const data = sanitizeStatusSnapshot(readJson(DATA_PATH, {}));
   const config = loadConfig();
-  const targetPhone = normalizePhone(config.targetPhone || DEFAULT_TARGET);
+  const targetPhones = resolveTargetPhones(config);
   const prefs = loadPrefs();
-  const pref = prefs.users?.[targetPhone] || {};
   const state = loadState();
   state.notifiedAlerts = cleanupHistory(state.notifiedAlerts, ALERT_REPEAT_WINDOW_MS);
   state.notifiedStatuses = cleanupHistory(state.notifiedStatuses, STATUS_REPEAT_WINDOW_MS);
@@ -238,51 +285,66 @@ async function runCheck() {
 
   for (const event of events) {
     if (event.kind === 'alert') {
-      if (isMuted(pref, 'muteAlertsUntil')) continue;
       if (state.notifiedAlerts[event.key]) continue;
-      await sendButtonsMessage(targetPhone, buildAlertMessage(event));
-      state.notifiedAlerts[event.key] = nowIso();
-      sent.push({ type: 'alert', key: event.key });
+      let delivered = false;
+      for (const targetPhone of targetPhones) {
+        const pref = prefs.users?.[targetPhone] || {};
+        if (isMuted(pref, 'muteAlertsUntil')) continue;
+        await sendButtonsMessage(targetPhone, buildAlertMessage(event));
+        delivered = true;
+        sent.push({ type: 'alert', key: event.key, to: targetPhone });
+      }
+      if (delivered) state.notifiedAlerts[event.key] = nowIso();
     }
 
     if (event.kind === 'status') {
-      if (isMuted(pref, 'muteStatusUntil')) continue;
       if (state.notifiedStatuses[event.key]) continue;
-      await sendButtonsMessage(targetPhone, buildStatusMessage(event));
-      state.notifiedStatuses[event.key] = nowIso();
-      sent.push({ type: 'status', key: event.key });
+      let delivered = false;
+      for (const targetPhone of targetPhones) {
+        const pref = prefs.users?.[targetPhone] || {};
+        if (isMuted(pref, 'muteStatusUntil')) continue;
+        await sendButtonsMessage(targetPhone, buildStatusMessage(event));
+        delivered = true;
+        sent.push({ type: 'status', key: event.key, to: targetPhone });
+      }
+      if (delivered) state.notifiedStatuses[event.key] = nowIso();
     }
   }
 
   state.lastGeneratedAt = data.generatedAt || null;
   state.stationTones = Object.fromEntries((data.stations || []).map((station) => [station.id, station.tone || 'available']));
   writeJson(STATE_PATH, state);
-  return { ok: true, mode: 'check', targetPhone, sent, generatedAt: data.generatedAt || null };
+  return { ok: true, mode: 'check', targetPhones, sent, generatedAt: data.generatedAt || null };
 }
 
 async function runSummary() {
-  const data = readJson(DATA_PATH, {});
+  const data = sanitizeStatusSnapshot(readJson(DATA_PATH, {}));
   const config = loadConfig();
-  const targetPhone = normalizePhone(config.targetPhone || DEFAULT_TARGET);
+  const targetPhones = resolveTargetPhones(config);
   const prefs = loadPrefs();
-  const pref = prefs.users?.[targetPhone] || {};
   const state = loadState();
   const now = new Date();
-  const summaryKey = `${now.getUTCFullYear()}-${String(now.getUTCMonth() + 1).padStart(2, '0')}-${String(now.getUTCDate()).padStart(2, '0')}:${mode}:${slot}`;
+  const summaryBaseKey = `${now.getUTCFullYear()}-${String(now.getUTCMonth() + 1).padStart(2, '0')}-${String(now.getUTCDate()).padStart(2, '0')}:${mode}:${slot}`;
+  const sent = [];
+  let delivered = false;
 
-  if (isMuted(pref, 'muteStatusUntil') && isMuted(pref, 'muteAlertsUntil')) {
-    return { ok: true, mode: 'summary', skipped: 'all_muted' };
-  }
-
-  if (state.summaries?.[summaryKey]) {
-    return { ok: true, mode: 'summary', skipped: 'already_sent', summaryKey };
-  }
-
-  await sendButtonsMessage(targetPhone, buildSummaryMessage(data));
   state.summaries ||= {};
-  state.summaries[summaryKey] = nowIso();
-  writeJson(STATE_PATH, state);
-  return { ok: true, mode: 'summary', slot, targetPhone, summaryKey };
+
+  for (const targetPhone of targetPhones) {
+    const pref = prefs.users?.[targetPhone] || {};
+    const summaryKey = `${summaryBaseKey}:${targetPhone}`;
+    if (isMuted(pref, 'muteStatusUntil') && isMuted(pref, 'muteAlertsUntil')) continue;
+    if (state.summaries?.[summaryKey]) continue;
+    await sendButtonsMessage(targetPhone, buildSummaryMessage(data));
+    state.summaries[summaryKey] = nowIso();
+    delivered = true;
+    sent.push({ to: targetPhone, summaryKey });
+  }
+
+  if (delivered) writeJson(STATE_PATH, state);
+  return delivered
+    ? { ok: true, mode: 'summary', slot, targetPhones, sent }
+    : { ok: true, mode: 'summary', skipped: 'already_sent_or_muted', targetPhones };
 }
 
 const result = mode === 'summary' ? await runSummary() : await runCheck();

@@ -3,94 +3,17 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>EVINKA Overview · Reportes</title>
+  <title>EVINKA Status Center</title>
   <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate" />
   <meta http-equiv="Pragma" content="no-cache" />
   <meta http-equiv="Expires" content="0" />
-  <link rel="icon" type="image/png" href="./assets/favicon-light.png?v=20260512a" media="(prefers-color-scheme: light)" />
-  <link rel="icon" type="image/png" href="./assets/favicon-dark.png?v=20260512a" media="(prefers-color-scheme: dark)" />
-  <link rel="shortcut icon" type="image/png" href="./assets/favicon-light.png?v=20260512a" />
-  
-  <link rel="stylesheet" href="./styles.css?v=20260425b" />
+  <link rel="icon" type="image/png" href="./assets/favicon.png?v=20260518statusfix2" />
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" crossorigin="" />
+  <link rel="stylesheet" href="./styles.css?v=20260518statusfix2" />
 </head>
 <body>
-  <div class="shell">
-    <aside class="sidebar">
-      <div>
-        <div class="brand-block">
-          <div class="brand-title">EVINKA</div>
-          <div class="brand-subtitle">Status Center</div>
-        </div>
-        <nav class="nav">
-          <a class="nav-link" href="./index.html">Resumen</a><a class="nav-link" href="./ubicaciones.html">Ubicaciones</a><a class="nav-link" href="./incidentes.html">Incidentes</a><a class="nav-link" href="./mapa.html">Mapa</a><a class="nav-link active" href="./reportes.html">Reportes</a><a class="nav-link" href="./alertas.html">Alertas</a>
-        </nav>
-      </div>
-      <div class="sidebar-note">
-        <div class="small-label">EVINKA</div>
-        <strong>Network status</strong>
-      </div>
-    </aside>
-
-    <main class="main">
-      <header class="page-header card">
-        <div>
-          <div class="eyebrow">EVINKA CONNECT</div>
-          <h1>Reportes</h1>
-        </div>
-      </header>
-
-      <section class="status-strip card">
-        <div><span>Última actualización</span><strong>2026-04-28T01:08:17.054Z</strong></div>
-        <div><span>Operador</span><strong>julio.campos@evinka.tech</strong></div>
-        <div><span>Refresh</span><strong>30s</strong></div>
-        <div><span>Estado</span><strong>Snapshot desactualizado</strong></div>
-      </section>
-
-      <section class="card"><div class="section-title">Reporte mensual</div><p class="section-copy">Transacciones, energía, recaudación y CO₂ evitado.</p><section class="reports-grid"><article class="report-card-item">
-          <strong>RZ - Grifosa</strong>
-          <div class="muted">Transacciones: 141</div>
-          <div class="muted">Energía: 2195.43 kWh</div>
-          <div class="muted">Recaudación: S/ 4223.7</div>
-          <div class="muted">CO₂ evitado: 3598.47</div>
-        </article><article class="report-card-item">
-          <strong>RZ - KIO</strong>
-          <div class="muted">Transacciones: 27</div>
-          <div class="muted">Energía: 20.85 kWh</div>
-          <div class="muted">Recaudación: S/ 39.6</div>
-          <div class="muted">CO₂ evitado: 34.17</div>
-        </article><article class="report-card-item">
-          <strong>EVINKA</strong>
-          <div class="muted">Transacciones: 12</div>
-          <div class="muted">Energía: 300 kWh</div>
-          <div class="muted">Recaudación: S/ </div>
-          <div class="muted">CO₂ evitado: 491.67</div>
-        </article><article class="report-card-item">
-          <strong>LA CABRERA</strong>
-          <div class="muted">Transacciones: 20</div>
-          <div class="muted">Energía: 138.64 kWh</div>
-          <div class="muted">Recaudación: S/ </div>
-          <div class="muted">CO₂ evitado: 227.32</div>
-        </article><article class="report-card-item">
-          <strong>Universidad Cientifica del Sur</strong>
-          <div class="muted">Transacciones: 15</div>
-          <div class="muted">Energía: 191.13 kWh</div>
-          <div class="muted">Recaudación: S/ </div>
-          <div class="muted">CO₂ evitado: 313.29</div>
-        </article><article class="report-card-item">
-          <strong>mk3zzgx</strong>
-          <div class="muted">Transacciones: 5</div>
-          <div class="muted">Energía: 34.66 kWh</div>
-          <div class="muted">Recaudación: S/ </div>
-          <div class="muted">CO₂ evitado: 56.83</div>
-        </article><article class="report-card-item">
-          <strong>mzirexs</strong>
-          <div class="muted">Transacciones: 5</div>
-          <div class="muted">Energía: 34.66 kWh</div>
-          <div class="muted">Recaudación: S/ </div>
-          <div class="muted">CO₂ evitado: 56.83</div>
-        </article></section></section>
-    </main>
-  </div>
-  
+  <div id="app"></div>
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" crossorigin=""></script>
+  <script src="./app.js?v=20260518statusfix2"></script>
 </body>
 </html>

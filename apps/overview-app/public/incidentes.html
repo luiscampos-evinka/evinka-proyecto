@@ -3,170 +3,17 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>EVINKA Overview · Incidentes</title>
+  <title>EVINKA Status Center</title>
   <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate" />
   <meta http-equiv="Pragma" content="no-cache" />
   <meta http-equiv="Expires" content="0" />
-  <link rel="icon" type="image/png" href="./assets/favicon-light.png?v=20260512a" media="(prefers-color-scheme: light)" />
-  <link rel="icon" type="image/png" href="./assets/favicon-dark.png?v=20260512a" media="(prefers-color-scheme: dark)" />
-  <link rel="shortcut icon" type="image/png" href="./assets/favicon-light.png?v=20260512a" />
-  
-  <link rel="stylesheet" href="./styles.css?v=20260425b" />
+  <link rel="icon" type="image/png" href="./assets/favicon.png?v=20260518statusfix2" />
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" crossorigin="" />
+  <link rel="stylesheet" href="./styles.css?v=20260518statusfix2" />
 </head>
 <body>
-  <div class="shell">
-    <aside class="sidebar">
-      <div>
-        <div class="brand-block">
-          <div class="brand-title">EVINKA</div>
-          <div class="brand-subtitle">Status Center</div>
-        </div>
-        <nav class="nav">
-          <a class="nav-link" href="./index.html">Resumen</a><a class="nav-link" href="./ubicaciones.html">Ubicaciones</a><a class="nav-link active" href="./incidentes.html">Incidentes</a><a class="nav-link" href="./mapa.html">Mapa</a><a class="nav-link" href="./reportes.html">Reportes</a><a class="nav-link" href="./alertas.html">Alertas</a>
-        </nav>
-      </div>
-      <div class="sidebar-note">
-        <div class="small-label">EVINKA</div>
-        <strong>Network status</strong>
-      </div>
-    </aside>
-
-    <main class="main">
-      <header class="page-header card">
-        <div>
-          <div class="eyebrow">EVINKA CONNECT</div>
-          <h1>Incidentes</h1>
-        </div>
-      </header>
-
-      <section class="status-strip card">
-        <div><span>Última actualización</span><strong>2026-04-28T01:08:17.054Z</strong></div>
-        <div><span>Operador</span><strong>julio.campos@evinka.tech</strong></div>
-        <div><span>Refresh</span><strong>30s</strong></div>
-        <div><span>Estado</span><strong>Snapshot desactualizado</strong></div>
-      </section>
-
-      
-    <section class="two-col">
-      <article class="card"><div class="section-title row-between"><span>Estaciones caídas</span><span class="badge">8</span></div><p class="section-copy">Equipos sin comunicación o heartbeat atrasado.</p><div class="list-stack"><article class="list-card">
-          <div class="row-between"><strong>20KW - EVinka</strong><span class="status-chip offline">Offline por heartbeat vencido</span></div>
-          <div class="muted">PE,Lima</div>
-          <div class="muted">Heartbeat: 21/04/26, 11:53 p. m.</div>
-          <div class="muted">Último boot: 21/04/26, 8:51 p. m.</div>
-        </article><article class="list-card">
-          <div class="row-between"><strong>60KW - EVinka</strong><span class="status-chip offline">Offline · solo detectado en digest</span></div>
-          <div class="muted">Panamericana sur km87</div>
-          <div class="muted">Heartbeat: Sin dato</div>
-          <div class="muted">Último boot: Sin dato</div>
-        </article><article class="list-card">
-          <div class="row-between"><strong>Cargador 1 - villa 1 </strong><span class="status-chip offline">Offline · solo detectado en digest</span></div>
-          <div class="muted">Campus villa 1 - ucsur</div>
-          <div class="muted">Heartbeat: Sin dato</div>
-          <div class="muted">Último boot: Sin dato</div>
-        </article><article class="list-card">
-          <div class="row-between"><strong>Cargador 1 - Villa 2</strong><span class="status-chip offline">Offline · solo detectado en digest</span></div>
-          <div class="muted">Campus villa 2 - ucsur</div>
-          <div class="muted">Heartbeat: Sin dato</div>
-          <div class="muted">Último boot: Sin dato</div>
-        </article><article class="list-card">
-          <div class="row-between"><strong>Chincha_Casa_Andina</strong><span class="status-chip offline">Offline · solo detectado en digest</span></div>
-          <div class="muted">Km 197.5, Ctra. Panamericana Sur, Chincha Alta 11702</div>
-          <div class="muted">Heartbeat: Sin dato</div>
-          <div class="muted">Último boot: Sin dato</div>
-        </article><article class="list-card">
-          <div class="row-between"><strong>La cabrera - Miraflores</strong><span class="status-chip offline">Offline por heartbeat vencido</span></div>
-          <div class="muted">PE,Lima</div>
-          <div class="muted">Heartbeat: 21/04/26, 11:19 p. m.</div>
-          <div class="muted">Último boot: 21/04/26, 9:37 p. m.</div>
-        </article><article class="list-card">
-          <div class="row-between"><strong>La cabrera - Surco</strong><span class="status-chip offline">Offline por heartbeat vencido</span></div>
-          <div class="muted">PE,Lima</div>
-          <div class="muted">Heartbeat: 21/04/26, 11:19 p. m.</div>
-          <div class="muted">Último boot: 21/04/26, 2:17 p. m.</div>
-        </article><article class="list-card">
-          <div class="row-between"><strong>Paracas_Casa_Andina</strong><span class="status-chip offline">Offline · solo detectado en digest</span></div>
-          <div class="muted">KM 18.5 de la Autopista Pisco Paracas, Paracas, Ica, Perú</div>
-          <div class="muted">Heartbeat: Sin dato</div>
-          <div class="muted">Último boot: Sin dato</div>
-        </article></div></article>
-      <article class="card"><div class="section-title row-between"><span>Alertas específicas</span><span class="badge">2</span></div><p class="section-copy">Alarmas activas agrupadas por estación.</p><div class="list-stack"><article class="list-card">
-          <div class="row-between"><strong>High Charge Failure</strong><span class="status-chip faulted">Faulted</span></div>
-          <div class="muted">High charge failure rate</div>
-          <div class="muted">svtnrka</div>
-          <div class="muted">21/04/26, 3:00 a. m.</div>
-        </article><article class="list-card">
-          <div class="row-between"><strong>Módulo anómalo</strong><span class="status-chip faulted">Faulted</span></div>
-          <div class="muted">PFC unbalance, PFC bus overvoltage</div>
-          <div class="muted">svtnrka · Conector 1</div>
-          <div class="muted">20/04/26, 5:18 p. m.</div>
-        </article></div></article>
-    </section>
-    <section class="wide-layout">
-      <article class="card"><div class="section-title">Cargadores</div><p class="section-copy">Vista operativa por estación y conector.</p><div class="table-wrap"><table>
-      <thead><tr><th>Estación</th><th>Ubicación</th><th>Equipo</th><th>Heartbeat</th><th>Boot</th><th>Conectores</th></tr></thead>
-      <tbody><tr>
-          <td><strong>20KW - EVinka</strong><div class="muted">svtnrka · RZ - KIO</div><span class="status-chip offline">Offline por heartbeat vencido</span></td>
-          <td><strong>Grifo Kio</strong><div class="muted">Carretera Panamericana Sur Km 25.6</div></td>
-          <td><strong>DonarEV DC20-DNR-GBT</strong><div class="muted">FW: 2.2.5 (Build May 10 2025 10:51:39)</div></td>
-          <td><strong>21/04/26, 11:53 p. m.</strong><div class="muted">20.024274775s</div></td>
-          <td>21/04/26, 8:51 p. m.</td>
-          <td><div class="connector-line"><span class="status-chip available">Conector 1 · Available</span><span class="muted-inline">NoError</span></div></td>
-        </tr><tr>
-          <td><strong>60KW - EVinka</strong><div class="muted">uzqdh4r · RZ - Grifosa</div><span class="status-chip offline">Offline · solo detectado en digest</span></td>
-          <td><strong>PetroPerú - Grifosa</strong><div class="muted">Panamericana sur km87</div></td>
-          <td><strong>Sin dato </strong><div class="muted">FW: Sin dato</div></td>
-          <td><strong>Sin dato</strong><div class="muted"></div></td>
-          <td>Sin dato</td>
-          <td><span class="muted">Sin conectores</span></td>
-        </tr><tr>
-          <td><strong>Cargador 1 - villa 1 </strong><div class="muted">e2ypr6x · Universidad Cientifica del Sur</div><span class="status-chip offline">Offline · solo detectado en digest</span></td>
-          <td><strong>Villa 1 - ucsur</strong><div class="muted">Campus villa 1 - ucsur</div></td>
-          <td><strong>Sin dato </strong><div class="muted">FW: Sin dato</div></td>
-          <td><strong>Sin dato</strong><div class="muted"></div></td>
-          <td>Sin dato</td>
-          <td><span class="muted">Sin conectores</span></td>
-        </tr><tr>
-          <td><strong>Cargador 1 - Villa 2</strong><div class="muted">fbe6rgf · Universidad Cientifica del Sur</div><span class="status-chip offline">Offline · solo detectado en digest</span></td>
-          <td><strong>Villa 2 - ucsur</strong><div class="muted">Campus villa 2 - ucsur</div></td>
-          <td><strong>Sin dato </strong><div class="muted">FW: Sin dato</div></td>
-          <td><strong>Sin dato</strong><div class="muted"></div></td>
-          <td>Sin dato</td>
-          <td><span class="muted">Sin conectores</span></td>
-        </tr><tr>
-          <td><strong>Chincha_Casa_Andina</strong><div class="muted">mvuxehh · EVINKA</div><span class="status-chip offline">Offline · solo detectado en digest</span></td>
-          <td><strong>Casa Andina Chincha</strong><div class="muted">Km 197.5, Ctra. Panamericana Sur, Chincha Alta 11702</div></td>
-          <td><strong>Sin dato </strong><div class="muted">FW: Sin dato</div></td>
-          <td><strong>Sin dato</strong><div class="muted"></div></td>
-          <td>Sin dato</td>
-          <td><span class="muted">Sin conectores</span></td>
-        </tr><tr>
-          <td><strong>La cabrera - Miraflores</strong><div class="muted">podjhrl · LA CABRERA</div><span class="status-chip offline">Offline por heartbeat vencido</span></td>
-          <td><strong>La Cabrera - Miraflores</strong><div class="muted">Calle Enrique Palacios 140, Miraflores 15074 Miraflores LIMA, 18</div></td>
-          <td><strong>Donar ThaiFast-7-V9</strong><div class="muted">FW: Ver pw2.4.0 r</div></td>
-          <td><strong>21/04/26, 11:19 p. m.</strong><div class="muted">19.98431811s</div></td>
-          <td>21/04/26, 9:37 p. m.</td>
-          <td><div class="connector-line"><span class="status-chip available">Conector 1 · Available</span><span class="muted-inline">NoError</span></div></td>
-        </tr><tr>
-          <td><strong>La cabrera - Surco</strong><div class="muted">mzirexs · LA CABRERA</div><span class="status-chip offline">Offline por heartbeat vencido</span></td>
-          <td><strong>La Cabrera - El polo </strong><div class="muted">Jr. El Polo 284, en el distrito de Santiago de Surco, Lima, Perú</div></td>
-          <td><strong>Donar ThaiFast-7-V4</strong><div class="muted">FW: Ver w2.3.9 r</div></td>
-          <td><strong>21/04/26, 11:19 p. m.</strong><div class="muted">19.953924574s</div></td>
-          <td>21/04/26, 2:17 p. m.</td>
-          <td><div class="connector-line"><span class="status-chip available">Conector 1 · Available</span><span class="muted-inline">NoError</span></div></td>
-        </tr><tr>
-          <td><strong>Paracas_Casa_Andina</strong><div class="muted">xjjdfmb · EVINKA</div><span class="status-chip offline">Offline · solo detectado en digest</span></td>
-          <td><strong>Casa Andina Paracas</strong><div class="muted">KM 18.5 de la Autopista Pisco Paracas, Paracas, Ica, Perú</div></td>
-          <td><strong>Sin dato </strong><div class="muted">FW: Sin dato</div></td>
-          <td><strong>Sin dato</strong><div class="muted"></div></td>
-          <td>Sin dato</td>
-          <td><span class="muted">Sin conectores</span></td>
-        </tr></tbody>
-    </table></div></article>
-      <article class="card narrow"><div class="section-title">Estado rápido</div><p class="section-copy">Salud general de la red y acciones inmediatas.</p><div class="info-stack"><div class="info-card"><div class="small-label">Salud operativa</div><div class="info-value">8 estación(es) offline</div><span class="status-chip offline">Offline</span></div><div class="info-card"><div class="small-label">Alertas activas</div><div class="info-value">2 alerta(s) pendientes</div><span class="status-chip faulted">Faulted</span></div><div class="info-card"><div class="small-label">Reporte mensual</div><div class="info-value">7 cortes listos</div><span class="status-chip preparing">Preparing</span></div></div></article>
-    </section>
-    
-    </main>
-  </div>
-  
+  <div id="app"></div>
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" crossorigin=""></script>
+  <script src="./app.js?v=20260518statusfix2"></script>
 </body>
 </html>

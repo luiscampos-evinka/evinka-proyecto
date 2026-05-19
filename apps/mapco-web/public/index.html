@@ -11,7 +11,7 @@
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" crossorigin="" />
   <link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.css" />
   <link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.Default.css" />
-  <link rel="stylesheet" href="./styles.css?v=20260508auth8" />
+  <link rel="stylesheet" href="./styles.css?v=20260515admin1" />
 </head>
 <body>
   <div id="map"></div>
@@ -56,6 +56,18 @@
       <button id="logoutBtn" class="ghost-btn" type="button">Cerrar sesión</button>
     </div>
 
+    <section class="panel admin-panel" id="adminPanel" hidden>
+      <div class="admin-panel-head">
+        <div>
+          <div class="section-title">Admin MapCo</div>
+          <p class="muted">Aprueba accesos y asigna administradores desde MapCo.</p>
+        </div>
+        <button id="adminRefreshBtn" class="ghost-btn" type="button">Actualizar</button>
+      </div>
+      <div id="adminStatus" class="muted"></div>
+      <div id="adminUsersList" class="stack"></div>
+    </section>
+
     <section class="filters">
       <div class="section-title">Filtros</div>
       <label>
@@ -80,15 +92,18 @@
         </select>
       </label>
       <label>
-        Nivel socioeconómico
+        Estrato socioeconómico
         <select id="nseFilter">
           <option value="all">Todos</option>
-          <option value="alto">Alto</option>
-          <option value="medio">Medio</option>
-          <option value="bajo">Bajo</option>
+          <option value="1">Estrato 1</option>
+          <option value="2">Estrato 2</option>
+          <option value="3">Estrato 3</option>
+          <option value="4">Estrato 4</option>
+          <option value="5">Estrato 5</option>
+          <option value="6">Estrato 6</option>
           <option value="sin_dato">Sin dato</option>
         </select>
-        <span class="filter-note">Se activa con capa oficial de estrato del entorno. Por ahora puede aparecer sin datos hasta terminar la carga por ciudad.</span>
+        <span class="filter-note" id="nseFilterNote">Se activa con capa oficial de estrato del entorno. Por ahora puede aparecer sin datos hasta terminar la carga por ciudad.</span>
       </label>
       <label>
         Potencial
@@ -212,6 +227,6 @@
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" crossorigin=""></script>
   <script src="https://unpkg.com/leaflet.markercluster@1.5.3/dist/leaflet.markercluster.js"></script>
   <script src="./vendor/exceljs.min.js"></script>
-  <script src="./app.js?v=20260508auth8"></script>
+  <script src="./app.js?v=20260515admin1"></script>
 </body>
 </html>

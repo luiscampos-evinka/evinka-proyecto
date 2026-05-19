@@ -135,6 +135,10 @@ export class MicrosoftGraphClient {
     });
   }
 
+  async getEvent(eventId) {
+    return this.request(`/users/${encodeURIComponent(this.senderEmail)}/events/${encodeURIComponent(eventId)}`);
+  }
+
   async updateEvent(eventId, patch) {
     return this.request(`/users/${encodeURIComponent(this.senderEmail)}/events/${encodeURIComponent(eventId)}`, {
       method: 'PATCH',

@@ -61,6 +61,7 @@ const state = {
     rows: [],
     lastSyncAt: null,
     sourceExport: null,
+    sourceSummary: null,
     usageSources: null,
     query: '',
     segment: 'all',
@@ -362,7 +363,7 @@ async function loadData() {
   try {
     const response = await fetch(`${DATA_URL}?ts=${Date.now()}`, { cache: 'no-store' });
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
-    state.data = await response.json();
+    state.data = sanitizeStatusData(await response.json());
     state.lastRefreshAt = new Date().toISOString();
   } catch (error) {
     state.error = `No pude cargar el dataset (${error.message}).`;
@@ -765,6 +766,7 @@ async function loadUsers({ silent = false, force = false } = {}) {
     state.users.rows = Array.isArray(data.users) ? data.users : [];
     state.users.lastSyncAt = data.lastSyncAt || null;
     state.users.sourceExport = data.sourceExport || null;
+    state.users.sourceSummary = data.sourceSummary || null;
     state.users.usageSources = data.usageSources || null;
     if (!state.users.rows.some((item) => item.id === state.users.selectedId)) {
       state.users.selectedId = state.users.rows[0]?.id || '';
@@ -1176,6 +1178,67 @@ function uniqueAlerts(alerts = []) {
     const key = `${alert.title}|${alert.detail}|${alert.stationId}|${alert.connectorId || ''}|${alert.createdLabel || ''}`;
     return arr.findIndex((item) => `${item.title}|${item.detail}|${item.stationId}|${item.connectorId || ''}|${item.createdLabel || ''}` === key) === index;
   });
+}
+
+const EXCLUDED_STATUS_PATTERNS = [
+  /\btest\b/i,
+  /\bprueba\b/i,
+  /\bdemo\b/i,
+  /\bqa\b/i,
+  /\bsandbox\b/i,
+  /\blab\b/i,
+];
+
+function matchesExcludedStatusPattern(...values) {
+  const haystack = values
+    .flatMap((value) => value == null ? [] : [String(value)])
+    .join(' ')
+    .trim();
+  return haystack ? EXCLUDED_STATUS_PATTERNS.some((pattern) => pattern.test(haystack)) : false;
+}
+
+function isExcludedStatusStation(station = {}) {
+  return matchesExcludedStatusPattern(
+    station?.name,
+    station?.merchantName,
+    station?.merchantId,
+    station?.plazaName,
+    station?.address,
+    station?.locationText,
+    station?.summaryStatus,
+  );
+}
+
+function sanitizeStatusData(data = {}) {
+  const stations = Array.isArray(data?.stations) ? data.stations.filter((station) => !isExcludedStatusStation(station)) : [];
+  const stationIds = new Set(stations.map((station) => String(station?.id || '')).filter(Boolean));
+  const alerts = Array.isArray(data?.alerts)
+    ? data.alerts.filter((alert) => {
+      const stationId = String(alert?.stationId || '');
+      if (stationId && !stationIds.has(stationId)) return false;
+      return !matchesExcludedStatusPattern(alert?.title, alert?.detail, alert?.stationName);
+    })
+    : [];
+  const incidents = Array.isArray(data?.incidents)
+    ? data.incidents.filter((incident) => {
+      const stationId = String(incident?.stationId || '');
+      if (stationId && !stationIds.has(stationId)) return false;
+      return !matchesExcludedStatusPattern(incident?.title, incident?.location, incident?.stationName);
+    })
+    : [];
+  const plazas = Array.isArray(data?.plazas)
+    ? data.plazas.filter((plaza) => !matchesExcludedStatusPattern(plaza?.name, plaza?.merchantName, plaza?.merchantId, plaza?.address))
+    : [];
+  const totals = {
+    stations: stations.length,
+    connectors: stations.reduce((sum, station) => sum + (Array.isArray(station?.connectors) ? station.connectors.length : 0), 0),
+    available: stations.filter((station) => station?.tone === 'available').length,
+    offline: stations.filter((station) => station?.tone === 'offline').length,
+    charging: stations.filter((station) => station?.tone === 'charging').length,
+    preparing: stations.filter((station) => station?.tone === 'preparing').length,
+    faulted: stations.filter((station) => station?.tone === 'faulted').length,
+  };
+  return { ...data, stations, alerts, incidents, plazas, totals };
 }
 
 function totalsSummary() {
@@ -2435,8 +2498,8 @@ function renderUsersView() {
       <section class="panel">
         <div class="section-head">
           <div>
-            <div class="section-title">Usuarios EVINKA Connect</div>
-            <p class="section-copy">Estoy cargando la base de usuarios y su uso detectado.</p>
+            <div class="section-title">Usuarios EVINKA</div>
+            <p class="section-copy">Estoy cargando Connect, cotizador y chatbot con su uso detectado.</p>
           </div>
           <span class="badge">…</span>
         </div>
@@ -2459,8 +2522,8 @@ function renderUsersView() {
     <section class="panel">
       <div class="section-head">
         <div>
-          <div class="section-title">Usuarios EVINKA Connect</div>
-          <p class="section-copy">Vista pensada para marketing: eliges un usuario y ves su ficha de contacto junto con el uso detectado en EVINKA Connect.</p>
+          <div class="section-title">Usuarios EVINKA</div>
+          <p class="section-copy">Vista pensada para marketing: une contactos de Connect, cotizador y chatbot para revisar ficha, contacto y uso detectado.</p>
         </div>
         <span class="badge">${totalRows.length}</span>
       </div>
@@ -2494,11 +2557,12 @@ function renderUsersView() {
         ].map(([value, label]) => `<button type="button" class="tab-btn ${state.users.segment === value ? 'active' : ''}" data-user-segment="${escapeHtml(value)}">${escapeHtml(label)}</button>`).join('')}
       </div>
 
-      ${state.users.sourceExport ? `
+      ${(state.users.sourceExport || state.users.sourceSummary) ? `
         <div class="status-strip" style="margin-bottom:16px;">
-          <div><span>Export origen</span><strong>${escapeHtml(state.users.sourceExport.id || 'Sin dato')}</strong></div>
-          <div><span>Rango</span><strong>${escapeHtml(formatDateTime(state.users.sourceExport.startTime))} → ${escapeHtml(formatDateTime(state.users.sourceExport.endTime))}</strong></div>
-          <div><span>Filas export</span><strong>${escapeHtml(String(state.users.sourceExport.recordCount ?? totalRows.length))}</strong></div>
+          <div><span>Export Connect</span><strong>${escapeHtml(state.users.sourceExport?.id || 'Sin dato')}</strong></div>
+          <div><span>Connect</span><strong>${escapeHtml(String(state.users.sourceSummary?.connect || 0))}</strong></div>
+          <div><span>Cotizador</span><strong>${escapeHtml(String(state.users.sourceSummary?.cotizador || 0))}</strong></div>
+          <div><span>Chatbot</span><strong>${escapeHtml(String(state.users.sourceSummary?.chatbot || 0))}</strong></div>
           <div><span>Con uso detectado</span><strong>${escapeHtml(String(withUsage))}</strong></div>
         </div>
       ` : ''}
@@ -2528,6 +2592,7 @@ function renderUsersView() {
                 <div>
                   <strong>${escapeHtml(row.fullName || row.email || row.phone || 'Sin nombre')}</strong>
                   <div class="table-muted">${escapeHtml(row.email || row.phone || row.identity || 'Sin dato de contacto')}</div>
+                  <div class="table-muted">Origen: ${escapeHtml((row.sourceLabels || []).join(' · ') || 'Sin origen')}</div>
                 </div>
                 <div class="user-card-meta">
                   <span class="mini-chip ${userMarketingSegment(row) === 'active' ? 'available' : userMarketingSegment(row) === 'dormant' ? 'offline' : 'neutral'}">${escapeHtml(userMarketingLabel(row))}</span>
@@ -2553,6 +2618,8 @@ function renderUsersView() {
               <div class="stat-box"><div class="stat-label">Teléfono</div><div class="stat-value users-detail-value">${escapeHtml(selected.phone || 'Sin teléfono')}</div></div>
               <div class="stat-box"><div class="stat-label">Documento</div><div class="stat-value users-detail-value">${escapeHtml(selected.identity || 'Sin documento')}</div></div>
               <div class="stat-box"><div class="stat-label">Registro</div><div class="stat-value users-detail-value">${escapeHtml(formatDateTime(selected.createdAt))}</div></div>
+              <div class="stat-box"><div class="stat-label">Origen</div><div class="stat-value users-detail-value">${escapeHtml((selected.sourceLabels || []).join(' · ') || 'Sin origen')}</div></div>
+              <div class="stat-box"><div class="stat-label">País</div><div class="stat-value users-detail-value">${escapeHtml(selected.countryCode || 'Sin dato')}</div></div>
             </div>
 
             <div class="users-usage-grid">

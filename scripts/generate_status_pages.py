@@ -6,15 +6,33 @@ ROOT = Path('/root/.openclaw/workspace/apps/overview-app/public')
 DATA = json.loads((ROOT / 'data' / 'overview-data.json').read_text(encoding='utf-8'))
 
 
+EXCLUDED_STATUS_TERMS = ('test', 'prueba', 'demo', 'sandbox', 'qa', 'lab')
+
+
+def matches_excluded_status_term(*values):
+    text = ' '.join(str(value or '') for value in values).strip().lower()
+    if not text:
+        return False
+    return any(term in text for term in EXCLUDED_STATUS_TERMS)
+
+
 def is_test_station(station):
-    name = (station.get('name') or '').strip().lower()
-    return name.startswith('lab')
+    return matches_excluded_status_term(
+        station.get('name'),
+        station.get('merchantName'),
+        station.get('merchantId'),
+        station.get('plazaName'),
+        station.get('address'),
+        station.get('locationText'),
+        station.get('summaryStatus'),
+    )
 
 
 FILTERED_STATIONS = [s for s in DATA.get('stations', []) if not is_test_station(s)]
 FILTERED_STATION_IDS = {s.get('id') for s in FILTERED_STATIONS}
-FILTERED_ALERTS_RAW = [a for a in DATA.get('alerts', []) if not a.get('stationId') or a.get('stationId') in FILTERED_STATION_IDS]
-FILTERED_INCIDENTS = [i for i in DATA.get('incidents', []) if not i.get('stationId') or i.get('stationId') in FILTERED_STATION_IDS]
+FILTERED_ALERTS_RAW = [a for a in DATA.get('alerts', []) if (not a.get('stationId') or a.get('stationId') in FILTERED_STATION_IDS) and not matches_excluded_status_term(a.get('title'), a.get('detail'), a.get('stationName'))]
+FILTERED_INCIDENTS = [i for i in DATA.get('incidents', []) if (not i.get('stationId') or i.get('stationId') in FILTERED_STATION_IDS) and not matches_excluded_status_term(i.get('title'), i.get('location'), i.get('stationName'))]
+FILTERED_PLAZAS = [p for p in DATA.get('plazas', []) if not matches_excluded_status_term(p.get('name'), p.get('merchantName'), p.get('merchantId'), p.get('address'))]
 FILTERED_TOTALS = {
     'stations': len(FILTERED_STATIONS),
     'connectors': sum(len(s.get('connectors', [])) for s in FILTERED_STATIONS),
@@ -201,7 +219,7 @@ def stations_table():
 
 
 def plazas_grid():
-    plazas = DATA.get('plazas', [])
+    plazas = FILTERED_PLAZAS
     if not plazas:
         return '<div class="empty">No se encontraron plazas.</div>'
     cards = ''.join(

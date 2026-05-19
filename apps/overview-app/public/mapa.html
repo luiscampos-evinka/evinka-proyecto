@@ -3,112 +3,17 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>EVINKA Overview · Mapa</title>
+  <title>EVINKA Status Center</title>
   <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate" />
   <meta http-equiv="Pragma" content="no-cache" />
   <meta http-equiv="Expires" content="0" />
-  <link rel="icon" type="image/png" href="./assets/favicon-light.png?v=20260512a" media="(prefers-color-scheme: light)" />
-  <link rel="icon" type="image/png" href="./assets/favicon-dark.png?v=20260512a" media="(prefers-color-scheme: dark)" />
-  <link rel="shortcut icon" type="image/png" href="./assets/favicon-light.png?v=20260512a" />
+  <link rel="icon" type="image/png" href="./assets/favicon.png?v=20260518statusfix2" />
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" crossorigin="" />
-  <link rel="stylesheet" href="./styles.css?v=20260425b" />
+  <link rel="stylesheet" href="./styles.css?v=20260518statusfix2" />
 </head>
 <body>
-  <div class="shell">
-    <aside class="sidebar">
-      <div>
-        <div class="brand-block">
-          <div class="brand-title">EVINKA</div>
-          <div class="brand-subtitle">Status Center</div>
-        </div>
-        <nav class="nav">
-          <a class="nav-link" href="./index.html">Resumen</a><a class="nav-link" href="./ubicaciones.html">Ubicaciones</a><a class="nav-link" href="./incidentes.html">Incidentes</a><a class="nav-link active" href="./mapa.html">Mapa</a><a class="nav-link" href="./reportes.html">Reportes</a><a class="nav-link" href="./alertas.html">Alertas</a>
-        </nav>
-      </div>
-      <div class="sidebar-note">
-        <div class="small-label">EVINKA</div>
-        <strong>Network status</strong>
-      </div>
-    </aside>
-
-    <main class="main">
-      <header class="page-header card">
-        <div>
-          <div class="eyebrow">EVINKA CONNECT</div>
-          <h1>Mapa</h1>
-        </div>
-      </header>
-
-      <section class="status-strip card">
-        <div><span>Última actualización</span><strong>2026-04-28T01:08:17.054Z</strong></div>
-        <div><span>Operador</span><strong>julio.campos@evinka.tech</strong></div>
-        <div><span>Refresh</span><strong>30s</strong></div>
-        <div><span>Estado</span><strong>Snapshot desactualizado</strong></div>
-      </section>
-
-      <section class="card"><div class="section-title">Mapa del Perú</div><p class="section-copy">Todas las estaciones geolocalizadas con su estatus en vivo.</p><div class="map-legend"><div class="legend-item"><span class="legend-dot available"></span><span>Disponibles <strong>0</strong></span></div><div class="legend-item"><span class="legend-dot offline"></span><span>Offline <strong>8</strong></span></div><div class="legend-item"><span class="legend-dot faulted"></span><span>Fallando <strong>0</strong></span></div><div class="legend-item"><span class="legend-dot preparing"></span><span>Preparing <strong>0</strong></span></div><div class="legend-item"><span class="legend-dot charging"></span><span>Charging <strong>0</strong></span></div></div><div id="map"></div></section><section class="card"><div class="section-title">Ubicaciones en mapa</div><p class="section-copy">Haz clic en una ubicación para centrar el mapa en ese cargador.</p><div class="map-location-list"><button type="button" class="map-location-item" data-station-id="mvuxehh">
-          <div class="map-location-top"><strong>Chincha_Casa_Andina</strong><span class="status-chip offline">Offline · solo detectado en digest</span></div>
-          <div class="muted">Casa Andina Chincha</div>
-          <div class="muted">Km 197.5, Ctra. Panamericana Sur, Chincha Alta 11702</div>
-        </button><button type="button" class="map-location-item" data-station-id="xjjdfmb">
-          <div class="map-location-top"><strong>Paracas_Casa_Andina</strong><span class="status-chip offline">Offline · solo detectado en digest</span></div>
-          <div class="muted">Casa Andina Paracas</div>
-          <div class="muted">KM 18.5 de la Autopista Pisco Paracas, Paracas, Ica, Perú</div>
-        </button><button type="button" class="map-location-item" data-station-id="svtnrka">
-          <div class="map-location-top"><strong>20KW - EVinka</strong><span class="status-chip offline">Offline por heartbeat vencido</span></div>
-          <div class="muted">Grifo Kio</div>
-          <div class="muted">Carretera Panamericana Sur Km 25.6</div>
-        </button><button type="button" class="map-location-item" data-station-id="mzirexs">
-          <div class="map-location-top"><strong>La cabrera - Surco</strong><span class="status-chip offline">Offline por heartbeat vencido</span></div>
-          <div class="muted">La Cabrera - El polo </div>
-          <div class="muted">Jr. El Polo 284, en el distrito de Santiago de Surco, Lima, Perú</div>
-        </button><button type="button" class="map-location-item" data-station-id="podjhrl">
-          <div class="map-location-top"><strong>La cabrera - Miraflores</strong><span class="status-chip offline">Offline por heartbeat vencido</span></div>
-          <div class="muted">La Cabrera - Miraflores</div>
-          <div class="muted">Calle Enrique Palacios 140, Miraflores 15074 Miraflores LIMA, 18</div>
-        </button><button type="button" class="map-location-item" data-station-id="uzqdh4r">
-          <div class="map-location-top"><strong>60KW - EVinka</strong><span class="status-chip offline">Offline · solo detectado en digest</span></div>
-          <div class="muted">PetroPerú - Grifosa</div>
-          <div class="muted">Panamericana sur km87</div>
-        </button><button type="button" class="map-location-item" data-station-id="e2ypr6x">
-          <div class="map-location-top"><strong>Cargador 1 - villa 1 </strong><span class="status-chip offline">Offline · solo detectado en digest</span></div>
-          <div class="muted">Villa 1 - ucsur</div>
-          <div class="muted">Campus villa 1 - ucsur</div>
-        </button><button type="button" class="map-location-item" data-station-id="fbe6rgf">
-          <div class="map-location-top"><strong>Cargador 1 - Villa 2</strong><span class="status-chip offline">Offline · solo detectado en digest</span></div>
-          <div class="muted">Villa 2 - ucsur</div>
-          <div class="muted">Campus villa 2 - ucsur</div>
-        </button></div></section>
-    </main>
-  </div>
+  <div id="app"></div>
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" crossorigin=""></script>
-<script>
-const stations = [{"id": "svtnrka", "name": "20KW - EVinka", "merchantId": "RZ - KIO", "merchantName": "RZ - KIO", "plazaId": "buaalgo", "vendor": "DonarEV", "model": "DC20-DNR-GBT", "firmware": "2.2.5 (Build May 10 2025 10:51:39)", "serialNumber": "", "locationText": "PE,Lima", "lastHeartbeatTime": "2026-04-22T04:53:13.993501Z", "lastBootTime": "2026-04-22T01:51:56.49794Z", "actualHeartbeatInterval": "20.024274775s", "connectors": [{"connectorId": 1, "type": "CCS2", "errorCode": "NoError", "status": "Available", "tone": "available", "updatedAt": "2026-04-21T19:54:14.970553Z"}], "plazaName": "Grifo Kio", "address": "Carretera Panamericana Sur Km 25.6", "latitude": -12.25215666531525, "longitude": -76.92865133470308, "imageUrl": "https://storage.googleapis.com/evinka-connect-plazaimage-abls9v6f1rixul3ag4ozpxdgoxbeg55t/buaalgo", "tone": "offline", "summaryStatus": "Offline por heartbeat vencido", "heartbeatLabel": "21/04/26, 11:53 p. m.", "bootLabel": "21/04/26, 8:51 p. m.", "inferredLocation": false}, {"id": "uzqdh4r", "name": "60KW - EVinka", "merchantId": "RZ - Grifosa", "merchantName": "RZ - Grifosa", "plazaId": "a9dxxzk", "plazaName": "PetroPer\u00fa - Grifosa", "address": "Panamericana sur km87", "latitude": -12.682766634118785, "longitude": -76.64992972883582, "imageUrl": "https://storage.googleapis.com/evinka-connect-plazaimage-abls9v6f1rixul3ag4ozpxdgoxbeg55t/d2ee056aff8c488d8b006ec3ec74ccfc/uploadfile", "vendor": "", "model": "", "firmware": "", "serialNumber": "", "locationText": "", "lastHeartbeatTime": null, "lastBootTime": null, "actualHeartbeatInterval": "", "connectors": [], "tone": "offline", "summaryStatus": "Offline \u00b7 solo detectado en digest", "heartbeatLabel": null, "bootLabel": null, "inferredLocation": false}, {"id": "e2ypr6x", "name": "Cargador 1 - villa 1 ", "merchantId": "Universidad Cientifica del Sur", "merchantName": "Universidad Cientifica del Sur", "plazaId": "ayq7mub", "plazaName": "Villa 1 - ucsur", "address": "Campus villa 1 - ucsur", "latitude": -12.219784701760119, "longitude": -76.97811240238599, "imageUrl": "https://storage.googleapis.com/evinka-connect-plazaimage-abls9v6f1rixul3ag4ozpxdgoxbeg55t/ayq7mub", "vendor": "", "model": "", "firmware": "", "serialNumber": "", "locationText": "", "lastHeartbeatTime": null, "lastBootTime": null, "actualHeartbeatInterval": "", "connectors": [], "tone": "offline", "summaryStatus": "Offline \u00b7 solo detectado en digest", "heartbeatLabel": null, "bootLabel": null, "inferredLocation": false}, {"id": "fbe6rgf", "name": "Cargador 1 - Villa 2", "merchantId": "Universidad Cientifica del Sur", "merchantName": "Universidad Cientifica del Sur", "plazaId": "derived-villa-2-ucsur", "plazaName": "Villa 2 - ucsur", "address": "Campus villa 2 - ucsur", "latitude": -12.22197123051052, "longitude": -76.9770693694316, "imageUrl": "", "vendor": "", "model": "", "firmware": "", "serialNumber": "", "locationText": "", "lastHeartbeatTime": null, "lastBootTime": null, "actualHeartbeatInterval": "", "connectors": [], "tone": "offline", "summaryStatus": "Offline \u00b7 solo detectado en digest", "heartbeatLabel": null, "bootLabel": null, "inferredLocation": false}, {"id": "mvuxehh", "name": "Chincha_Casa_Andina", "merchantId": "EVINKA", "merchantName": "EVINKA", "plazaId": "btdpolk", "plazaName": "Casa Andina Chincha", "address": "Km 197.5, Ctra. Panamericana Sur, Chincha Alta 11702", "latitude": -13.414014, "longitude": -76.149337, "imageUrl": "https://storage.googleapis.com/evinka-connect-plazaimage-abls9v6f1rixul3ag4ozpxdgoxbeg55t/e5094e2a27844857a601126a800525ce/uploadfile", "vendor": "", "model": "", "firmware": "", "serialNumber": "", "locationText": "", "lastHeartbeatTime": null, "lastBootTime": null, "actualHeartbeatInterval": "", "connectors": [], "tone": "offline", "summaryStatus": "Offline \u00b7 solo detectado en digest", "heartbeatLabel": null, "bootLabel": null, "inferredLocation": true}, {"id": "podjhrl", "name": "La cabrera - Miraflores", "merchantId": "LA CABRERA", "merchantName": "LA CABRERA", "plazaId": "yzx6ht7", "vendor": "Donar", "model": "ThaiFast-7-V9", "firmware": "Ver pw2.4.0 r", "serialNumber": "", "locationText": "PE,Lima", "lastHeartbeatTime": "2026-04-22T04:19:58.614908Z", "lastBootTime": "2026-04-22T02:37:58.789391Z", "actualHeartbeatInterval": "19.98431811s", "connectors": [{"connectorId": 1, "type": "", "errorCode": "NoError", "status": "Available", "tone": "available", "updatedAt": "2026-04-22T03:37:22.357765Z"}], "plazaName": "La Cabrera - Miraflores", "address": "Calle Enrique Palacios 140, Miraflores 15074 Miraflores LIMA, 18", "latitude": -12.116903, "longitude": -77.029903, "imageUrl": "https://storage.googleapis.com/evinka-connect-plazaimage-abls9v6f1rixul3ag4ozpxdgoxbeg55t/yzx6ht7", "tone": "offline", "summaryStatus": "Offline por heartbeat vencido", "heartbeatLabel": "21/04/26, 11:19 p. m.", "bootLabel": "21/04/26, 9:37 p. m.", "inferredLocation": false}, {"id": "mzirexs", "name": "La cabrera - Surco", "merchantId": "LA CABRERA", "merchantName": "LA CABRERA", "plazaId": "mk3zzgx", "vendor": "Donar", "model": "ThaiFast-7-V4", "firmware": "Ver w2.3.9 r", "serialNumber": "20240619T2B00079", "locationText": "PE,Lima", "lastHeartbeatTime": "2026-04-22T04:19:50.877551Z", "lastBootTime": "2026-04-21T19:17:47.484292Z", "actualHeartbeatInterval": "19.953924574s", "connectors": [{"connectorId": 1, "type": "AC Type2", "errorCode": "NoError", "status": "Available", "tone": "available", "updatedAt": "2026-04-22T03:44:16.6655Z"}], "plazaName": "La Cabrera - El polo ", "address": "Jr. El Polo 284, en el distrito de Santiago de Surco, Lima, Per\u00fa", "latitude": -12.107236, "longitude": -76.973967, "imageUrl": "https://storage.googleapis.com/evinka-connect-plazaimage-abls9v6f1rixul3ag4ozpxdgoxbeg55t/mk3zzgx", "tone": "offline", "summaryStatus": "Offline por heartbeat vencido", "heartbeatLabel": "21/04/26, 11:19 p. m.", "bootLabel": "21/04/26, 2:17 p. m.", "inferredLocation": false}, {"id": "xjjdfmb", "name": "Paracas_Casa_Andina", "merchantId": "EVINKA", "merchantName": "EVINKA", "plazaId": "", "plazaName": "Casa Andina Paracas", "address": "KM 18.5 de la Autopista Pisco Paracas, Paracas, Ica, Per\u00fa", "latitude": -13.80531, "longitude": -76.24541, "imageUrl": "", "vendor": "", "model": "", "firmware": "", "serialNumber": "", "locationText": "", "lastHeartbeatTime": null, "lastBootTime": null, "actualHeartbeatInterval": "", "connectors": [], "tone": "offline", "summaryStatus": "Offline \u00b7 solo detectado en digest", "heartbeatLabel": null, "bootLabel": null, "inferredLocation": false}];
-const map = L.map('map', { zoomControl: true }).setView([-12.3, -76.8], 6);
-const markersById = new Map();
-L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { attribution: '&copy; OpenStreetMap contributors' }).addTo(map);
-const bounds = [];
-for (const s of stations) {
-  const color = { available:'#25c27b', charging:'#2d6cdf', preparing:'#f0c86f', offline:'#111111', faulted:'#d84c4c' }[s.tone] || '#98a7ba';
-  const marker = L.circleMarker([s.latitude, s.longitude], { radius: 9, color, fillColor: color, fillOpacity: .95, weight: 2 })
-    .addTo(map)
-    .bindPopup(`<strong>${s.name || ''}</strong><br />${s.plazaName || ''}<br />${s.address || ''}<br />Estado: ${s.summaryStatus || ''}`);
-  markersById.set(s.id, marker);
-  bounds.push([s.latitude, s.longitude]);
-}
-if (bounds.length) map.fitBounds(bounds, { padding: [24, 24] });
-for (const button of document.querySelectorAll('.map-location-item')) {
-  button.addEventListener('click', () => {
-    const id = button.dataset.stationId;
-    const marker = markersById.get(id);
-    if (!marker) return;
-    const latlng = marker.getLatLng();
-    map.flyTo(latlng, 15, { duration: 0.8 });
-    marker.openPopup();
-    document.querySelectorAll('.map-location-item').forEach(el => el.classList.remove('active'));
-    button.classList.add('active');
-  });
-}
-</script>
+  <script src="./app.js?v=20260518statusfix2"></script>
 </body>
 </html>

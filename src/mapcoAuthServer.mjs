@@ -160,6 +160,10 @@ function normalizeRole(value = '') {
   return String(value || '').trim().toLowerCase() === 'admin' ? 'admin' : 'user';
 }
 
+function isAdmin(user = null) {
+  return normalizeRole(user?.role || 'user') === 'admin';
+}
+
 function userAccessEnabled(user) {
   return user?.accessEnabled !== false;
 }
@@ -286,6 +290,19 @@ function sessionPayload(user, trustedDevice) {
       verifiedAt: user.verifiedAt,
     },
     trustedDevice: Boolean(trustedDevice),
+  };
+}
+
+function buildManagedUserPayload(user) {
+  return {
+    id: user.id,
+    email: user.email,
+    role: normalizeRole(user.role || 'user'),
+    accessEnabled: userAccessEnabled(user),
+    verifiedAt: user.verifiedAt || null,
+    createdAt: user.createdAt || null,
+    updatedAt: user.updatedAt || null,
+    otpEmails: Array.isArray(user.otpEmails) ? user.otpEmails : [],
   };
 }
 
@@ -487,6 +504,15 @@ const server = http.createServer(async (req, res) => {
       return sendJson(res, 200, ctx ? sessionPayload(ctx.user, ctx.trustedDevice) : { authenticated: false }, baseHeaders);
     }
 
+    if (req.method === 'GET' && url.pathname === '/api/auth/admin/users') {
+      const db = loadDb();
+      const ctx = getUserFromSession(db, req);
+      if (!ctx?.user) return sendJson(res, 401, { error: 'not_authenticated', message: 'Debes iniciar sesión.' }, baseHeaders);
+      if (!isAdmin(ctx.user)) return sendJson(res, 403, { error: 'forbidden', message: 'Solo administradores de MapCo pueden ver usuarios.' }, baseHeaders);
+      const users = db.users.map(buildManagedUserPayload).sort((a, b) => String(a.email || '').localeCompare(String(b.email || '')));
+      return sendJson(res, 200, { users }, baseHeaders);
+    }
+
     if (req.method === 'POST' && url.pathname === '/api/auth/logout') {
       const db = loadDb();
       const session = findSession(db, req);
@@ -500,6 +526,31 @@ const server = http.createServer(async (req, res) => {
 
     const body = await readJsonBody(req);
     const userAgent = req.headers['user-agent'] || 'unknown-device';
+
+    if (req.method === 'PATCH' && url.pathname === '/api/auth/admin/users') {
+      const db = loadDb();
+      const ctx = getUserFromSession(db, req);
+      if (!ctx?.user) return sendJson(res, 401, { error: 'not_authenticated', message: 'Debes iniciar sesión.' }, baseHeaders);
+      if (!isAdmin(ctx.user)) return sendJson(res, 403, { error: 'forbidden', message: 'Solo administradores de MapCo pueden actualizar usuarios.' }, baseHeaders);
+
+      const email = normalizeEmail(body.email);
+      if (!email) return sendJson(res, 400, { error: 'missing_email', message: 'Falta el correo del usuario.' }, baseHeaders);
+      const user = findUserByEmail(db, email);
+      if (!user) return sendJson(res, 404, { error: 'user_not_found', message: 'No encontré ese usuario en MapCo.' }, baseHeaders);
+
+      const nextRole = body.role == null ? normalizeRole(user.role || 'user') : normalizeRole(body.role);
+      const nextAccessEnabled = body.accessEnabled == null ? userAccessEnabled(user) : Boolean(body.accessEnabled);
+      user.role = nextRole;
+      user.accessEnabled = nextAccessEnabled;
+      user.updatedAt = new Date().toISOString();
+
+      if (!nextAccessEnabled) {
+        db.sessions = db.sessions.filter((item) => item.userId !== user.id);
+      }
+
+      saveDb(db);
+      return sendJson(res, 200, { ok: true, user: buildManagedUserPayload(user) }, baseHeaders);
+    }
 
     if (req.method === 'POST' && url.pathname === '/api/auth/register/start') {
       const email = normalizeEmail(body.email);

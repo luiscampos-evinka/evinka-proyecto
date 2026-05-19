@@ -6,6 +6,7 @@ import os from 'node:os';
 import { execFileSync } from 'node:child_process';
 import ExcelJS from 'exceljs';
 import { loadEnv, requiredEnv } from './config.mjs';
+import { appendAccessAuditLog, readAccessAuditLogs } from './accessAudit.mjs';
 import { SupabaseRest } from './supabase.mjs';
 import { MicrosoftGraphClient } from './microsoftGraph.mjs';
 
@@ -22,10 +23,14 @@ const STATUS_PREFS_PATH = process.env.STATUS_PREFS_PATH || '/root/.openclaw/work
 const STATUS_NOTIFICATION_CONFIG_PATH = process.env.STATUS_NOTIFICATION_CONFIG_PATH || '/root/.openclaw/workspace/data/status-notification-config.json';
 const STATUS_EXPORTS_CACHE_PATH = process.env.STATUS_EXPORTS_CACHE_PATH || '/root/.openclaw/workspace/data/status-exports-cache.json';
 const STATUS_CONNECT_USERS_CACHE_PATH = process.env.STATUS_CONNECT_USERS_CACHE_PATH || '/root/.openclaw/workspace/data/status-connect-users-cache.json';
+const STATUS_COTIZADOR_CLIENTS_PATH = process.env.STATUS_COTIZADOR_CLIENTS_PATH || '/root/.openclaw/workspace/apps/cotizador-web/data/clients.json';
 const STATUS_AUDIT_QUOTES_PATH = process.env.STATUS_AUDIT_QUOTES_PATH || '/root/.openclaw/workspace/apps/cotizador-web/data/quotes.json';
 const STATUS_AUDIT_INSTALLATION_ORDERS_PATH = process.env.STATUS_AUDIT_INSTALLATION_ORDERS_PATH || '/root/.openclaw/workspace/apps/cotizador-web/data/installation-orders.json';
 const STATUS_AUDIT_TECH_VISITS_PATH = process.env.STATUS_AUDIT_TECH_VISITS_PATH || '/root/.openclaw/workspace/apps/cotizador-web/data/tech-visits.json';
 const STATUS_AUDIT_CONFORMITIES_PATH = process.env.STATUS_AUDIT_CONFORMITIES_PATH || '/root/.openclaw/workspace/apps/cotizador-web/data/conformities.json';
+const STATUS_AUDIT_COTIZADOR_SESSIONS_PATH = process.env.STATUS_AUDIT_COTIZADOR_SESSIONS_PATH || '/root/.openclaw/workspace/apps/cotizador-web/data/sessions.json';
+const STATUS_AUDIT_ADVISOR_SESSIONS_PATH = process.env.STATUS_AUDIT_ADVISOR_SESSIONS_PATH || '/root/.openclaw/workspace/apps/advisor-inbox/data/sessions.json';
+const STATUS_AUDIT_OPERATIONAL_USERS_PATH = process.env.STATUS_AUDIT_OPERATIONAL_USERS_PATH || '/root/.openclaw/workspace/apps/cotizador-web/data/users.json';
 const STATUS_PERSONAL_DATA_OWNER_EMAIL = String(process.env.STATUS_PERSONAL_DATA_OWNER_EMAIL || 'lorena.vargas@evinka.tech').trim().toLowerCase();
 const AUDIT_LOG_LIMIT = Number(process.env.STATUS_AUDIT_LOG_LIMIT || 5000);
 const DEFAULT_TARGET_PHONE = '51904432138';
@@ -676,14 +681,20 @@ function pickUserValue(row = {}, keys = []) {
   return '';
 }
 
+function mergeUniqueStrings(...lists) {
+  return [...new Set(lists.flat().map((item) => String(item || '').trim()).filter(Boolean))];
+}
+
 function mergeUserRecords(prev = {}, next = {}) {
-  const keys = ['email', 'firstName', 'lastName', 'fullName', 'phone', 'identity', 'birthday', 'createdAt'];
+  const keys = ['email', 'firstName', 'lastName', 'fullName', 'phone', 'identity', 'birthday', 'createdAt', 'countryCode', 'sourceNote'];
   const merged = { ...prev };
   for (const key of keys) {
     const prevValue = String(prev?.[key] || '').trim();
     const nextValue = String(next?.[key] || '').trim();
     merged[key] = nextValue || prevValue || '';
   }
+  merged.sources = mergeUniqueStrings(prev?.sources || [], next?.sources || []);
+  merged.sourceLabels = mergeUniqueStrings(prev?.sourceLabels || [], next?.sourceLabels || []);
   return merged;
 }
 
@@ -706,7 +717,107 @@ function normalizeConnectUserRow(row = {}, index = 0) {
     identity,
     birthday,
     createdAt,
+    sources: ['connect'],
+    sourceLabels: ['Connect'],
+    sourceNote: 'EVINKA Connect',
+    countryCode: '',
   };
+}
+
+function normalizeSupplementUserRecord(record = {}, { source = 'extra', label = 'Extra', index = 0 } = {}) {
+  const email = normalizeEmail(
+    record.email
+    || record.correo_electronico
+    || record.correo
+    || record.correo_receptor
+    || record.email_cliente
+    || ''
+  );
+  const phone = String(
+    record.phone
+    || record.telefono
+    || record.telefono_principal
+    || record.telefono_cliente
+    || record.telefono_receptor
+    || record.celular
+    || ''
+  ).trim();
+  const fullName = normalizePersonName(
+    record.fullName
+    || record.full_name
+    || record.nombre_visible
+    || record.nombre_usuario
+    || record.nombre_cliente
+    || record.nombre_receptor
+    || record.firstName
+    || record.fullName
+    || ''
+  );
+  const firstName = normalizePersonName(record.firstName || record.first_name || '').split(' ')[0] || '';
+  const lastName = normalizePersonName(record.lastName || record.last_name || '').replace(/^\S+\s*/, '');
+  const identity = String(
+    record.identity
+    || record.documentNumber
+    || record.document_number
+    || record.documento
+    || record.documento_numero
+    || record.documentNumber
+    || ''
+  ).trim();
+  const createdAt = String(record.createdAt || record.created_at || record.updatedAt || '').trim();
+  const countryCode = String(record.countryCode || record.country_code || '').trim().toUpperCase();
+  return {
+    id: email || identity || phone || `${source}-${index + 1}`,
+    email,
+    firstName,
+    lastName,
+    fullName,
+    phone,
+    identity,
+    birthday: '',
+    createdAt,
+    sources: [source],
+    sourceLabels: [label],
+    sourceNote: label,
+    countryCode,
+  };
+}
+
+async function fetchChatbotUsersSnapshot() {
+  const [userRows, profileRows] = await Promise.all([
+    sb.select('usuarios', 'select=*').catch(() => []),
+    sb.select('perfiles_cliente', 'select=*').catch(() => []),
+  ]);
+  const mapped = [];
+  for (const row of Array.isArray(userRows) ? userRows : []) {
+    mapped.push(normalizeSupplementUserRecord(row, { source: 'chatbot', label: 'Chatbot', index: mapped.length }));
+  }
+  for (const row of Array.isArray(profileRows) ? profileRows : []) {
+    mapped.push(normalizeSupplementUserRecord(row, { source: 'chatbot', label: 'Chatbot', index: mapped.length }));
+  }
+  return mapped.filter((row) => row.email || row.phone || row.fullName || row.identity);
+}
+
+function fetchCotizadorClientSnapshot() {
+  const rows = readJsonFile(STATUS_COTIZADOR_CLIENTS_PATH, []);
+  return (Array.isArray(rows) ? rows : [])
+    .map((row, index) => normalizeSupplementUserRecord({
+      ...row,
+      identity: row.documentNumber,
+      createdAt: row.createdAt || row.updatedAt || '',
+      countryCode: row.countryCode || '',
+    }, { source: 'cotizador', label: 'Cotizador', index }))
+    .filter((row) => row.email || row.phone || row.fullName || row.identity);
+}
+
+function buildUsersSourceSummary(users = []) {
+  const summary = { connect: 0, cotizador: 0, chatbot: 0 };
+  for (const user of users) {
+    for (const source of user.sources || []) {
+      if (source in summary) summary[source] += 1;
+    }
+  }
+  return summary;
 }
 
 function parseWorkbookRows(buffer, prefix = 'evinka-export-') {
@@ -1109,13 +1220,20 @@ async function fetchConnectUsersSnapshot({ forceRefresh = false } = {}) {
     .map((row, index) => normalizeConnectUserRow(row, index))
     .filter((row) => row.email || row.phone || row.fullName || row.identity);
 
-  const deduped = [];
+  const extraSources = await Promise.allSettled([
+    Promise.resolve(fetchCotizadorClientSnapshot()),
+    fetchChatbotUsersSnapshot(),
+  ]);
+  const allRows = [
+    ...mapped,
+    ...extraSources.flatMap((result) => result.status === 'fulfilled' && Array.isArray(result.value) ? result.value : []),
+  ];
+
   const byKey = new Map();
-  for (const row of mapped) {
+  for (const row of allRows) {
     const key = row.email?.toLowerCase() || row.identity || row.phone || `${row.fullName}-${row.createdAt}`;
     if (!byKey.has(key)) {
       byKey.set(key, row);
-      deduped.push(row);
       continue;
     }
     const merged = mergeUserRecords(byKey.get(key), row);
@@ -1137,6 +1255,7 @@ async function fetchConnectUsersSnapshot({ forceRefresh = false } = {}) {
   const snapshot = {
     users: usersWithUsage,
     ...summarizeConnectUsers(usersWithUsage),
+    sourceSummary: buildUsersSourceSummary(usersWithUsage),
     lastSyncAt: new Date().toISOString(),
     sourceExport: {
       id: readyRow.id,
@@ -1366,11 +1485,122 @@ function appendAuditLog(db, {
 function auditPrototypeCatalog() {
   return [
     { key: 'status', label: 'Status' },
+    { key: 'accesos', label: 'Accesos' },
     { key: 'chatbot', label: 'Chatbot' },
     { key: 'cotizador', label: 'Cotizador' },
     { key: 'conformidad', label: 'Conformidad' },
     { key: 'mapa-publico', label: 'Mapa público' },
   ];
+}
+
+function readJsonObjectSafe(filePath) {
+  try {
+    const raw = fs.readFileSync(filePath, 'utf8');
+    const parsed = raw ? JSON.parse(raw) : {};
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
+function readOperationalUsers() {
+  return readJsonArraySafe(STATUS_AUDIT_OPERATIONAL_USERS_PATH).map((user) => ({
+    id: String(user.id || '').trim(),
+    name: normalizePersonName(user.name || ''),
+    email: normalizeEmail(user.email || ''),
+    role: normalizeUserRole(user.role || ''),
+    employeeCode: String(user.employeeCode || '').trim().toUpperCase(),
+    allowedCountries: Array.isArray(user.allowedCountries)
+      ? [...new Set(user.allowedCountries.map((item) => String(item || '').trim().toUpperCase()).filter(Boolean))]
+      : [],
+  }));
+}
+
+function buildAccessAuditEvents(logs = []) {
+  return logs.map((log) => {
+    const moduleName = String(log.module || 'operacion').trim().toLowerCase();
+    const moduleLabel = moduleName === 'asesor' ? 'Asesor' : moduleName === 'cotizador' ? 'Cotizador' : 'Operación';
+    const actorName = normalizePersonName(log.name || '') || prettifyEmailName(log.email || '') || log.employeeCode || 'Usuario operativo';
+    const action = String(log.action || '').trim().toLowerCase();
+    const status = String(log.status || 'success').trim().toLowerCase();
+    let verb = 'registró actividad';
+    if (action === 'login' && status === 'success') verb = 'inició sesión';
+    else if (action === 'login' && status === 'failed') verb = 'falló al iniciar sesión';
+    else if (action === 'login' && status === 'denied') verb = 'tuvo el acceso bloqueado';
+    else if (action === 'logout') verb = 'cerró sesión';
+    return {
+      id: `accesos:${log.id || randomId(8)}`,
+      prototype: 'accesos',
+      prototypeLabel: 'Accesos',
+      at: pickFirstDate(log.at),
+      message: `${actorName} ${verb} en ${moduleLabel}`,
+      status,
+      actorName,
+      targetName: moduleLabel,
+      detail: {
+        module: moduleName,
+        action,
+        status,
+        userId: String(log.userId || ''),
+        employeeCode: String(log.employeeCode || ''),
+        email: String(log.email || ''),
+        role: String(log.role || ''),
+        allowedCountries: Array.isArray(log.allowedCountries) ? log.allowedCountries : [],
+        ip: String(log.ip || ''),
+        userAgent: truncateAuditText(log.userAgent || '', 180),
+        reason: String(log.reason || ''),
+        meta: log.meta || {},
+      },
+    };
+  });
+}
+
+function buildOperationalSessionsSummary() {
+  const users = readOperationalUsers();
+  const userById = new Map(users.map((user) => [user.id, user]));
+  const definitions = [
+    { module: 'cotizador', path: STATUS_AUDIT_COTIZADOR_SESSIONS_PATH, label: 'Cotizador' },
+    { module: 'asesor', path: STATUS_AUDIT_ADVISOR_SESSIONS_PATH, label: 'Asesor' },
+  ];
+  return definitions.flatMap((definition) => {
+    const sessions = readJsonObjectSafe(definition.path);
+    return Object.entries(sessions).map(([token, session]) => {
+      const user = userById.get(String(session?.userId || '').trim()) || {};
+      return {
+        module: definition.module,
+        moduleLabel: definition.label,
+        tokenPreview: String(token || '').slice(0, 10),
+        userId: String(session?.userId || ''),
+        employeeCode: String(user.employeeCode || ''),
+        name: String(user.name || ''),
+        email: String(user.email || ''),
+        role: String(user.role || ''),
+        allowedCountries: Array.isArray(user.allowedCountries) ? user.allowedCountries : [],
+        createdAt: pickFirstDate(session?.createdAt),
+        expiresAt: pickFirstDate(session?.expiresAt),
+      };
+    });
+  }).sort((a, b) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime());
+}
+
+function revokeOperationalSessions({ module = '', userId = '' } = {}) {
+  const normalizedModule = String(module || '').trim().toLowerCase();
+  const targetPath = normalizedModule === 'asesor'
+    ? STATUS_AUDIT_ADVISOR_SESSIONS_PATH
+    : normalizedModule === 'cotizador'
+      ? STATUS_AUDIT_COTIZADOR_SESSIONS_PATH
+      : '';
+  if (!targetPath) return { ok: false, removed: 0 };
+  const sessions = readJsonObjectSafe(targetPath);
+  let removed = 0;
+  for (const [token, session] of Object.entries(sessions)) {
+    if (String(session?.userId || '') === String(userId || '')) {
+      delete sessions[token];
+      removed += 1;
+    }
+  }
+  writeJsonFile(targetPath, sessions);
+  return { ok: true, removed };
 }
 
 function capitalizeWord(value = '') {
@@ -1602,6 +1832,7 @@ function buildAuditFeed({ db, limit = 120, prototype = 'all' } = {}) {
 
   const allEvents = [
     ...buildStatusAuditEvents(db),
+    ...buildAccessAuditEvents(readAccessAuditLogs()),
     ...buildChatbotAuditEvents(techVisits),
     ...buildCotizadorAuditEvents(quotes),
     ...buildConformityAuditEvents(conformities, installationOrders),
@@ -2293,6 +2524,50 @@ const server = http.createServer(async (req, res) => {
       if (!requireAdmin(ctx, res, baseHeaders)) return;
       const users = db.users.map((user) => buildManagedUserPayload(db, user)).sort((a, b) => a.email.localeCompare(b.email));
       return sendJson(res, 200, { users }, baseHeaders);
+    }
+
+    if (req.method === 'GET' && url.pathname === '/api/auth/operational-sessions') {
+      const db = loadDb();
+      const ctx = getUserFromSession(db, req);
+      if (!requireAdmin(ctx, res, baseHeaders)) return;
+      const sessions = buildOperationalSessionsSummary();
+      return sendJson(res, 200, { sessions }, baseHeaders);
+    }
+
+    if (req.method === 'POST' && url.pathname === '/api/auth/operational-sessions/revoke') {
+      const db = loadDb();
+      const ctx = getUserFromSession(db, req);
+      if (!requireAdmin(ctx, res, baseHeaders)) return;
+      const body = await readJsonBody(req);
+      const module = String(body.module || '').trim().toLowerCase();
+      const userId = String(body.userId || '').trim();
+      if (!module || !userId) {
+        return sendJson(res, 400, { error: 'module y userId son obligatorios.' }, baseHeaders);
+      }
+      const result = revokeOperationalSessions({ module, userId });
+      if (!result.ok) {
+        return sendJson(res, 400, { error: 'Módulo inválido.' }, baseHeaders);
+      }
+      appendAccessAuditLog({
+        module,
+        action: 'revoke_sessions',
+        status: 'success',
+        userId,
+        email: ctx?.user?.email || '',
+        name: ctx?.user?.email || 'admin',
+        role: 'admin',
+        ip: clientIp(req),
+        userAgent: req.headers['user-agent'] || '',
+        reason: `revoked:${result.removed}`,
+        meta: { actorEmail: ctx?.user?.email || '' },
+      });
+      logAuditRequest(db, req, ctx, 'managed_user_updated', {
+        scope: 'admin-access',
+        target: `${module}:${userId}`,
+        meta: { action: 'revoke_operational_sessions', removed: result.removed },
+      });
+      saveDb(db);
+      return sendJson(res, 200, result, baseHeaders);
     }
 
     if (req.method === 'POST' && url.pathname === '/api/auth/admin/users') {
