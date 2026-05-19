@@ -1,0 +1,232 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="theme-color" content="#0b0d12" />
+  <title>MapPe · EVINKA</title>
+  <link rel="icon" type="image/png" href="./assets/favicon-light.png?v=20260512a" media="(prefers-color-scheme: light)" />
+  <link rel="icon" type="image/png" href="./assets/favicon-dark.png?v=20260512a" media="(prefers-color-scheme: dark)" />
+  <link rel="shortcut icon" type="image/png" href="./assets/favicon-dark.png?v=20260512a" />
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" crossorigin="" />
+  <link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.css" />
+  <link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.Default.css" />
+  <link rel="stylesheet" href="./styles.css?v=20260515admin1" />
+</head>
+<body>
+  <div id="map"></div>
+
+  <div class="auth-gate" id="authGate">
+    <div class="auth-backdrop"></div>
+    <section class="login-card card auth-card-status">
+      <div class="login-hero mapco-login-hero">
+        <div class="login-hero-copy">
+          <div class="eyebrow">EVINKA MAPPE</div>
+          <h1>Acceso corporativo a MapPe.</h1>
+          <p class="login-note">
+            Solo correos <strong>@evinka.tech</strong>. Los dispositivos nuevos se verifican con un código enviado por correo y luego quedan confiables.
+          </p>
+        </div>
+        <div class="kpi-row">
+          <div class="kpi-box"><span class="small">Dominio</span><strong>@evinka.tech</strong></div>
+          <div class="kpi-box"><span class="small">Dispositivo</span><strong>Confiable 30d</strong></div>
+          <div class="kpi-box"><span class="small">Verificación</span><strong>OTP 6 dígitos</strong></div>
+        </div>
+      </div>
+
+      <div class="login-form-wrap" id="authPanel"></div>
+    </section>
+  </div>
+
+  <aside class="sidebar card" id="sidebar">
+    <div class="brand">
+      <img src="./assets/logo-white.svg" alt="EVINKA" class="logo" />
+      <div>
+        <div class="eyebrow">EVINKA Prospecting</div>
+        <h1>MapPe</h1>
+        <p>Mapa comercial para detectar ubicaciones con potencial para infraestructura de carga en Lima.</p>
+      </div>
+    </div>
+
+    <div class="session-bar" id="sessionBar" hidden>
+      <div class="session-meta">
+        <span class="section-title">Sesión</span>
+        <strong id="sessionEmail">—</strong>
+      </div>
+      <button id="logoutBtn" class="ghost-btn" type="button">Cerrar sesión</button>
+    </div>
+
+    <section class="panel admin-panel" id="adminPanel" hidden>
+      <div class="admin-panel-head">
+        <div>
+          <div class="section-title">Admin MapPe</div>
+          <p class="muted">Aprueba accesos y asigna administradores desde MapPe.</p>
+        </div>
+        <button id="adminRefreshBtn" class="ghost-btn" type="button">Actualizar</button>
+      </div>
+      <div id="adminStatus" class="muted"></div>
+      <div id="adminUsersList" class="stack"></div>
+    </section>
+
+    <section class="filters">
+      <div class="section-title">Filtros</div>
+      <label>
+        Ciudad
+        <select id="cityFilter"></select>
+      </label>
+      <label>
+        <span id="divisionFilterLabel">Zona</span>
+        <select id="provinceFilter"></select>
+      </label>
+      <label>
+        Tipo de lugar
+        <select id="categoryFilter"></select>
+      </label>
+      <label>
+        Estado del dato
+        <select id="dataStateFilter">
+          <option value="all">Todos</option>
+          <option value="validated_any">Validado</option>
+          <option value="with_real_link">Con link real</option>
+          <option value="pending">Pendiente</option>
+        </select>
+      </label>
+      <label>
+        Nivel socioeconómico
+        <select id="nseFilter">
+          <option value="all">Todos</option>
+          <option value="1">Estrato 1</option>
+          <option value="2">Estrato 2</option>
+          <option value="3">Estrato 3</option>
+          <option value="4">Estrato 4</option>
+          <option value="5">Estrato 5</option>
+          <option value="6">Estrato 6</option>
+          <option value="sin_dato">Sin dato</option>
+        </select>
+        <span class="filter-note" id="nseFilterNote">Se activa con capa oficial de estrato del entorno. Por ahora puede aparecer sin datos hasta terminar la carga por ciudad.</span>
+      </label>
+      <label>
+        Potencial
+        <select id="viabilityFilter">
+          <option value="all">Todos</option>
+          <option value="high">Potencial alto</option>
+          <option value="medium">Potencial medio</option>
+          <option value="low">Potencial bajo</option>
+          <option value="discard">Sin potencial</option>
+        </select>
+      </label>
+      <label>
+        Buscar
+        <input id="searchInput" type="search" placeholder="Ej. Terpel, Éxito, Starbucks" />
+      </label>
+      <details class="advanced-filters">
+        <summary>Más filtros</summary>
+        <div class="advanced-filters-body">
+          <div class="switch-row">
+            <label class="check"><input id="publicOnlyFilter" type="checkbox" /> Solo aptos para carga pública</label>
+          </div>
+          <div class="switch-row">
+            <label class="check"><input id="premiumOnlyFilter" type="checkbox" /> Solo leads listos</label>
+          </div>
+          <div class="switch-row">
+            <label class="check"><input id="parkingFilter" type="checkbox" /> Solo con parking probable</label>
+          </div>
+          <label>
+            Distrito (UBIGEO)
+            <select id="ubigeoFilter"></select>
+            <span class="filter-note">Aquí este campo identifica el distrito del punto en Lima Metropolitana mediante referencia territorial/UBIGEO cuando esté disponible.</span>
+          </label>
+          <label>
+            Calidad interna
+            <select id="reviewFilter">
+              <option value="all">Todos</option>
+              <option value="approved_auto">Dato limpio</option>
+              <option value="review_light">Dato con duda</option>
+            </select>
+          </label>
+          <label>
+            Estado Google (detalle)
+            <select id="googleValidationFilter">
+              <option value="all">Todos</option>
+              <option value="validated">Validado</option>
+              <option value="validated_auto">Validado auto</option>
+              <option value="ambiguous">Ambiguo</option>
+              <option value="not_found">No encontrado</option>
+              <option value="no_match">Sin match</option>
+              <option value="with_real_link">Con link real Maps</option>
+            </select>
+          </label>
+          <label>
+            Prioridad comercial
+            <select id="premiumFilter">
+              <option value="all">Todos</option>
+              <option value="atacar_ya">Lead listo</option>
+              <option value="revisar">Validar</option>
+              <option value="descartar">No priorizar</option>
+            </select>
+          </label>
+          <label>
+            Prioridad de zona
+            <select id="superFilter">
+              <option value="all">Todos</option>
+              <option value="A">Prioridad territorial alta</option>
+              <option value="B">Prioridad territorial media</option>
+              <option value="C">Prioridad territorial baja</option>
+              <option value="descartar">Sin prioridad territorial</option>
+            </select>
+          </label>
+          <div class="switch-row">
+            <label class="check"><input id="mapsUriOnlyFilter" type="checkbox" /> Solo con link real de Google Maps</label>
+          </div>
+        </div>
+      </details>
+      <button id="resetBtn" class="primary" type="button">Limpiar filtros</button>
+    </section>
+
+    <section class="metrics" id="metrics"></section>
+
+    <section class="panel">
+      <div class="section-title">Ranking de marcas y grupos</div>
+      <div id="groupsList" class="stack"></div>
+    </section>
+
+    <section class="panel">
+      <div class="section-title">Calidad del dato</div>
+      <div id="qualitySummary" class="stack"></div>
+    </section>
+
+    <section class="panel">
+      <div class="section-title">Potencial del sitio</div>
+      <div id="viabilitySummary" class="stack"></div>
+    </section>
+
+    <section class="panel">
+      <div class="section-title">Estado comercial</div>
+      <div id="premiumSummary" class="stack"></div>
+    </section>
+
+    <section class="panel">
+      <div class="section-title">Prioridad territorial</div>
+      <div id="superSummary" class="stack"></div>
+    </section>
+  </aside>
+
+  <aside class="results card">
+    <div class="results-head">
+      <div>
+        <div class="section-title">Oportunidades detectadas</div>
+        <p id="resultsSummary" class="muted"></p>
+      </div>
+      <div class="results-actions">
+        <button id="exportExcelBtn" class="primary export-btn" type="button">Exportar estudio Excel</button>
+        <p id="exportStatus" class="muted export-status">Listo para exportar según filtros.</p>
+      </div>
+    </div>
+    <div id="locationsList" class="locations"></div>
+  </aside>
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" crossorigin=""></script>
+  <script src="https://unpkg.com/leaflet.markercluster@1.5.3/dist/leaflet.markercluster.js"></script>
+  <script src="./vendor/exceljs.min.js"></script>
+  <script src="./app.js?v=20260515admin1"></script>
+</body>
+</html>
