@@ -81,63 +81,63 @@ KIO_STATIONS = [
         'id': 'mappe-kio-service-plaza', 'name': 'SERVICE PLAZA KIO', 'canonicalName': 'SERVICE PLAZA KIO',
         'address': 'Carr. Panamericana Sur Km. 25.6, Lurín, Lima, Perú', 'district': 'Lurín', 'ubigeo': '150119',
         'lat': -12.2504172, 'lng': -76.9306974, 'googleMapsUri': 'https://g.page/kioserviceplaza?share',
-        'officialPhotoUrl': 'https://estacioneskio.com.pe/wp-content/uploads/KIO-LURIN-1-650x415.png', 'officialSourceUrl': 'https://estacioneskio.com.pe/encuentra-tu-kio-aqui/',
+        'officialPhotoUrl': '/assets/kio/KIO-LURIN-1.png', 'officialSourceUrl': 'https://estacioneskio.com.pe/encuentra-tu-kio-aqui/',
         'reference': 'Frente a la Refinería Conchán Petroperú, a 2 cuadras del Puente San Luis, en la Carretera Panamericana Sur.'
     },
     {
         'id': 'mappe-kio-virgen-de-las-nieves', 'name': 'KIO VIRGEN DE LAS NIEVES', 'canonicalName': 'KIO VIRGEN DE LAS NIEVES',
         'address': 'Carr. Central 2750, Ate, Lima 15476, Perú', 'district': 'Ate', 'ubigeo': '150103',
         'lat': -12.0089736, 'lng': -76.8629298, 'googleMapsUri': 'https://goo.gl/maps/DtyfA5iq5eLAmNDu5',
-        'officialPhotoUrl': 'https://estacioneskio.com.pe/wp-content/uploads/KIO-ESTRELLA-ANDINA-650x415.png', 'officialSourceUrl': 'https://estacioneskio.com.pe/encuentra-tu-kio-aqui/',
+        'officialPhotoUrl': '/assets/kio/estacion-virgen-de-las-nieves.jpg', 'officialSourceUrl': 'https://estacioneskio.com.pe/encuentra-tu-kio-aqui/',
         'reference': 'Paradero Estrella Andina, a 5 minutos de Plaza Vea en Santa Clara.'
     },
     {
         'id': 'mappe-kio-villa-hermosa', 'name': 'KIO VILLA HERMOSA', 'canonicalName': 'KIO VILLA HERMOSA',
         'address': 'Urb. Villa Hermosa Mz. G Lt. 1, Ate, Lima, Perú', 'district': 'Ate', 'ubigeo': '150103',
         'lat': -12.0087679, 'lng': -76.8317347, 'googleMapsUri': 'https://goo.gl/maps/87ia18eQtDt1giE36',
-        'officialPhotoUrl': 'https://estacioneskio.com.pe/wp-content/uploads/KIO-HUAYCAN-1-650x415.png', 'officialSourceUrl': 'https://estacioneskio.com.pe/encuentra-tu-kio-aqui/',
+        'officialPhotoUrl': '/assets/kio/estacion-villa-hermosa-1.png', 'officialSourceUrl': 'https://estacioneskio.com.pe/encuentra-tu-kio-aqui/',
         'reference': 'Entrada Huaycán, a menos de 3 minutos del Escuadrón F2.'
     },
     {
         'id': 'mappe-kio-santa-rosa', 'name': 'KIO SANTA ROSA', 'canonicalName': 'KIO SANTA ROSA',
         'address': 'Av. Los Castillos 340, Ate, Lima, Perú', 'district': 'Ate', 'ubigeo': '150103',
         'lat': -12.0629002, 'lng': -76.9694174, 'googleMapsUri': 'https://goo.gl/maps/Ecva5T93cJ7hbbuJ8',
-        'officialPhotoUrl': 'https://estacioneskio.com.pe/wp-content/uploads/KIO-ATE-650x415.png', 'officialSourceUrl': 'https://estacioneskio.com.pe/encuentra-tu-kio-aqui/',
+        'officialPhotoUrl': '/assets/kio/santarosa.jpg', 'officialSourceUrl': 'https://estacioneskio.com.pe/encuentra-tu-kio-aqui/',
         'reference': 'Altura del puente peatonal Santa Rosa de la Vía de Evitamiento.'
     },
     {
         'id': 'mappe-kio-punta-rocas', 'name': 'KIO PUNTA ROCAS', 'canonicalName': 'KIO PUNTA ROCAS',
         'address': 'Urb. Costa Azul, Punta Negra, Lima, Perú', 'district': 'Punta Negra', 'ubigeo': '150127',
         'lat': -12.3506116, 'lng': -76.8099274, 'googleMapsUri': 'https://goo.gl/maps/tCeL3d8EYZz6PdAEA',
-        'officialPhotoUrl': 'https://estacioneskio.com.pe/wp-content/uploads/KIO-PUNTA-ROCAS-650x415.png', 'officialSourceUrl': 'https://estacioneskio.com.pe/encuentra-tu-kio-aqui/',
+        'officialPhotoUrl': '/assets/kio/estacion-punta-rocas.png', 'officialSourceUrl': 'https://estacioneskio.com.pe/encuentra-tu-kio-aqui/',
         'reference': 'Altura del Arco de Punta Rocas, al ingreso de la playa.'
     },
     {
         'id': 'mappe-kio-pachacamac', 'name': 'KIO PACHACÁMAC', 'canonicalName': 'KIO PACHACÁMAC',
         'address': 'Av. Villena Mz. B Lt. 4 P.J. Parcelación Huertos de Villena, Pachacámac, Lima, Perú', 'district': 'Pachacámac', 'ubigeo': '150123',
         'lat': -12.2504596, 'lng': -76.8879802, 'googleMapsUri': 'https://g.page/estacioneskio?share',
-        'officialPhotoUrl': 'https://estacioneskio.com.pe/wp-content/uploads/KIO-PTE-LURIN-650x415.png', 'officialSourceUrl': 'https://estacioneskio.com.pe/encuentra-tu-kio-aqui/',
+        'officialPhotoUrl': '/assets/kio/estacion-pachacamac-650x415.jpg', 'officialSourceUrl': 'https://estacioneskio.com.pe/encuentra-tu-kio-aqui/',
         'reference': 'Antigua Panamericana Sur, pasando la chicharronería del Puente Lurín.'
     },
     {
         'id': 'mappe-kio-negociacion-ya', 'name': 'KIO NEGOCIACIÓN YA', 'canonicalName': 'KIO NEGOCIACIÓN YA',
         'address': 'Av. Wiesse Mz. K19 Lt. 15 Mariátegui, San Juan de Lurigancho, Lima, Perú', 'district': 'San Juan de Lurigancho', 'ubigeo': '150132',
         'lat': -11.9424436, 'lng': -76.9817487, 'googleMapsUri': 'https://goo.gl/maps/5CrsnLoJJaRLZnh27',
-        'officialPhotoUrl': 'https://estacioneskio.com.pe/wp-content/uploads/KIO-MARIATEGUI-650x415.png', 'officialSourceUrl': 'https://estacioneskio.com.pe/encuentra-tu-kio-aqui/',
+        'officialPhotoUrl': '/assets/kio/estacion-Neg.-Ya-650x415.jpg', 'officialSourceUrl': 'https://estacioneskio.com.pe/encuentra-tu-kio-aqui/',
         'reference': 'A una cuadra del Arco de José Carlos Mariátegui.'
     },
     {
         'id': 'mappe-kio-nana', 'name': 'KIO ÑAÑA', 'canonicalName': 'KIO ÑAÑA',
         'address': 'Av. Alameda Ñaña 180, Lurigancho, Lima, Perú', 'district': 'Lurigancho', 'ubigeo': '150118',
         'lat': -11.9848237, 'lng': -76.8198549, 'googleMapsUri': 'https://goo.gl/maps/bXBaxpr4C2ouFyvE8',
-        'officialPhotoUrl': 'https://estacioneskio.com.pe/wp-content/uploads/KIO-NAN%CC%83A-650x415.png', 'officialSourceUrl': 'https://estacioneskio.com.pe/encuentra-tu-kio-aqui/',
+        'officialPhotoUrl': '/assets/kio/estacion-nana-650x415.png', 'officialSourceUrl': 'https://estacioneskio.com.pe/encuentra-tu-kio-aqui/',
         'reference': 'Al costado del Puente Ñaña.'
     },
     {
         'id': 'mappe-kio-barbadillo', 'name': 'KIO BARBADILLO', 'canonicalName': 'KIO BARBADILLO',
         'address': 'Mz. E Lt. B3 Urb. Barbadillo, Ate, Lima, Perú', 'district': 'Ate', 'ubigeo': '150103',
         'lat': -12.0360246, 'lng': -76.9201593, 'googleMapsUri': 'https://goo.gl/maps/Auy4ZNcnqUwAJ4gbA',
-        'officialPhotoUrl': 'https://estacioneskio.com.pe/wp-content/uploads/KIO-BARBADILLO-650x415.png', 'officialSourceUrl': 'https://estacioneskio.com.pe/encuentra-tu-kio-aqui/',
+        'officialPhotoUrl': '/assets/kio/estacion-barbadillo-1-650x415.jpg', 'officialSourceUrl': 'https://estacioneskio.com.pe/encuentra-tu-kio-aqui/',
         'reference': 'Esquina de Calle Berlín y Av. Cnel. Marco Puente Llanos.'
     },
 ]

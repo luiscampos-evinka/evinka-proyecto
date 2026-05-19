@@ -95,8 +95,8 @@ async function bootApp() {
   }
   if (!window.L?.map) throw new Error('No se pudo cargar Leaflet');
   const [rows, summary] = await Promise.all([
-    fetchJson('./data/places-lima.json'),
-    fetchJson('./data/summary-lima.json'),
+    fetchJson('./data/places-lima.json?v=20260519kio6'),
+    fetchJson('./data/summary-lima.json?v=20260519kio6'),
   ]);
   const medellinModes = buildMedellinModeMap(rows);
   state.rows = rows.map((row) => enrichTerritoryRow(row, medellinModes));
