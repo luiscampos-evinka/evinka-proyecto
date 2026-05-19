@@ -1350,6 +1350,7 @@ function renderMap() {
       state.selectedRowId = row.id;
       highlightCard(row.id);
       renderFocusPanel();
+      if (isMobileViewport()) setMobilePanel('results');
     });
     state.markersLayer.push(marker);
     state.markerById.set(row.id, marker);
@@ -1371,6 +1372,7 @@ function renderMap() {
 function focusRow(id) {
   const row = state.filtered.find((item) => item.id === id);
   if (!row) return;
+  if (isMobileViewport()) setMobilePanel('results');
   state.selectedRowId = id;
   const marker = state.markerById.get(id);
   state.map.flyTo([row.lat, row.lng], Math.max(state.map.getZoom() || 0, 16), { animate: true, duration: 0.45 });
@@ -1725,6 +1727,36 @@ function debounce(fn, wait = 150) {
 function bindShellUI() {
   document.getElementById('logoutBtn')?.addEventListener('click', onLogout);
   document.getElementById('adminRefreshBtn')?.addEventListener('click', () => loadAdminUsers());
+  document.querySelectorAll('[data-mobile-panel]').forEach((button) => {
+    button.addEventListener('click', () => setMobilePanel(button.dataset.mobilePanel || 'results'));
+  });
+  syncMobilePanel();
+  window.addEventListener('resize', syncMobilePanel);
+}
+
+function isMobileViewport() {
+  return window.matchMedia('(max-width: 960px)').matches;
+}
+
+function setMobilePanel(panel = 'results') {
+  const next = panel === 'filters' ? 'filters' : 'results';
+  document.body.dataset.mobilePanel = next;
+  document.querySelectorAll('[data-mobile-panel]').forEach((button) => {
+    button.classList.toggle('active', button.dataset.mobilePanel === next);
+  });
+  if (isMobileViewport()) {
+    window.setTimeout(() => state.map?.invalidateSize?.(), 120);
+  }
+}
+
+function syncMobilePanel() {
+  if (!isMobileViewport()) {
+    document.body.dataset.mobilePanel = 'desktop';
+    document.querySelectorAll('[data-mobile-panel]').forEach((button) => button.classList.remove('active'));
+    return;
+  }
+  const current = document.body.dataset.mobilePanel === 'filters' ? 'filters' : 'results';
+  setMobilePanel(current);
 }
 
 function bindAuthUI() {

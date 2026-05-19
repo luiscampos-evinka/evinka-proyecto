@@ -11,7 +11,7 @@
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" crossorigin="" />
   <link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.css" />
   <link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.Default.css" />
-  <link rel="stylesheet" href="./styles.css?v=20260519kio6" />
+  <link rel="stylesheet" href="./styles.css?v=20260519mobile1" />
 </head>
 <body>
   <div id="map"></div>
@@ -210,7 +210,7 @@
     </section>
   </aside>
 
-  <aside class="results card">
+  <aside class="results card" id="resultsPanel">
     <div class="results-head">
       <div>
         <div class="section-title">Oportunidades detectadas</div>
@@ -227,9 +227,13 @@
     </section>
     <div id="locationsList" class="locations"></div>
   </aside>
+  <nav class="mobile-nav" id="mobileNav" aria-label="Navegación móvil">
+    <button class="mobile-nav-btn active" type="button" data-mobile-panel="results">Resultados</button>
+    <button class="mobile-nav-btn" type="button" data-mobile-panel="filters">Filtros</button>
+  </nav>
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" crossorigin=""></script>
   <script src="https://unpkg.com/leaflet.markercluster@1.5.3/dist/leaflet.markercluster.js"></script>
   <script src="./vendor/exceljs.min.js"></script>
-  <script src="./app.js?v=20260519kio6"></script>
+  <script src="./app.js?v=20260519mobile1"></script>
 </body>
 </html>
