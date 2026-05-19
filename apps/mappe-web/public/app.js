@@ -11,6 +11,7 @@ const state = {
   markerById: new Map(),
   infoWindow: null,
   renderedMapRows: [],
+  selectedRowId: '',
   auth: {
     checked: false,
     authenticated: false,
@@ -413,6 +414,7 @@ function applyFilters() {
   updateNseFilterNote();
   updateExportStatus();
   renderMap();
+  renderFocusPanel();
 }
 
 function filterRowsExcept(skipId) {
@@ -656,6 +658,192 @@ function updateExportStatus(message = '') {
   status.textContent = state.filtered.length
     ? `Listo para exportar ${state.filtered.length} oportunidades${filters.length ? ` · filtros: ${filters.map((item) => `${item.label}: ${item.value}`).join(' · ')}` : ' · sin filtros activos'}.`
     : 'No hay resultados con esos filtros.';
+}
+
+function renderFocusPanel() {
+  const wrap = document.getElementById('focusCard');
+  if (!wrap) return;
+  if (!state.filtered.length) {
+    wrap.className = 'focus-empty';
+    wrap.innerHTML = 'No hay ubicaciones con esos filtros. Ajusta los filtros o vuelve a Todos para ver una ficha estratégica.';
+    return;
+  }
+
+  let row = state.filtered.find((item) => item.id === state.selectedRowId);
+  if (!row) {
+    row = state.filtered.find((item) => item.brandGroup === 'KIO') || state.filtered[0];
+    state.selectedRowId = row?.id || '';
+  }
+  if (!row) return;
+
+  const analysis = buildStrategicAnalysis(row);
+  wrap.className = `focus-card${row.brandGroup === 'KIO' ? ' focus-kio' : ''}`;
+  wrap.innerHTML = buildFocusPanelContent(row, analysis);
+  wrap.querySelectorAll('[data-focus-id]').forEach((btn) => btn.addEventListener('click', () => focusRow(btn.dataset.focusId)));
+  highlightCard(row.id);
+}
+
+function buildFocusPanelContent(row, analysis) {
+  const hero = buildStrategicHeroImage(row, analysis);
+  return `
+    <div class="focus-hero"><img src="${hero}" alt="Ficha visual de ${escapeHtml(row.canonicalName || row.name)}" /></div>
+    <div class="focus-head">
+      <h3>${escapeHtml(row.canonicalName || row.name)}</h3>
+      <p>${escapeHtml(labelCommercialBranchDetail(row.commercialBranchDetail || labelCategory(row.category)))} · ${escapeHtml(row.operator)}${row.networkBrand ? ` · red ${escapeHtml(row.networkBrand)}` : ''}</p>
+      <p>${escapeHtml(row.address || 'Sin dirección precisa')}</p>
+    </div>
+    <div class="focus-badges">
+      <span class="pill ${escapeHtml(territorialTier(row))}">${escapeHtml(labelSuper(territorialTier(row)))}</span>
+      <span class="pill ${escapeHtml(row.evinkaPriority)}">${escapeHtml(labelPremium(row.evinkaPriority))}</span>
+      <span class="pill ${escapeHtml(analysis.bandClass)}">${escapeHtml(analysis.bandLabel)}</span>
+      ${row.brandGroup === 'KIO' ? '<span class="pill atacar_ya">Prioridad KIO</span>' : ''}
+    </div>
+    <div class="focus-grid">
+      <div class="focus-metric">
+        <strong>Índice estratégico</strong>
+        <span>${escapeHtml(String(analysis.strategicIndex))}/100</span>
+        <small>${escapeHtml(analysis.bandReason)}</small>
+      </div>
+      <div class="focus-metric">
+        <strong>Separación de red</strong>
+        <span>${escapeHtml(analysis.nearestSameGroupDistanceLabel)}</span>
+        <small>${escapeHtml(analysis.nearestSameGroupText)}</small>
+      </div>
+      <div class="focus-metric">
+        <strong>Presión competitiva</strong>
+        <span>${escapeHtml(String(analysis.competingStations5km))}</span>
+        <small>estaciones rivales en 5 km</small>
+      </div>
+      <div class="focus-metric">
+        <strong>Demanda cercana</strong>
+        <span>${escapeHtml(String(analysis.priorityNodes3km))}</span>
+        <small>nodos fuertes en 3 km · NSE AB/B ${escapeHtml(String(analysis.highNseNodes3km))}</small>
+      </div>
+    </div>
+    <div class="focus-body">
+      <div class="focus-copy">${escapeHtml(analysis.summary)}</div>
+      <iframe class="focus-map-frame" loading="lazy" referrerpolicy="no-referrer-when-downgrade" src="${escapeHtml(googleMapsEmbedUrl(row))}" title="Mapa de ${escapeHtml(row.canonicalName || row.name)}"></iframe>
+      <div class="focus-actions">
+        <button class="location-action primary-soft" type="button" data-focus-id="${escapeHtml(row.id)}">Centrar en mapa</button>
+        <a class="location-action" href="${escapeHtml(googleMapsUrl(row))}" target="_blank" rel="noopener noreferrer">Abrir en Google Maps</a>
+      </div>
+      <div class="focus-legend">
+        <div class="focus-list-item"><strong>Lectura de cobertura</strong><span>${escapeHtml(analysis.coverageNarrative)}</span></div>
+        <div class="focus-list-item"><strong>Distancias clave</strong><span>${escapeHtml(analysis.distanceNarrative)}</span></div>
+      </div>
+      <div class="focus-list">
+        ${analysis.hotspots.map((item) => `
+          <button class="focus-hotspot" type="button" data-focus-id="${escapeHtml(item.id)}">
+            <strong>${escapeHtml(item.name)}</strong>
+            <span>${escapeHtml(item.subtitle)} · ${escapeHtml(item.distanceLabel)}</span>
+          </button>
+        `).join('') || '<div class="focus-list-item"><strong>Sin nodos cercanos destacados</strong><span>Amplía el radio o revisa otros puntos de la red.</span></div>'}
+      </div>
+    </div>
+  `;
+}
+
+function buildStrategicAnalysis(row) {
+  const baseRows = state.rows.filter((item) => item.id !== row.id && Number.isFinite(Number(item.lat)) && Number.isFinite(Number(item.lng)));
+  const nearby = baseRows.map((item) => ({ row: item, distanceMeters: haversineMeters(row.lat, row.lng, item.lat, item.lng) })).sort((a, b) => a.distanceMeters - b.distanceMeters);
+  const sameGroup = nearby.find((item) => item.row.brandGroup === row.brandGroup);
+  const petroperu = nearby.find((item) => inferFuelBrand(item.row) === 'PetroPerú');
+  const demandNodes = nearby.filter((item) => isPriorityDemandNode(item.row));
+  const hotspots = demandNodes.slice(0, 3).map((item) => ({
+    id: item.row.id,
+    name: item.row.canonicalName || item.row.name,
+    subtitle: `${labelCommercialBranchDetail(item.row.commercialBranchDetail || labelCategory(item.row.category))} · ${item.row.officialDivisionName || item.row.city}`,
+    distanceLabel: formatDistance(item.distanceMeters),
+  }));
+  const priorityNodes3km = demandNodes.filter((item) => item.distanceMeters <= 3000).length;
+  const highNseNodes3km = nearby.filter((item) => item.distanceMeters <= 3000 && ['AB', 'B'].includes(item.row.nivel_socioeconomico)).length;
+  const competingStations5km = nearby.filter((item) => item.distanceMeters <= 5000 && item.row.category === 'Grifo / estación de servicio' && item.row.brandGroup !== row.brandGroup).length;
+  const sameGroupDistanceKm = sameGroup ? sameGroup.distanceMeters / 1000 : null;
+  const territorial = territorialScore(row);
+  const coverageScore = sameGroupDistanceKm == null ? 100 : Math.max(0, Math.min(100, Math.round((sameGroupDistanceKm / 8) * 100)));
+  const densityScore = Math.max(0, Math.min(100, priorityNodes3km * 11 + highNseNodes3km * 7));
+  const competitionScore = Math.max(0, 100 - (competingStations5km * 9));
+  const strategicIndex = Math.max(35, Math.min(99, Math.round((territorial * 0.46) + (coverageScore * 0.24) + (densityScore * 0.20) + (competitionScore * 0.10))));
+  const band = strategicIndex >= 82
+    ? { label: 'Muy estratégico', className: 'A', reason: 'cubre red y demanda fuerte' }
+    : strategicIndex >= 68
+      ? { label: 'Estratégico', className: 'B', reason: 'buena mezcla de cobertura y demanda' }
+      : { label: 'Táctico', className: 'C', reason: 'útil, pero con menor holgura' };
+  const coverageNarrative = sameGroupDistanceKm == null
+    ? `No tiene otro punto del mismo grupo cerca; sirve para abrir cobertura nueva.`
+    : sameGroupDistanceKm >= 7
+      ? `Tiene ${formatDistance(sameGroup.distanceMeters)} hasta el siguiente ${row.brandGroup}; ayuda a coser vacíos de cobertura.`
+      : sameGroupDistanceKm >= 3
+        ? `Está a ${formatDistance(sameGroup.distanceMeters)} del siguiente ${row.brandGroup}; funciona como refuerzo de corredor.`
+        : `Está a ${formatDistance(sameGroup.distanceMeters)} del siguiente ${row.brandGroup}; ojo con solape comercial.`;
+  const distanceNarrative = [
+    `más cercano de su grupo: ${sameGroup ? `${sameGroup.row.canonicalName || sameGroup.row.name} a ${formatDistance(sameGroup.distanceMeters)}` : 'sin referencia cercana'}`,
+    `PetroPerú más cercano: ${petroperu ? `${petroperu.row.canonicalName || petroperu.row.name} a ${formatDistance(petroperu.distanceMeters)}` : 'sin referencia cercana'}`,
+    `nodos prioritarios en 3 km: ${priorityNodes3km}`,
+  ].join(' · ');
+  const summary = row.brandGroup === 'KIO'
+    ? `KIO ${row.officialDivisionName || row.city}: ${band.label.toLowerCase()} para EVINKA. Puntúa ${strategicIndex}/100 por ${coverageNarrative.toLowerCase()} y porque concentra ${priorityNodes3km} nodos fuertes en un radio de 3 km.`
+    : `${row.canonicalName || row.name} marca ${strategicIndex}/100. ${coverageNarrative} En su entorno inmediato suma ${priorityNodes3km} nodos fuertes y ${highNseNodes3km} señales NSE AB/B.`;
+  return {
+    strategicIndex,
+    bandLabel: band.label,
+    bandClass: band.className,
+    bandReason: band.reason,
+    nearestSameGroupDistanceLabel: sameGroup ? formatDistance(sameGroup.distanceMeters) : 'Sin par cercano',
+    nearestSameGroupText: sameGroup ? `${sameGroup.row.canonicalName || sameGroup.row.name}` : `No aparece otro ${row.brandGroup}`,
+    priorityNodes3km,
+    highNseNodes3km,
+    competingStations5km,
+    coverageNarrative,
+    distanceNarrative,
+    summary,
+    hotspots,
+  };
+}
+
+function buildStrategicHeroImage(row, analysis) {
+  const brand = row.brandGroup === 'KIO' ? '#d4a96a' : '#5e8cff';
+  const accent = row.brandGroup === 'KIO' ? '#f6e3c3' : '#dce7ff';
+  const dark = row.brandGroup === 'KIO' ? '#121110' : '#101827';
+  const title = xmlEscape(row.canonicalName || row.name || 'Ubicación');
+  const district = xmlEscape(row.officialDivisionName || row.city || 'Lima');
+  const operator = xmlEscape(row.operator || row.brandGroup || 'Sin operador');
+  const badge = xmlEscape(row.brandGroup === 'KIO' ? 'KIO PRIORIDAD' : 'FICHA ESTRATÉGICA');
+  const network = xmlEscape(row.networkBrand || row.fuelNetwork || row.brandGroup || 'EVINKA');
+  const svg = `
+    <svg xmlns="http://www.w3.org/2000/svg" width="1200" height="720" viewBox="0 0 1200 720">
+      <defs>
+        <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+          <stop offset="0%" stop-color="${dark}" />
+          <stop offset="100%" stop-color="#1f2837" />
+        </linearGradient>
+        <linearGradient id="shine" x1="0" y1="0" x2="1" y2="0">
+          <stop offset="0%" stop-color="${brand}" stop-opacity="0.95" />
+          <stop offset="100%" stop-color="${brand}" stop-opacity="0.15" />
+        </linearGradient>
+      </defs>
+      <rect width="1200" height="720" rx="34" fill="url(#bg)"/>
+      <circle cx="920" cy="245" r="176" fill="none" stroke="${brand}" stroke-opacity="0.22" stroke-width="2"/>
+      <circle cx="920" cy="245" r="118" fill="none" stroke="${brand}" stroke-opacity="0.32" stroke-width="2"/>
+      <circle cx="920" cy="245" r="62" fill="${brand}" fill-opacity="0.16" stroke="${brand}" stroke-width="3"/>
+      <rect x="58" y="54" width="244" height="42" rx="21" fill="${brand}" fill-opacity="0.16" stroke="${brand}" stroke-opacity="0.32"/>
+      <text x="82" y="81" fill="${accent}" font-family="Inter,Arial,sans-serif" font-size="22" font-weight="700">${badge}</text>
+      <text x="58" y="170" fill="#ffffff" font-family="Inter,Arial,sans-serif" font-size="62" font-weight="800">${title}</text>
+      <text x="58" y="218" fill="#d8dfeb" font-family="Inter,Arial,sans-serif" font-size="28">${operator} · red ${network}</text>
+      <text x="58" y="264" fill="#b5bfd0" font-family="Inter,Arial,sans-serif" font-size="26">${district} · ${xmlEscape(formatDistanceLabel(row))}</text>
+      <rect x="58" y="334" width="350" height="132" rx="26" fill="#ffffff" fill-opacity="0.04" stroke="#ffffff" stroke-opacity="0.08"/>
+      <text x="92" y="382" fill="#b5bfd0" font-family="Inter,Arial,sans-serif" font-size="22">ÍNDICE ESTRATÉGICO</text>
+      <text x="92" y="436" fill="#ffffff" font-family="Inter,Arial,sans-serif" font-size="64" font-weight="800">${analysis.strategicIndex}/100</text>
+      <text x="92" y="468" fill="${accent}" font-family="Inter,Arial,sans-serif" font-size="24">${xmlEscape(analysis.bandLabel)}</text>
+      <rect x="440" y="334" width="290" height="132" rx="26" fill="#ffffff" fill-opacity="0.04" stroke="#ffffff" stroke-opacity="0.08"/>
+      <text x="474" y="382" fill="#b5bfd0" font-family="Inter,Arial,sans-serif" font-size="22">SIGUIENTE ${xmlEscape((row.brandGroup || 'GRUPO').toUpperCase())}</text>
+      <text x="474" y="436" fill="#ffffff" font-family="Inter,Arial,sans-serif" font-size="54" font-weight="800">${xmlEscape(analysis.nearestSameGroupDistanceLabel)}</text>
+      <text x="474" y="468" fill="${accent}" font-family="Inter,Arial,sans-serif" font-size="20">${xmlEscape(analysis.bandReason)}</text>
+      <rect x="58" y="518" width="672" height="118" rx="26" fill="url(#shine)"/>
+      <text x="92" y="568" fill="#ffffff" font-family="Inter,Arial,sans-serif" font-size="24" font-weight="700">LECTURA RÁPIDA</text>
+      <text x="92" y="610" fill="#f1f5fb" font-family="Inter,Arial,sans-serif" font-size="24">${xmlEscape(analysis.summary)}</text>
+    </svg>`;
+  return `data:image/svg+xml;charset=UTF-8,${encodeURIComponent(svg)}`;
 }
 
 async function exportFilteredExcel() {
@@ -1083,7 +1271,9 @@ function renderMap() {
     marker.__rowId = row.id;
     marker.bindPopup(buildPopupContent(row), { maxWidth: 360, minWidth: 280, autoPan: false, className: 'mapco-popup-shell' });
     marker.on('click', () => {
+      state.selectedRowId = row.id;
       highlightCard(row.id);
+      renderFocusPanel();
     });
     state.markersLayer.push(marker);
     state.markerById.set(row.id, marker);
@@ -1105,6 +1295,7 @@ function renderMap() {
 function focusRow(id) {
   const row = state.filtered.find((item) => item.id === id);
   if (!row) return;
+  state.selectedRowId = id;
   const marker = state.markerById.get(id);
   state.map.flyTo([row.lat, row.lng], Math.max(state.map.getZoom() || 0, 16), { animate: true, duration: 0.45 });
   if (marker) {
@@ -1116,14 +1307,19 @@ function focusRow(id) {
       .openOn(state.map);
   }
   highlightCard(id);
+  renderFocusPanel();
 }
 
 function buildPopupContent(row) {
+  const analysis = buildStrategicAnalysis(row);
   return [
     `<div class="popup">`,
+    `<img class="popup-hero" src="${buildStrategicHeroImage(row, analysis)}" alt="Ficha rápida ${escapeHtml(row.canonicalName || row.name)}" />`,
     `<div class="popup-title">${escapeHtml(row.canonicalName || row.name)}</div>`,
-    `<div class="popup-subtitle">${escapeHtml(labelCommercialBranchDetail(row.commercialBranchDetail || labelCategory(row.category)))} · ${escapeHtml(row.operator)}</div>`,
+    `<div class="popup-subtitle">${escapeHtml(labelCommercialBranchDetail(row.commercialBranchDetail || labelCategory(row.category)))} · ${escapeHtml(row.operator)}${row.networkBrand ? ` · red ${escapeHtml(row.networkBrand)}` : ''}</div>`,
     `<div class="popup-address">${escapeHtml(row.address)}</div>`,
+    `<div class="popup-line"><strong>Índice estratégico</strong><span>${escapeHtml(String(analysis.strategicIndex))}/100 · ${escapeHtml(analysis.bandLabel)}</span></div>`,
+    `<div class="popup-line"><strong>Distancia red</strong><span>${escapeHtml(analysis.nearestSameGroupDistanceLabel)} · ${escapeHtml(analysis.nearestSameGroupText)}</span></div>`,
     `<div class="popup-line"><strong>Puntaje</strong><span>territorial ${escapeHtml(String(territorialScore(row)))} · ${escapeHtml(territorialAction(row))}</span></div>`,
     `<div class="popup-line"><strong>Señales</strong><span>demanda ${escapeHtml(String(row.populationDemandScore || 0))} · actividad ${escapeHtml(String(row.activityDensityScore || 0))} · EV ${escapeHtml(String(row.evAffinityAdvancedScore || 0))} · noticias ${escapeHtml(String(row.newsSignalScore || 0))}</span></div>`,
     `<div class="popup-line"><strong>Estado</strong><span>${escapeHtml(labelPremium(row.evinkaPriority))}</span></div>`,
@@ -1282,6 +1478,37 @@ function googleMapsUrl(row) {
     return `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(`${row.lat},${row.lng}`)}`;
   }
   return `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent([row.canonicalName || row.name || row.operator || '', row.address || '', row.city || '', 'Perú'].filter(Boolean).join(', '))}`;
+}
+function googleMapsEmbedUrl(row) {
+  if (Number.isFinite(Number(row.lat)) && Number.isFinite(Number(row.lng))) {
+    return `https://maps.google.com/maps?q=${encodeURIComponent(`${row.lat},${row.lng}`)}&z=16&output=embed`;
+  }
+  return `https://maps.google.com/maps?q=${encodeURIComponent([row.canonicalName || row.name || '', row.address || '', row.city || '', 'Perú'].filter(Boolean).join(', '))}&z=16&output=embed`;
+}
+function haversineMeters(lat1, lng1, lat2, lng2) {
+  const R = 6371000;
+  const dLat = ((lat2 - lat1) * Math.PI) / 180;
+  const dLng = ((lng2 - lng1) * Math.PI) / 180;
+  const a = Math.sin(dLat / 2) ** 2 + Math.cos((lat1 * Math.PI) / 180) * Math.cos((lat2 * Math.PI) / 180) * Math.sin(dLng / 2) ** 2;
+  return 2 * R * Math.asin(Math.sqrt(a));
+}
+function formatDistance(meters) {
+  if (!Number.isFinite(Number(meters))) return 'sin dato';
+  if (meters < 1000) return `${Math.round(meters)} m`;
+  return `${(meters / 1000).toFixed(meters >= 10000 ? 0 : 1)} km`;
+}
+function formatDistanceLabel(row) {
+  if (!Number.isFinite(Number(row.lat)) || !Number.isFinite(Number(row.lng))) return 'sin coordenadas';
+  return `${Number(row.lat).toFixed(4)}, ${Number(row.lng).toFixed(4)}`;
+}
+function inferFuelBrand(row) {
+  return row.networkBrand || row.fuelNetwork || row.brandReference || row.brandGroup || row.operator || '';
+}
+function isPriorityDemandNode(row) {
+  return !!(row.publicChargingCandidate || row.evinkaPremiumCandidate || ['A', 'B'].includes(territorialTier(row)) || ['AB', 'B'].includes(row.nivel_socioeconomico));
+}
+function xmlEscape(value = '') {
+  return String(value).replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;').replaceAll('"', '&quot;').replaceAll("'", '&#39;');
 }
 function formatTerritoryLine(row) { return [row.officialDivisionType, row.officialDivisionName].filter(Boolean).join(' · '); }
 function sortAlpha(list) { return [...list].sort((a, b) => String(a).localeCompare(String(b), 'es')); }
