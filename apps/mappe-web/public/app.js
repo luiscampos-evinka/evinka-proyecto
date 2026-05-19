@@ -685,9 +685,11 @@ function renderFocusPanel() {
 }
 
 function buildFocusPanelContent(row, analysis) {
+  const officialPhoto = row.officialPhotoUrl || '';
   const hero = buildStrategicHeroImage(row, analysis);
+  const visual = officialPhoto || hero;
   return `
-    <div class="focus-hero"><img src="${hero}" alt="Ficha visual de ${escapeHtml(row.canonicalName || row.name)}" /></div>
+    <div class="focus-hero"><img src="${visual}" alt="Ficha visual de ${escapeHtml(row.canonicalName || row.name)}" loading="lazy" /></div>
     <div class="focus-head">
       <h3>${escapeHtml(row.canonicalName || row.name)}</h3>
       <p>${escapeHtml(labelCommercialBranchDetail(row.commercialBranchDetail || labelCategory(row.category)))} · ${escapeHtml(row.operator)}${row.networkBrand ? ` · red ${escapeHtml(row.networkBrand)}` : ''}</p>
@@ -737,10 +739,12 @@ function buildFocusPanelContent(row, analysis) {
       <div class="focus-actions">
         <button class="location-action primary-soft" type="button" data-focus-id="${escapeHtml(row.id)}">Centrar en mapa</button>
         <a class="location-action" href="${escapeHtml(googleMapsUrl(row))}" target="_blank" rel="noopener noreferrer">Abrir en Google Maps</a>
+        ${row.officialSourceUrl ? `<a class="location-action" href="${escapeHtml(row.officialSourceUrl)}" target="_blank" rel="noopener noreferrer">Ver fuente KIO</a>` : ''}
       </div>
       <div class="focus-legend">
         <div class="focus-list-item"><strong>Lectura de cobertura</strong><span>${escapeHtml(analysis.coverageNarrative)}</span></div>
         <div class="focus-list-item"><strong>Distancias clave</strong><span>${escapeHtml(analysis.distanceNarrative)}</span></div>
+        <div class="focus-list-item"><strong>Contacto oficial</strong><span>${escapeHtml(row.officialPhone || 'Sin teléfono publicado por estación')} · ${escapeHtml(row.officialWebsite ? 'con fuente oficial KIO disponible' : 'sin web de estación publicada')}</span></div>
       </div>
       <div class="focus-list">
         ${analysis.hotspots.map((item) => `
@@ -1104,8 +1108,8 @@ function buildMarketStudyWorkbook(rows) {
       parking: labelParking(row.parkingProbability),
       google: labelGoogleValidation(row.googleValidationStatus, !!row.googleMapsUri),
       mapsLink: { text: 'Abrir mapa', hyperlink: googleMapsUrl(row), tooltip: googleMapsUrl(row) },
-      phone: row.googleCandidatePhone || '',
-      website: row.googleCandidateWebsite ? { text: 'Sitio web', hyperlink: row.googleCandidateWebsite, tooltip: row.googleCandidateWebsite } : '',
+      phone: row.googleCandidatePhone || row.officialPhone || '',
+      website: (row.googleCandidateWebsite || row.officialWebsite) ? { text: row.googleCandidateWebsite ? 'Sitio web' : 'Fuente KIO', hyperlink: row.googleCandidateWebsite || row.officialWebsite, tooltip: row.googleCandidateWebsite || row.officialWebsite } : '',
       estrato: row.estrato_entorno ?? '',
       nse: labelNse(row.nivel_socioeconomico),
       rawCount: row.rawCount || 1,
@@ -1384,9 +1388,10 @@ function focusRow(id) {
 
 function buildPopupContent(row) {
   const analysis = buildStrategicAnalysis(row);
+  const popupVisual = row.officialPhotoUrl || buildStrategicHeroImage(row, analysis);
   return [
     `<div class="popup">`,
-    `<img class="popup-hero" src="${buildStrategicHeroImage(row, analysis)}" alt="Ficha rápida ${escapeHtml(row.canonicalName || row.name)}" />`,
+    `<img class="popup-hero" src="${popupVisual}" alt="Ficha rápida ${escapeHtml(row.canonicalName || row.name)}" loading="lazy" />`,
     `<div class="popup-title">${escapeHtml(row.canonicalName || row.name)}</div>`,
     `<div class="popup-subtitle">${escapeHtml(labelCommercialBranchDetail(row.commercialBranchDetail || labelCategory(row.category)))} · ${escapeHtml(row.operator)}${row.networkBrand ? ` · red ${escapeHtml(row.networkBrand)}` : ''}</div>`,
     `<div class="popup-address">${escapeHtml(row.address)}</div>`,
@@ -1401,6 +1406,7 @@ function buildPopupContent(row) {
     `<div class="popup-line"><strong>Base</strong><span>${row.rawCount > 1 ? `${escapeHtml(String(row.rawCount))} consolidados · ${escapeHtml(String(row.aliasCount))} alias` : 'registro único limpio'}</span></div>`,
     `<div class="popup-line"><strong>Calidad</strong><span>Ubigeo ${escapeHtml(row.ubigeo)} · parking ${escapeHtml(labelParking(row.parkingProbability))} · confianza ${escapeHtml(labelConfidence(row.confidence))} · ${escapeHtml(labelReview(row.reviewStatus))}</span></div>`,
     `<a class="popup-link" href="${escapeHtml(googleMapsUrl(row))}" target="_blank" rel="noopener noreferrer">Abrir en Google Maps</a>`,
+    row.officialSourceUrl ? `<a class="popup-link" href="${escapeHtml(row.officialSourceUrl)}" target="_blank" rel="noopener noreferrer">Ver ficha oficial KIO</a>` : '',
     `</div>`,
   ].join('');
 }
