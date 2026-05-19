@@ -11,7 +11,7 @@
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" crossorigin="" />
   <link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.css" />
   <link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.Default.css" />
-  <link rel="stylesheet" href="./styles.css?v=20260519mobile1" />
+  <link rel="stylesheet" href="./styles.css?v=20260519dealer1" />
 </head>
 <body>
   <div id="map"></div>
@@ -81,6 +81,11 @@
       <label>
         Tipo de lugar
         <select id="categoryFilter"></select>
+      </label>
+      <label>
+        Marca automotriz
+        <select id="automotiveBrandFilter"></select>
+        <span class="filter-note">Sirve para resaltar y filtrar concesionarios por marca cuando existan señales suficientes.</span>
       </label>
       <label>
         Estado del dato
@@ -190,6 +195,11 @@
     </section>
 
     <section class="panel">
+      <div class="section-title">Concesionarios por marca</div>
+      <div id="dealerBrandsList" class="stack"></div>
+    </section>
+
+    <section class="panel">
       <div class="section-title">Calidad del dato</div>
       <div id="qualitySummary" class="stack"></div>
     </section>
@@ -234,6 +244,6 @@
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" crossorigin=""></script>
   <script src="https://unpkg.com/leaflet.markercluster@1.5.3/dist/leaflet.markercluster.js"></script>
   <script src="./vendor/exceljs.min.js"></script>
-  <script src="./app.js?v=20260519mobile1"></script>
+  <script src="./app.js?v=20260519dealer1"></script>
 </body>
 </html>

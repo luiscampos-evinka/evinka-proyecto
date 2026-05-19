@@ -116,6 +116,7 @@ function buildFilters() {
   rebuildProvinceFilter();
   rebuildUbigeoSelect();
   rebuildCategorySelect();
+  rebuildAutomotiveBrandSelect();
   rebuildDataStateSelect();
   rebuildNseSelect();
   rebuildGoogleValidationSelect();
@@ -214,6 +215,27 @@ function rebuildCategorySelect() {
   el.value = values.includes(current) ? current : 'Todos';
 }
 
+function rebuildAutomotiveBrandSelect() {
+  const el = document.getElementById('automotiveBrandFilter');
+  if (!el) return;
+  const current = el.value || 'all';
+  const rows = filterRowsExcept('automotiveBrandFilter');
+  const dealers = rows.filter(isAutomotiveDealer);
+  const counts = new Map();
+  dealers.forEach((row) => {
+    const brand = inferAutomotiveBrand(row);
+    if (!brand) return;
+    counts.set(brand, (counts.get(brand) || 0) + 1);
+  });
+  const allBrands = unique(state.rows.filter(isAutomotiveDealer).map((row) => inferAutomotiveBrand(row)).filter(Boolean)).sort((a, b) => String(a).localeCompare(String(b), 'es'));
+  const values = [['all', `Todas (${dealers.length})`], ...allBrands.map((brand) => [brand, `${brand} (${counts.get(brand) || 0})`])];
+  el.innerHTML = values.map(([value, label]) => {
+    const disabled = value !== 'all' && (counts.get(value) || 0) === 0 && current !== value;
+    return `<option value="${escapeHtml(value)}"${disabled ? ' disabled' : ''}>${escapeHtml(label)}</option>`;
+  }).join('');
+  el.value = values.some(([value]) => value === current) ? current : 'all';
+}
+
 function rebuildDataStateSelect() {
   const el = document.getElementById('dataStateFilter');
   const current = el.value || 'all';
@@ -305,7 +327,7 @@ function bindUI() {
     updateNseFilterNote();
     applyFilters();
   });
-  ['provinceFilter', 'ubigeoFilter', 'categoryFilter', 'dataStateFilter', 'nseFilter', 'reviewFilter', 'googleValidationFilter', 'viabilityFilter', 'premiumFilter', 'superFilter'].forEach((id) => document.getElementById(id).addEventListener('change', applyFilters));
+  ['provinceFilter', 'ubigeoFilter', 'categoryFilter', 'automotiveBrandFilter', 'dataStateFilter', 'nseFilter', 'reviewFilter', 'googleValidationFilter', 'viabilityFilter', 'premiumFilter', 'superFilter'].forEach((id) => document.getElementById(id).addEventListener('change', applyFilters));
   document.getElementById('searchInput').addEventListener('input', debouncedApplyFilters);
   document.getElementById('parkingFilter').addEventListener('change', applyFilters);
   document.getElementById('publicOnlyFilter').addEventListener('change', applyFilters);
@@ -318,6 +340,7 @@ function bindUI() {
     document.getElementById('provinceFilter').value = 'Todos';
     document.getElementById('ubigeoFilter').value = 'Todos';
     document.getElementById('categoryFilter').value = 'Todos';
+    document.getElementById('automotiveBrandFilter').value = 'all';
     document.getElementById('searchInput').value = '';
     document.getElementById('parkingFilter').checked = false;
     document.getElementById('dataStateFilter').value = 'all';
@@ -357,6 +380,7 @@ function applyFilters() {
   rebuildProvinceFilter();
   rebuildUbigeoSelect();
   rebuildCategorySelect();
+  rebuildAutomotiveBrandSelect();
   rebuildDataStateSelect();
   rebuildNseSelect();
   rebuildGoogleValidationSelect();
@@ -365,6 +389,7 @@ function applyFilters() {
   const ubigeo = document.getElementById('ubigeoFilter').value;
   const category = document.getElementById('categoryFilter').value;
   const search = document.getElementById('searchInput').value.trim().toLowerCase();
+  const automotiveBrandFilter = document.getElementById('automotiveBrandFilter').value;
   const parkingOnly = document.getElementById('parkingFilter').checked;
   const dataStateFilter = document.getElementById('dataStateFilter').value;
   const nseFilter = document.getElementById('nseFilter').value;
@@ -382,6 +407,7 @@ function applyFilters() {
     if (province !== 'Todos' && divisionFilterValue(row, city) !== province) return false;
     if (ubigeo !== 'Todos' && row.ubigeo !== ubigeo) return false;
     if (category !== 'Todos' && (row.commercialBranchDetail || labelCategory(row.category)) !== category) return false;
+    if (automotiveBrandFilter !== 'all' && inferAutomotiveBrand(row) !== automotiveBrandFilter) return false;
     if (dataStateFilter === 'validated_any' && !['validated', 'validated_auto'].includes(row.googleValidationStatus)) return false;
     if (dataStateFilter === 'with_real_link' && !row.googleMapsUri) return false;
     if (dataStateFilter === 'pending' && (['validated', 'validated_auto'].includes(row.googleValidationStatus) || row.googleMapsUri)) return false;
@@ -399,7 +425,7 @@ function applyFilters() {
     if (mapsUriOnly && !row.googleMapsUri) return false;
     if (state.activeGroup && row.brandGroup !== state.activeGroup) return false;
     if (search) {
-      const haystack = [row.operator, row.operatorGroup, row.networkBrand, row.fuelNetwork, row.name, row.address, row.category, row.commercialBranch, row.commercialBranchDetail, row.zone, row.city, row.officialDivisionName, row.localityName, row.upzName].join(' ').toLowerCase();
+      const haystack = [row.operator, row.operatorGroup, row.networkBrand, row.fuelNetwork, row.name, row.address, row.category, row.commercialBranch, row.commercialBranchDetail, inferAutomotiveBrand(row), row.zone, row.city, row.officialDivisionName, row.localityName, row.upzName].join(' ').toLowerCase();
       if (!haystack.includes(search)) return false;
     }
     return true;
@@ -407,6 +433,7 @@ function applyFilters() {
 
   renderMetrics();
   renderGroups();
+  renderDealerBrands();
   renderQualitySummary();
   renderViabilitySummary();
   renderPremiumSummary();
@@ -426,6 +453,7 @@ function filterRowsExcept(skipId) {
   const dataStateFilter = document.getElementById('dataStateFilter')?.value || 'all';
   const nseFilter = document.getElementById('nseFilter')?.value || 'all';
   const search = document.getElementById('searchInput')?.value?.trim().toLowerCase() || '';
+  const automotiveBrandFilter = document.getElementById('automotiveBrandFilter')?.value || 'all';
   const parkingOnly = !!document.getElementById('parkingFilter')?.checked;
   const reviewFilter = document.getElementById('reviewFilter')?.value || 'all';
   const googleValidationFilter = document.getElementById('googleValidationFilter')?.value || 'all';
@@ -441,6 +469,7 @@ function filterRowsExcept(skipId) {
     if (skipId !== 'provinceFilter' && province !== 'Todos' && divisionFilterValue(row, city) !== province) return false;
     if (ubigeo !== 'Todos' && row.ubigeo !== ubigeo) return false;
     if (skipId !== 'categoryFilter' && category !== 'Todos' && (row.commercialBranchDetail || labelCategory(row.category)) !== category) return false;
+    if (skipId !== 'automotiveBrandFilter' && automotiveBrandFilter !== 'all' && inferAutomotiveBrand(row) !== automotiveBrandFilter) return false;
     if (skipId !== 'dataStateFilter') {
       if (dataStateFilter === 'validated_any' && !['validated', 'validated_auto'].includes(row.googleValidationStatus)) return false;
       if (dataStateFilter === 'with_real_link' && !row.googleMapsUri) return false;
@@ -464,7 +493,7 @@ function filterRowsExcept(skipId) {
     if (mapsUriOnly && !row.googleMapsUri) return false;
     if (state.activeGroup && row.brandGroup !== state.activeGroup) return false;
     if (search) {
-      const haystack = [row.operator, row.operatorGroup, row.networkBrand, row.fuelNetwork, row.name, row.address, row.category, row.commercialBranch, row.commercialBranchDetail, row.zone, row.city, row.officialDivisionName, row.localityName, row.upzName].join(' ').toLowerCase();
+      const haystack = [row.operator, row.operatorGroup, row.networkBrand, row.fuelNetwork, row.name, row.address, row.category, row.commercialBranch, row.commercialBranchDetail, inferAutomotiveBrand(row), row.zone, row.city, row.officialDivisionName, row.localityName, row.upzName].join(' ').toLowerCase();
       if (!haystack.includes(search)) return false;
     }
     return true;
@@ -596,6 +625,33 @@ function renderGroups() {
   }));
 }
 
+function renderDealerBrands() {
+  const wrap = document.getElementById('dealerBrandsList');
+  if (!wrap) return;
+  const dealers = state.filtered.filter(isAutomotiveDealer);
+  if (!dealers.length) {
+    wrap.innerHTML = '<div class="group-card"><p>No hay concesionarios visibles con los filtros actuales.</p></div>';
+    return;
+  }
+  const counts = new Map();
+  dealers.forEach((row) => {
+    const brand = inferAutomotiveBrand(row) || 'Otros';
+    counts.set(brand, (counts.get(brand) || 0) + 1);
+  });
+  const list = [...counts.entries()].sort((a, b) => (b[1] - a[1]) || String(a[0]).localeCompare(String(b[0]), 'es')).slice(0, 24);
+  wrap.innerHTML = list.map(([brand, count]) => `
+    <button class="summary-item dealer-brand-item" type="button" data-automotive-brand="${escapeHtml(brand)}">
+      <strong><span class="brand-swatch" style="background:${escapeHtml(automotiveBrandColor(brand))}"></span>${escapeHtml(brand)}</strong>
+      <span>${escapeHtml(String(count))} concesionarios visibles</span>
+    </button>
+  `).join('');
+  wrap.querySelectorAll('[data-automotive-brand]').forEach((btn) => btn.addEventListener('click', () => {
+    const brand = btn.dataset.automotiveBrand || 'all';
+    document.getElementById('automotiveBrandFilter').value = brand;
+    applyFilters();
+  }));
+}
+
 function renderLocations() {
   const wrap = document.getElementById('locationsList');
   const visibleRows = state.filtered.slice(0, 120);
@@ -606,6 +662,7 @@ function renderLocations() {
   const superA = state.filtered.filter((row) => territorialTier(row) === 'A').length;
   const mapsReal = state.filtered.filter((row) => row.googleMapsUri).length;
   const googleValidated = state.filtered.filter((row) => ['validated', 'validated_auto'].includes(row.googleValidationStatus)).length;
+  const autoDealers = state.filtered.filter(isAutomotiveDealer).length;
   const publicOnly = document.getElementById('publicOnlyFilter').checked;
   const premiumOnly = document.getElementById('premiumOnlyFilter').checked;
   const mapsUriOnly = document.getElementById('mapsUriOnlyFilter').checked;
@@ -613,11 +670,11 @@ function renderLocations() {
   const province = document.getElementById('provinceFilter').value;
   const nseCovered = state.filtered.filter((row) => row.nivel_socioeconomico).length;
   const apeimNse = state.filtered.filter((row) => row.estrato_fuente === 'apeim_zone_lima_2020_proxy').length;
-  document.getElementById('resultsSummary').textContent = `${state.filtered.length} oportunidades · ${superA} territorial alta · ${premium} leads listos · ${viable} listos para carga pública · ${googleValidated} validados Google · ${mapsReal} con link Maps · NSE cubierto ${nseCovered} · NSE proxy APEIM ${apeimNse} · base raw ${rawTotal} registros · lista ${visibleRows.length} · mapa ${mapRows.length}` + (city !== 'Todos' ? ` · ciudad: ${city}` : '') + (province !== 'Todos' ? ` · territorio: ${province}` : '') + (publicOnly ? ' · filtro: solo listos para carga pública' : '') + (premiumOnly ? ' · filtro: solo leads listos' : '') + (mapsUriOnly ? ' · filtro: solo con link Maps' : '') + (state.activeGroup ? ` · grupo: ${state.activeGroup}` : '') + (state.filtered.length > visibleRows.length ? ' · usa filtros para afinar' : '');
+  document.getElementById('resultsSummary').textContent = `${state.filtered.length} oportunidades · ${autoDealers} concesionarios auto · ${superA} territorial alta · ${premium} leads listos · ${viable} listos para carga pública · ${googleValidated} validados Google · ${mapsReal} con link Maps · NSE cubierto ${nseCovered} · NSE proxy APEIM ${apeimNse} · base raw ${rawTotal} registros · lista ${visibleRows.length} · mapa ${mapRows.length}` + (city !== 'Todos' ? ` · ciudad: ${city}` : '') + (province !== 'Todos' ? ` · territorio: ${province}` : '') + (publicOnly ? ' · filtro: solo listos para carga pública' : '') + (premiumOnly ? ' · filtro: solo leads listos' : '') + (mapsUriOnly ? ' · filtro: solo con link Maps' : '') + (state.activeGroup ? ` · grupo: ${state.activeGroup}` : '') + (state.filtered.length > visibleRows.length ? ' · usa filtros para afinar' : '');
   wrap.innerHTML = visibleRows.length ? visibleRows.map((row) => `
     <div class="location-card" data-id="${escapeHtml(row.id)}">
       <h3>${escapeHtml(row.name)}</h3>
-      <p>${escapeHtml(labelCommercialBranchDetail(row.commercialBranchDetail || labelCategory(row.category)))} · ${escapeHtml(row.operator)}${row.networkBrand ? ` · red ${escapeHtml(row.networkBrand)}` : ''}</p>
+      <p>${escapeHtml(labelCommercialBranchDetail(row.commercialBranchDetail || labelCategory(row.category)))} · ${escapeHtml(row.operator)}${row.networkBrand ? ` · red ${escapeHtml(row.networkBrand)}` : ''}${isAutomotiveDealer(row) ? ` · marca ${escapeHtml(inferAutomotiveBrand(row))}` : ''}</p>
       <p>${escapeHtml(row.address)}</p>
       <p>${row.rawCount > 1 ? `${row.rawCount} registros consolidados · ${row.aliasCount} alias detectados` : '1 registro limpio'}</p>
       <p>Puntaje territorial ${escapeHtml(String(territorialScore(row)))} · ${escapeHtml(territorialAction(row))}</p>
@@ -692,7 +749,7 @@ function buildFocusPanelContent(row, analysis) {
     <div class="focus-hero"><img src="${visual}" alt="Ficha visual de ${escapeHtml(row.canonicalName || row.name)}" loading="lazy" /></div>
     <div class="focus-head">
       <h3>${escapeHtml(row.canonicalName || row.name)}</h3>
-      <p>${escapeHtml(labelCommercialBranchDetail(row.commercialBranchDetail || labelCategory(row.category)))} · ${escapeHtml(row.operator)}${row.networkBrand ? ` · red ${escapeHtml(row.networkBrand)}` : ''}</p>
+      <p>${escapeHtml(labelCommercialBranchDetail(row.commercialBranchDetail || labelCategory(row.category)))} · ${escapeHtml(row.operator)}${row.networkBrand ? ` · red ${escapeHtml(row.networkBrand)}` : ''}${isAutomotiveDealer(row) ? ` · marca ${escapeHtml(inferAutomotiveBrand(row))}` : ''}</p>
       <p>${escapeHtml(row.address || 'Sin dirección precisa')}</p>
     </div>
     <div class="focus-badges">
@@ -1226,6 +1283,7 @@ function describeActiveFilters() {
   const city = document.getElementById('cityFilter')?.value || 'Todos';
   const zone = document.getElementById('provinceFilter')?.value || 'Todos';
   const category = document.getElementById('categoryFilter')?.value || 'Todos';
+  const automotiveBrand = document.getElementById('automotiveBrandFilter')?.value || 'all';
   const dataState = document.getElementById('dataStateFilter')?.value || 'all';
   const nse = document.getElementById('nseFilter')?.value || 'all';
   const search = document.getElementById('searchInput')?.value?.trim() || '';
@@ -1239,6 +1297,7 @@ function describeActiveFilters() {
   add('Ciudad (dónde están los puntos)', city, city === 'Todos', 'Recorta el mapa a una ciudad o deja toda la base visible.');
   add('Zona (subárea dentro de la ciudad)', zone, zone === 'Todos', 'Sirve para enfocar el análisis en un distrito o territorio puntual.');
   add('Tipo de lugar (clase de negocio o sitio)', labelCommercialBranchDetail(category, 'filter'), category === 'Todos', 'Limita la exportación a una familia comercial específica.');
+  add('Marca automotriz (red de concesionario)', automotiveBrand, automotiveBrand === 'all', 'Cuando el punto es concesionario, filtra por marca inferida desde el nombre, operador y grupo.');
   add('Estado del dato (calidad general del registro)', ({ validated_any: 'Validado', with_real_link: 'Con link real', pending: 'Pendiente' }[dataState] || ''), dataState === 'all', 'Aclara si pediste solo datos más limpios o también pendientes de depurar.');
   add('Nivel socioeconómico (entorno del punto)', labelNse(nse), nse === 'all', 'Filtra por perfil socioeconómico del entorno usando proxy APEIM cuando aplica.');
   add('Buscar', search, !search, 'Busca cadenas, operadores, distritos, direcciones o palabras clave.');
@@ -1395,7 +1454,7 @@ function buildPopupContent(row) {
     `<div class="popup">`,
     `<img class="popup-hero" src="${popupVisual}" alt="Ficha rápida ${escapeHtml(row.canonicalName || row.name)}" loading="lazy" />`,
     `<div class="popup-title">${escapeHtml(row.canonicalName || row.name)}</div>`,
-    `<div class="popup-subtitle">${escapeHtml(labelCommercialBranchDetail(row.commercialBranchDetail || labelCategory(row.category)))} · ${escapeHtml(row.operator)}${row.networkBrand ? ` · red ${escapeHtml(row.networkBrand)}` : ''}</div>`,
+    `<div class="popup-subtitle">${escapeHtml(labelCommercialBranchDetail(row.commercialBranchDetail || labelCategory(row.category)))} · ${escapeHtml(row.operator)}${row.networkBrand ? ` · red ${escapeHtml(row.networkBrand)}` : ''}${isAutomotiveDealer(row) ? ` · marca ${escapeHtml(inferAutomotiveBrand(row))}` : ''}</div>`,
     `<div class="popup-address">${escapeHtml(row.address)}</div>`,
     `<div class="popup-line"><strong>Score KIO / EVINKA</strong><span>${escapeHtml(String(analysis.kioStrategicScore))}/100 · ${escapeHtml(analysis.bandLabel)}</span></div>`,
     `<div class="popup-line"><strong>Distancia red</strong><span>${escapeHtml(analysis.nearestSameGroupDistanceLabel)} · ${escapeHtml(analysis.nearestSameGroupText)}</span></div>`,
@@ -1415,6 +1474,84 @@ function buildPopupContent(row) {
 
 function highlightCard(id) {
   document.querySelectorAll('.location-card').forEach((card) => card.classList.toggle('active', card.dataset.id === id));
+}
+
+const AUTOMOTIVE_BRAND_RULES = [
+  { brand: 'Toyota', patterns: [/\btoyota\b/i, /\bmitsui\b/i, /\bautoespar\b/i, /\bgrupo pan\b/i, /\bgrupo pana\b/i] },
+  { brand: 'Nissan', patterns: [/\bnissan\b/i, /\bmaquisistema\b/i, /\bplaneta nissan\b/i] },
+  { brand: 'BYD', patterns: [/\bbyd\b/i] },
+  { brand: 'Geely', patterns: [/\bgeely\b/i] },
+  { brand: 'Volvo', patterns: [/\bvolvo\b/i] },
+  { brand: 'Hyundai', patterns: [/\bhyundai\b/i] },
+  { brand: 'Kia', patterns: [/\bkia\b/i] },
+  { brand: 'Mazda', patterns: [/\bmazda\b/i] },
+  { brand: 'Honda', patterns: [/\bhonda\b/i, /\botsuki\b/i, /\bv motor center\b/i] },
+  { brand: 'Ford', patterns: [/\bford\b/i, /\bauto summit\b/i, /\bleon autos\b/i] },
+  { brand: 'Chevrolet', patterns: [/\bchevrolet\b/i, /\bautofondo\b/i, /\bautoniza\b/i] },
+  { brand: 'BMW', patterns: [/\bbmw\b/i] },
+  { brand: 'Audi', patterns: [/\baudi\b/i, /\bzentrum\b/i] },
+  { brand: 'Mercedes-Benz', patterns: [/\bmercedes\b/i, /\bdivemotor\b/i] },
+  { brand: 'Chery', patterns: [/\bchery\b/i] },
+  { brand: 'Suzuki', patterns: [/\bsuzuki\b/i] },
+  { brand: 'Renault', patterns: [/\brenault\b/i] },
+  { brand: 'Volkswagen', patterns: [/\bvolkswagen\b/i] },
+  { brand: 'Peugeot', patterns: [/\bpeugeot\b/i] },
+  { brand: 'Jeep', patterns: [/\bjeep\b/i] },
+  { brand: 'Subaru', patterns: [/\bsubaru\b/i] },
+  { brand: 'Mitsubishi', patterns: [/\bmitsubishi\b/i] },
+  { brand: 'Changan', patterns: [/\bchangan\b/i] },
+  { brand: 'Dongfeng', patterns: [/\bdongfeng\b/i] },
+  { brand: 'Foton', patterns: [/\bfoton\b/i] },
+  { brand: 'Haval', patterns: [/\bhaval\b/i] },
+  { brand: 'JAC', patterns: [/\bjac\b/i] },
+];
+
+const AUTOMOTIVE_BRAND_COLORS = {
+  Toyota: '#e53935',
+  Nissan: '#2563eb',
+  BYD: '#b8bcc6',
+  Geely: '#38bdf8',
+  Volvo: '#c2a27c',
+  Hyundai: '#1d4ed8',
+  Kia: '#111827',
+  Mazda: '#ef4444',
+  Honda: '#dc2626',
+  Ford: '#1e40af',
+  Chevrolet: '#facc15',
+  BMW: '#1f2937',
+  Audi: '#4b5563',
+  'Mercedes-Benz': '#111827',
+  Chery: '#9f1239',
+  Suzuki: '#dc2626',
+  Renault: '#f59e0b',
+  Volkswagen: '#2563eb',
+  Peugeot: '#0f172a',
+  Jeep: '#3f3f46',
+  Subaru: '#1d4ed8',
+  Mitsubishi: '#dc2626',
+  Changan: '#0284c7',
+  Dongfeng: '#ef4444',
+  Foton: '#0f766e',
+  Haval: '#475569',
+  JAC: '#b91c1c',
+  'Otros concesionarios': '#7c8aa1',
+};
+
+function isAutomotiveDealer(row) {
+  return row?.commercialBranchDetail === 'Automotriz · concesionario' || row?.category === 'Concesionario';
+}
+
+function inferAutomotiveBrand(row) {
+  if (!isAutomotiveDealer(row)) return '';
+  const haystack = [row.name, row.operator, row.brandGroup, row.networkBrand, row.canonicalName].filter(Boolean).join(' ');
+  for (const rule of AUTOMOTIVE_BRAND_RULES) {
+    if (rule.patterns.some((pattern) => pattern.test(haystack))) return rule.brand;
+  }
+  return 'Otros concesionarios';
+}
+
+function automotiveBrandColor(brand) {
+  return AUTOMOTIVE_BRAND_COLORS[brand] || '#7c8aa1';
 }
 
 function labelCategory(value) {
@@ -1652,12 +1789,15 @@ function compareCategoryFilterValues(a, b) {
 }
 function buildLeafletMarkerIcon(row) {
   const tier = territorialTier(row);
-  const color = tier === 'A' ? '#1f1f1f' : tier === 'B' ? '#575757' : tier === 'C' ? '#8d8d8d' : '#b6b6b6';
+  const dealerBrand = inferAutomotiveBrand(row);
+  const color = dealerBrand
+    ? automotiveBrandColor(dealerBrand)
+    : tier === 'A' ? '#1f1f1f' : tier === 'B' ? '#575757' : tier === 'C' ? '#8d8d8d' : '#b6b6b6';
   return L.divIcon({
     className: 'mapco-marker-wrap',
-    html: `<span class="marker-dot" style="background:${escapeHtml(color)}"></span>`,
-    iconSize: [16, 16],
-    iconAnchor: [8, 8],
+    html: `<span class="marker-dot${dealerBrand ? ' marker-dot-dealer' : ''}" style="background:${escapeHtml(color)}"></span>`,
+    iconSize: dealerBrand ? [18, 18] : [16, 16],
+    iconAnchor: dealerBrand ? [9, 9] : [8, 8],
     popupAnchor: [0, -10],
   });
 }
