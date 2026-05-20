@@ -52,7 +52,7 @@ class _TechnicianWorkboardScreenState extends State<TechnicianWorkboardScreen> {
       setState(() {
         _pendingOrders = pendingOrders;
         _syncPending = pendingSync;
-        _visits = visits;
+        _visits = visits.where((item) => item.isVisibleOnBoard).toList();
       });
     } catch (e) {
       if (!mounted) return;

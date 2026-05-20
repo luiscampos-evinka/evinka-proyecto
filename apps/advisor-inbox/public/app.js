@@ -64,6 +64,7 @@ const els = {
   composerInput: document.getElementById('composerInput'),
   composerSendBtn: document.querySelector('#composerForm .composer-send'),
   searchInput: document.getElementById('searchInput'),
+  countryFilter: document.getElementById('countryFilter'),
   statusFilter: document.getElementById('statusFilter'),
   statsBar: document.getElementById('statsBar'),
   logoutBtn: document.getElementById('logoutBtn'),
@@ -933,10 +934,26 @@ function renderConversationDetail({ preserveScroll = true } = {}) {
   }
 }
 
+function buildCountryFilterOptions() {
+  const allowed = Array.isArray(state.user?.allowedCountries)
+    ? [...new Set(state.user.allowedCountries.map((item) => String(item || '').trim().toUpperCase()).filter(Boolean))]
+    : [];
+  const options = [];
+  if (!allowed.length || allowed.includes('ALL')) options.push({ value: 'ALL', label: 'Todos los países' });
+  if (!allowed.length || allowed.includes('PE') || allowed.includes('ALL')) options.push({ value: 'PE', label: 'Perú' });
+  if (!allowed.length || allowed.includes('CO') || allowed.includes('ALL')) options.push({ value: 'CO', label: 'Colombia' });
+  const current = els.countryFilter.value || (options[0]?.value || 'ALL');
+  els.countryFilter.innerHTML = options.map((item) => `<option value="${item.value}">${item.label}</option>`).join('');
+  els.countryFilter.value = options.some((item) => item.value === current)
+    ? current
+    : (options[0]?.value || 'ALL');
+}
+
 async function loadMe() {
   try {
     const data = await api('/api/me');
     state.user = data.user;
+    buildCountryFilterOptions();
     setLoggedIn(true);
     await loadConversations({ refreshActive: true });
   } catch {
@@ -945,7 +962,9 @@ async function loadMe() {
 }
 
 async function loadConversations({ refreshActive = true } = {}) {
-  const data = await api(`/api/inbox/conversations?status=${encodeURIComponent(els.statusFilter.value)}`);
+  const params = new URLSearchParams({ status: els.statusFilter.value });
+  if (els.countryFilter.value) params.set('country', els.countryFilter.value);
+  const data = await api(`/api/inbox/conversations?${params.toString()}`);
   state.conversations = data;
   if (refreshActive && state.activeId && !data.some((item) => item.id === state.activeId)) {
     state.activeId = null;
@@ -1167,6 +1186,7 @@ els.mobileBackBtn?.addEventListener('click', () => {
   els.conversationList?.scrollIntoView({ behavior: 'smooth', block: 'start' });
 });
 window.addEventListener('resize', syncResponsiveShell);
+els.countryFilter.addEventListener('change', () => loadConversations({ refreshActive: true }));
 els.statusFilter.addEventListener('change', () => loadConversations({ refreshActive: true }));
 els.composerInput.addEventListener('input', autoResizeComposer);
 els.composerInput.addEventListener('keydown', (event) => {

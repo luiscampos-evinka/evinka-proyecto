@@ -10,7 +10,7 @@
     <link rel="shortcut icon" type="image/png" href="/assets/favicon-light.png?v=20260512a" />
     <link rel="apple-touch-icon" href="/assets/favicon-light.png?v=20260512a" />
     <meta name="application-name" content="EVINKA Cotizador" />
-    <link rel="stylesheet" href="/styles.css?v=20260514theme2" />
+    <link rel="stylesheet" href="/styles.css?v=20260520ops1" />
   </head>
   <body>
     <div id="app">
@@ -57,6 +57,7 @@
               <button class="tab nav-link" data-tab="ops" id="opsTabBtn"><span>Operación</span><span>Pendientes</span></button>
               <button class="tab nav-link" data-tab="conformities" id="conformitiesTabBtn"><span>Conformidades</span><span>Historial</span></button>
               <button class="tab nav-link hidden" data-tab="advisor" id="advisorTabBtn"><span>Asesor</span><span>Inbox</span></button>
+              <button class="tab nav-link hidden" data-tab="audit" id="auditTabBtn"><span>Auditoría</span><span>Trazabilidad</span></button>
               <button class="tab nav-link hidden" data-tab="admin" id="adminTabBtn"><span>Admin</span><span>Ajustes</span></button>
             </nav>
           </div>
@@ -501,6 +502,18 @@
             </div>
           </form>
         </section>
+
+        <section id="tab-audit" class="panel tab-panel hidden">
+          <div class="section-header">
+            <div>
+              <h2>Auditoría total</h2>
+              <p class="muted">Trazabilidad de cotizaciones, visitas, pagos, instalaciones, conformidades y notificaciones.</p>
+            </div>
+            <button class="secondary" type="button" onclick="window.loadAuditFeed && window.loadAuditFeed()">Recargar</button>
+          </div>
+          <div id="auditSummary" class="scope-notice">Cargando auditoría…</div>
+          <div id="auditList" class="quotes-list top-gap-sm"></div>
+        </section>
         </div>
       </section>
 
@@ -562,6 +575,7 @@
                 <legend>Colas permitidas</legend>
                 <div class="choice-grid">
                   <label class="choice-chip"><input type="checkbox" name="allowedQueues" value="comercial" /> Comercial</label>
+                  <label class="choice-chip"><input type="checkbox" name="allowedQueues" value="b2b" /> B2B / corporativo</label>
                   <label class="choice-chip"><input type="checkbox" name="allowedQueues" value="agenda" /> Agenda</label>
                   <label class="choice-chip"><input type="checkbox" name="allowedQueues" value="postventa" /> Postventa</label>
                   <label class="choice-chip"><input type="checkbox" name="allowedQueues" value="pagos" /> Pagos</label>
@@ -583,6 +597,6 @@
       </div>
 
     </div>
-    <script src="/app.js?v=20260514theme2"></script>
+    <script src="/app.js?v=20260520ops1"></script>
   </body>
   </html>

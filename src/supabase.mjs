@@ -37,4 +37,8 @@ export class SupabaseRest {
   async update(table, matchQuery, patch) {
     return this.request(`${table}?${matchQuery}`, { method: 'PATCH', body: patch, prefer: 'return=representation' });
   }
+
+  async delete(table, matchQuery) {
+    return this.request(`${table}?${matchQuery}`, { method: 'DELETE', prefer: 'return=representation' });
+  }
 }

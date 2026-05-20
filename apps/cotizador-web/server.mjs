@@ -32,6 +32,7 @@ const files = {
   warranties: path.join(dataDir, 'warranties.json'),
   techVisits: path.join(dataDir, 'tech-visits.json'),
   sessions: path.join(dataDir, 'sessions.json'),
+  auditLog: path.join(dataDir, 'audit-log.json'),
 };
 
 const COOKIE_NAME = 'cotizador_session';
@@ -68,9 +69,16 @@ const TECH_VISITS_DEFAULT_NAME = String(process.env.TECH_VISITS_DEFAULT_NAME || 
 const CLICKUP_API_BASE = 'https://api.clickup.com/api/v2';
 const CLICKUP_API_TOKEN = String(process.env.CLICKUP_API_TOKEN || process.env.CLICKUP_TOKEN || '').trim();
 const CLICKUP_B2C_LIST_ID = String(process.env.CLICKUP_B2C_LIST_ID || '').trim();
-const CLICKUP_B2C_STATUS = String(process.env.CLICKUP_B2C_STATUS || 'Open').trim();
+const CLICKUP_B2C_STATUS = String(process.env.CLICKUP_B2C_STATUS || 'Open').trim().toLowerCase() === 'open'
+  ? 'pendiente visita técnica'
+  : String(process.env.CLICKUP_B2C_STATUS || 'pendiente visita técnica').trim();
+const CLICKUP_B2C_QUOTE_PENDING_STATUS = String(process.env.CLICKUP_B2C_QUOTE_PENDING_STATUS || 'pendiente enviar cotizació').trim();
 const CLICKUP_B2C_DEFAULT_ASSIGNEE_ID = Number(process.env.CLICKUP_B2C_DEFAULT_ASSIGNEE_ID || 0);
 const CLICKUP_DEFAULT_DURATION_MINUTES = Number(process.env.CLICKUP_DEFAULT_DURATION_MINUTES || 60);
+const META_WEBHOOK_INTERNAL_URL = String(process.env.META_WEBHOOK_INTERNAL_URL || 'http://127.0.0.1:8787').trim().replace(/\/$/, '');
+const AUDIT_LOG_LIMIT = Number(process.env.EVINKA_AUDIT_LOG_LIMIT || 5000);
+const RAUL_DEFAULT_EMAIL = 'raul.flores@evinka.tech';
+const RAUL_DEFAULT_PHONE = '+51923587116';
 
 ensureDir(dataDir);
 ensureDir(storageDir);
@@ -450,7 +458,9 @@ app.patch('/api/admin/users/:id/credentials', authRequired, adminOnly, (req, res
     approvedBy: safeUser(req.user),
   });
   writeUsers(users);
-  invalidateUserSessions(users[index].id);
+  if (body.pin !== undefined) {
+    invalidateUserSessions(users[index].id);
+  }
   res.json({ ok: true, user: safeUser(users[index]) });
 });
 
@@ -515,7 +525,10 @@ app.patch('/api/admin/users/:id', authRequired, adminOnly, (req, res) => {
       : '',
   });
   writeUsers(users);
-  invalidateUserSessions(users[index].id);
+  const shouldInvalidateSessions = Boolean(pin) || status === 'blocked';
+  if (shouldInvalidateSessions) {
+    invalidateUserSessions(users[index].id);
+  }
   res.json({ ok: true, user: safeUser(users[index]) });
 });
 
@@ -537,7 +550,9 @@ app.patch('/api/admin/users/:id/access', authRequired, adminOnly, (req, res) => 
     approvedBy: safeUser(req.user),
   });
   writeUsers(users);
-  invalidateUserSessions(users[index].id);
+  if (action === 'block') {
+    invalidateUserSessions(users[index].id);
+  }
   res.json({ ok: true, user: safeUser(users[index]) });
 });
 
@@ -563,6 +578,9 @@ app.get('/api/quotes', authRequired, (req, res) => {
 });
 
 app.post('/api/quotes', authRequired, async (req, res) => {
+  if (!canUserCreateQuote(req.user)) {
+    return res.status(403).json({ error: 'Tu usuario no puede generar cotizaciones.' });
+  }
   const activeCountry = resolveRequestCountryContext(req, req.user);
   const quotes = readJSON(files.quotes, []);
   const visits = readJSON(files.techVisits, []);
@@ -588,6 +606,19 @@ app.post('/api/quotes', authRequired, async (req, res) => {
   if (!userCanAccessCountry(req.user, payload.countryCode)) {
     return res.status(403).json({ error: 'No tienes permiso para crear cotizaciones para ese país.' });
   }
+  const visitIndex = findTechVisitIndex(visits, {
+    visitId: payload.visitId,
+    reference: payload.reference,
+  });
+  const linkedVisit = visitIndex >= 0 ? normalizeTechVisit(visits[visitIndex]) : null;
+  if (linkedVisit) {
+    payload.phone = String(payload.phone || linkedVisit.clientPhone || '').trim();
+    payload.clientAddress = String(payload.clientAddress || linkedVisit.clientAddress || '').trim();
+    payload.address = String(payload.address || linkedVisit.clientAddress || '').trim();
+    payload.clientDocument = String(payload.clientDocument || linkedVisit.clientDocument || '').trim();
+    payload.email = normalizeEmail(payload.email || linkedVisit.clientEmail || '');
+    payload.clientName = String(payload.clientName || linkedVisit.clientName || '').trim();
+  }
   const quote = buildQuote(payload, config, req.user);
   const clientRecord = upsertOperationalClientFromQuote(quote, req.user);
   quote.clientId = clientRecord.id;
@@ -602,26 +633,50 @@ app.post('/api/quotes', authRequired, async (req, res) => {
   quote.emailDelivery = { ok: false, skipped: true, message: 'Cotización creada. Pendiente de validación para envío al cliente.' };
   quotes.push(quote);
   writeJSON(files.quotes, quotes);
-
-  const visitIndex = findTechVisitIndex(visits, {
-    visitId: payload.visitId,
-    quoteId: quote.id,
-    reference: payload.reference,
-  });
   if (visitIndex >= 0) {
     const currentVisit = normalizeTechVisit(visits[visitIndex]);
-    visits[visitIndex] = normalizeTechVisit({
+    const syncedVisit = normalizeTechVisit({
       ...currentVisit,
-      status: 'cotizada',
+      status: 'pendiente_cotizacion',
       quoteId: quote.id,
+      clientPhone: String(currentVisit.clientPhone || quote.phone || '').trim(),
+      clientEmail: normalizeEmail(currentVisit.clientEmail || quote.email || ''),
+      clientAddress: String(currentVisit.clientAddress || quote.address || '').trim(),
       clientDocument: String(currentVisit.clientDocument || quote.clientDocument || '').trim(),
       installationOrderId: currentVisit.installationOrderId || '',
       notes: String(payload.technicianNotes ?? currentVisit.notes ?? '').trim(),
       updatedAt: new Date().toISOString(),
       updatedBy: safeUser(req.user),
     });
+    const clickupSync = await syncTechVisitToClickUp(syncedVisit, { quote });
+    visits[visitIndex] = normalizeTechVisit({
+      ...syncedVisit,
+      clickupTaskId: clickupSync.taskId || syncedVisit.clickupTaskId,
+      clickupTaskUrl: clickupSync.taskUrl || syncedVisit.clickupTaskUrl,
+      clickupSyncedAt: clickupSync.syncedAt || syncedVisit.clickupSyncedAt,
+      clickupSyncError: clickupSync.ok ? '' : String(clickupSync.error || syncedVisit.clickupSyncError || '').trim(),
+    });
     saveTechVisits(visits);
+    quote.clickupTaskId = clickupSync.taskId || syncedVisit.clickupTaskId || '';
   }
+  quotes[quotes.length - 1] = normalizeStoredQuote({ ...quotes[quotes.length - 1], clickupTaskId: quote.clickupTaskId || quotes[quotes.length - 1]?.clickupTaskId || '' });
+  writeJSON(files.quotes, quotes);
+
+  appendOperationalAuditLog({
+    actor: req.user,
+    action: 'quote_created',
+    entityType: 'quote',
+    entityId: quote.id,
+    countryCode: quote.countryCode,
+    summary: `${req.user?.name || 'Usuario'} generó la cotización ${quote.id}`,
+    detail: {
+      clientName: quote.clientName,
+      visitId: quote.visitId || payload.visitId || linkedVisit?.id || '',
+      clickupTaskId: quote.clickupTaskId || '',
+      total: safeNumber(quote.total, 0),
+      status: quote.status,
+    },
+  });
 
   res.json(quote);
 });
@@ -640,25 +695,53 @@ app.patch('/api/quotes/:id/status', authRequired, async (req, res) => {
     return res.status(403).json({ error: 'No tienes permiso para actualizar esta cotización.' });
   }
   const nextStatus = normalizeQuoteStatus(body.status || currentQuote.status);
+  if (nextStatus !== currentQuote.status && !canUserManageCommercialQuoteFlow(req.user)) {
+    return res.status(403).json({ error: 'Tu usuario no puede mover el flujo comercial de cotizaciones.' });
+  }
+  if (nextStatus === 'abono_100_confirmado' && !canUserConfirmFullPayment(req.user)) {
+    return res.status(403).json({ error: 'Tu usuario no puede confirmar el abono 100%.' });
+  }
   let order = currentQuote.installationOrderId
     ? installationOrders.find((item) => item.id === currentQuote.installationOrderId)
     : installationOrders.find((item) => item.quoteId === currentQuote.id);
-  if (!order && ['aceptada_cliente', 'instalada'].includes(nextStatus)) {
+  if (!order && ['aceptada_cliente', 'instalada', 'abono_100_confirmado'].includes(nextStatus)) {
     order = buildInstallationOrderFromQuote(currentQuote, req.user);
     installationOrders.push(order);
     writeJSON(files.installationOrders, installationOrders);
   }
 
+  const nowIso = new Date().toISOString();
+  const initialPayment = nextStatus === 'aceptada_cliente'
+    ? {
+        confirmedAt: String(body.paymentDate || currentQuote.initialPayment?.confirmedAt || nowIso).trim() || nowIso,
+        amount: safeNumber(body.paymentAmount, currentQuote.initialPayment?.amount, safeNumber(currentQuote.total, 0) * 0.5),
+        observation: String(body.paymentObservation || currentQuote.initialPayment?.observation || 'Abono 50% confirmado desde EVINKA.').trim(),
+        confirmedBy: safeUser(req.user),
+      }
+    : currentQuote.initialPayment;
+  const finalPayment = nextStatus === 'abono_100_confirmado'
+    ? {
+        confirmedAt: String(body.paymentDate || currentQuote.finalPayment?.confirmedAt || nowIso).trim() || nowIso,
+        amount: safeNumber(body.paymentAmount, currentQuote.finalPayment?.amount, safeNumber(currentQuote.total, 0)),
+        observation: String(body.paymentObservation || currentQuote.finalPayment?.observation || 'Abono 100% confirmado desde EVINKA.').trim(),
+        confirmedBy: safeUser(req.user),
+      }
+    : currentQuote.finalPayment;
+
   const nextQuote = normalizeStoredQuote({
     ...currentQuote,
     status: nextStatus,
     installationOrderId: order?.id || currentQuote.installationOrderId || '',
-    readyForSendAt: nextStatus === 'lista_envio' ? new Date().toISOString() : currentQuote.readyForSendAt || '',
+    readyForSendAt: nextStatus === 'lista_envio' ? nowIso : currentQuote.readyForSendAt || '',
     readyForSendBy: nextStatus === 'lista_envio' ? safeUser(req.user) : currentQuote.readyForSendBy || null,
-    clientAcceptedAt: nextStatus === 'aceptada_cliente' ? new Date().toISOString() : currentQuote.clientAcceptedAt || '',
+    clientAcceptedAt: nextStatus === 'aceptada_cliente' ? initialPayment.confirmedAt || nowIso : currentQuote.clientAcceptedAt || '',
     clientAcceptedBy: nextStatus === 'aceptada_cliente' ? safeUser(req.user) : currentQuote.clientAcceptedBy || null,
-    cancelledAt: nextStatus === 'cancelada' ? new Date().toISOString() : currentQuote.cancelledAt || '',
-    recotizarAt: nextStatus === 'recotizar' ? new Date().toISOString() : currentQuote.recotizarAt || '',
+    cancelledAt: nextStatus === 'cancelada' ? nowIso : currentQuote.cancelledAt || '',
+    recotizarAt: nextStatus === 'recotizar' ? nowIso : currentQuote.recotizarAt || '',
+    fullyPaidAt: nextStatus === 'abono_100_confirmado' ? finalPayment.confirmedAt || nowIso : currentQuote.fullyPaidAt || '',
+    fullyPaidBy: nextStatus === 'abono_100_confirmado' ? safeUser(req.user) : currentQuote.fullyPaidBy || null,
+    initialPayment,
+    finalPayment,
   });
   if (nextStatus === 'lista_envio' && nextQuote.pdfFile && nextQuote.pdfFilename) {
     nextQuote.emailDelivery = await deliverQuoteEmail({
@@ -669,38 +752,99 @@ app.patch('/api/quotes/:id/status', authRequired, async (req, res) => {
       pdfFilename: nextQuote.pdfFilename,
     });
   }
+  if (order && nextStatus === 'abono_100_confirmado') {
+    const orderIndex = installationOrders.findIndex((item) => item.id === order.id);
+    const nextOrder = normalizeInstallationOrder({
+      ...order,
+      status: 'cerrada',
+      updatedAt: nowIso,
+      closedAt: nowIso,
+    });
+    if (orderIndex >= 0) installationOrders[orderIndex] = nextOrder;
+    else installationOrders.push(nextOrder);
+    writeJSON(files.installationOrders, installationOrders);
+    order = nextOrder;
+  }
   quotes[index] = nextQuote;
   writeJSON(files.quotes, quotes);
 
   const visitIndex = findTechVisitIndex(visits, { visitId: body.visitId, quoteId: currentQuote.id, reference: body.reference });
+  let persistedVisit = null;
   if (visitIndex >= 0) {
     const currentVisit = normalizeTechVisit(visits[visitIndex]);
     const nextVisitStatus = nextStatus === 'cotizada'
-      ? 'cotizada'
+      ? 'pendiente_cotizacion'
       : nextStatus === 'lista_envio'
         ? 'lista_envio'
         : nextStatus === 'aceptada_cliente'
           ? 'aceptada_cliente'
+          : nextStatus === 'abono_100_confirmado'
+            ? 'cerrada'
           : nextStatus === 'recotizar'
             ? 'recotizar'
             : nextStatus === 'cancelada'
               ? 'cancelada'
               : currentVisit.status;
-    visits[visitIndex] = normalizeTechVisit({
+    const syncedVisit = normalizeTechVisit({
       ...currentVisit,
       status: nextVisitStatus,
       quoteId: currentQuote.id,
+      clientPhone: String(currentVisit.clientPhone || nextQuote.phone || '').trim(),
+      clientEmail: normalizeEmail(currentVisit.clientEmail || nextQuote.email || ''),
+      clientAddress: String(currentVisit.clientAddress || nextQuote.address || '').trim(),
       installationOrderId: nextQuote.installationOrderId || currentVisit.installationOrderId,
       updatedAt: new Date().toISOString(),
       updatedBy: safeUser(req.user),
     });
+    const clickupSync = await syncTechVisitToClickUp(syncedVisit, { quote: nextQuote });
+    visits[visitIndex] = normalizeTechVisit({
+      ...syncedVisit,
+      clickupTaskId: clickupSync.taskId || syncedVisit.clickupTaskId,
+      clickupTaskUrl: clickupSync.taskUrl || syncedVisit.clickupTaskUrl,
+      clickupSyncedAt: clickupSync.syncedAt || syncedVisit.clickupSyncedAt,
+      clickupSyncError: clickupSync.ok ? '' : String(clickupSync.error || syncedVisit.clickupSyncError || '').trim(),
+    });
+    persistedVisit = visits[visitIndex];
     saveTechVisits(visits);
+  }
+
+  const auditSummary = nextStatus === 'lista_envio'
+    ? `Cotización ${nextQuote.id} enviada al cliente`
+    : nextStatus === 'aceptada_cliente'
+      ? `Abono 50% registrado para ${nextQuote.id}`
+      : nextStatus === 'abono_100_confirmado'
+        ? `Abono 100% registrado para ${nextQuote.id}`
+        : `Cotización ${nextQuote.id} actualizada a ${nextStatus}`;
+  appendOperationalAuditLog({
+    actor: req.user,
+    action: 'quote_status_updated',
+    entityType: nextStatus.includes('abono') ? 'payment' : 'quote',
+    entityId: nextQuote.id,
+    countryCode: nextQuote.countryCode,
+    summary: auditSummary,
+    detail: {
+      previousStatus: currentQuote.status,
+      nextStatus,
+      clickupTaskId: persistedVisit?.clickupTaskId || nextQuote.clickupTaskId || '',
+      initialPayment: nextQuote.initialPayment,
+      finalPayment: nextQuote.finalPayment,
+    },
+  });
+
+  if (nextStatus === 'aceptada_cliente') {
+    nextQuote.clickupTaskId = persistedVisit?.clickupTaskId || nextQuote.clickupTaskId || '';
+    nextQuote.abono50Notifications = await notifyAbono50Milestone({ quote: nextQuote, actor: req.user });
+    quotes[index] = nextQuote;
+    writeJSON(files.quotes, quotes);
   }
 
   res.json({ ok: true, quote: nextQuote, installationOrder: order || null });
 });
 
 app.post('/api/quotes/:id/schedule-installation', authRequired, async (req, res) => {
+  if (!canUserScheduleInstallation(req.user)) {
+    return res.status(403).json({ error: 'Tu usuario no puede agendar instalaciones desde una cotización.' });
+  }
   const quotes = readJSON(files.quotes, []);
   const visits = readJSON(files.techVisits, []);
   const installationOrders = readJSON(files.installationOrders, []);
@@ -809,6 +953,9 @@ app.post('/api/quotes/:id/schedule-installation', authRequired, async (req, res)
     quoteTotal: currentQuote.total || order.quoteTotal || 0,
     voltage: String(currentQuote.voltage || order.voltage || ''),
     amperage: String(currentQuote.current || order.amperage || ''),
+    status: 'agendada',
+    scheduledAt,
+    scheduledWindow: timeWindow,
     updatedAt: new Date().toISOString(),
   };
   const orderIndex = installationOrders.findIndex((item) => item.id === order.id);
@@ -826,8 +973,16 @@ app.post('/api/quotes/:id/schedule-installation', authRequired, async (req, res)
       resolution: requestedVisit.resolution || `Evaluación concluida. Derivada a instalación ${order.id}.`,
     });
   }
-  if (visitIndex >= 0) visits[visitIndex] = nextVisit;
-  else visits.push(nextVisit);
+  const installSync = await syncTechVisitToClickUp(nextVisit, { quote: currentQuote });
+  const persistedInstallVisit = normalizeTechVisit({
+    ...nextVisit,
+    clickupTaskId: installSync.taskId || nextVisit.clickupTaskId,
+    clickupTaskUrl: installSync.taskUrl || nextVisit.clickupTaskUrl,
+    clickupSyncedAt: installSync.syncedAt || nextVisit.clickupSyncedAt,
+    clickupSyncError: installSync.ok ? '' : String(installSync.error || nextVisit.clickupSyncError || '').trim(),
+  });
+  if (visitIndex >= 0) visits[visitIndex] = persistedInstallVisit;
+  else visits.push(persistedInstallVisit);
   saveTechVisits(visits);
 
   const nextQuote = normalizeStoredQuote({
@@ -853,10 +1008,29 @@ app.post('/api/quotes/:id/schedule-installation', authRequired, async (req, res)
   quotes[index] = nextQuote;
   writeJSON(files.quotes, quotes);
 
-  res.json({ ok: true, quote: nextQuote, installationOrder: order, visit: nextVisit });
+  appendOperationalAuditLog({
+    actor: req.user,
+    action: 'installation_scheduled',
+    entityType: 'installation',
+    entityId: order.id,
+    countryCode: nextQuote.countryCode,
+    summary: `Instalación agendada para ${nextQuote.clientName || nextQuote.id}`,
+    detail: {
+      quoteId: nextQuote.id,
+      scheduledAt,
+      timeWindow,
+      assignedTechEmail,
+      clickupTaskId: persistedInstallVisit.clickupTaskId || '',
+    },
+  });
+
+  res.json({ ok: true, quote: nextQuote, installationOrder: order, visit: persistedInstallVisit });
 });
 
 app.post('/api/quotes/:id/accept', authRequired, (req, res) => {
+  if (!canUserManageCommercialQuoteFlow(req.user)) {
+    return res.status(403).json({ error: 'Tu usuario no puede aceptar cotizaciones.' });
+  }
   const quotes = readJSON(files.quotes, []);
   const installationOrders = readJSON(files.installationOrders, []);
   const index = quotes.findIndex((item) => item.id === req.params.id);
@@ -898,6 +1072,21 @@ app.get('/api/quotes/:id', authRequired, (req, res) => {
   res.json(quote);
 });
 
+app.get('/api/audit-feed', authRequired, (req, res) => {
+  if (!canUserReadAudit(req.user)) {
+    return res.status(403).json({ error: 'Tu usuario no puede ver la auditoría.' });
+  }
+  const countryScope = resolveRequestCountryContext(req, req.user);
+  const limit = Math.min(300, Math.max(1, Number(req.query.limit || 120) || 120));
+  const entityType = String(req.query.entityType || 'all').trim().toLowerCase();
+  const feed = buildOperationalAuditFeed({
+    limit,
+    countryCode: countryScope,
+    entityType,
+  });
+  res.json(feed);
+});
+
 app.get('/api/installation-orders', authRequired, (req, res) => {
   const user = req.user;
   const countryScope = resolveRequestCountryContext(req, req.user);
@@ -905,7 +1094,7 @@ app.get('/api/installation-orders', authRequired, (req, res) => {
     .map(normalizeInstallationOrder)
     .filter((order) => userCanAccessCountry(user, order.countryCode))
     .filter((order) => matchesCountryScope(order.countryCode, countryScope))
-    .filter((order) => canUserSeeAllOperations(user)
+    .filter((order) => canUserSeeInstallationBoard(user)
       || normalizeEmail(order.assignedTechEmail) === normalizeEmail(user?.email))
     .sort((a, b) => String(b.updatedAt || b.createdAt || '').localeCompare(String(a.updatedAt || a.createdAt || '')));
   res.json(orders);
@@ -922,7 +1111,7 @@ app.get('/api/installation-orders/:id', authRequired, (req, res) => {
   if (!matchesCountryScope(order.countryCode, countryScope)) {
     return res.status(404).json({ error: 'Orden no encontrada' });
   }
-  if (!canUserSeeAllOperations(req.user)
+  if (!canUserSeeInstallationBoard(req.user)
     && normalizeEmail(order.assignedTechEmail) !== normalizeEmail(req.user?.email)) {
     return res.status(403).json({ error: 'No tienes permiso para ver esta orden' });
   }
@@ -934,7 +1123,7 @@ app.get('/api/tech/visits', authRequired, async (req, res) => {
   const visits = (await syncTechVisitsFromCalendar())
     .filter((visit) => userCanAccessCountry(req.user, visit.countryCode))
     .filter((visit) => matchesCountryScope(visit.countryCode, countryScope))
-    .filter((visit) => canUserSeeAllOperations(req.user)
+    .filter((visit) => canUserSeeVisitsBoard(req.user)
       || normalizeEmail(visit.assignedTechEmail) === normalizeEmail(req.user?.email))
     .sort((a, b) => {
       const dateA = String(a.scheduledAt || a.createdAt || '');
@@ -944,10 +1133,63 @@ app.get('/api/tech/visits', authRequired, async (req, res) => {
   res.json(visits);
 });
 
+app.delete('/api/tech/visits/:id/global', authRequired, async (req, res) => {
+  if (req.user?.role !== 'admin') {
+    return res.status(403).json({ error: 'Solo admin puede eliminar una visita globalmente.' });
+  }
+
+  const visits = readJSON(files.techVisits, []).map(normalizeTechVisit);
+  const index = visits.findIndex((item) => item.id === req.params.id);
+  if (index < 0) return res.status(404).json({ error: 'Visita no encontrada' });
+
+  const current = normalizeTechVisit(visits[index]);
+  if (!userCanAccessCountry(req.user, current.countryCode)) {
+    return res.status(403).json({ error: 'No tienes permiso para eliminar esta visita.' });
+  }
+  if (current.quoteId || current.installationOrderId) {
+    return res.status(409).json({ error: 'Esta visita ya tiene cotización u orden vinculada. Primero limpia ese flujo y luego elimina la visita global.' });
+  }
+
+  let booking = null;
+  if (liveBookingsSb && current.reference) {
+    const rows = await liveBookingsSb.select(
+      'citas',
+      `codigo_cita=eq.${encodeURIComponent(current.reference)}&select=id_cita,codigo_cita,microsoft_event_id`,
+    ).catch(() => []);
+    booking = Array.isArray(rows) && rows.length ? rows[0] : null;
+  }
+
+  const externalEventId = String(booking?.microsoft_event_id || current.clickupTaskId || '').trim();
+  const syncResult = await requestGlobalVisitDeleteSync({
+    eventId: externalEventId,
+    ticket: current.reference,
+    countryCode: current.countryCode,
+  });
+
+  let supabaseDeleted = false;
+  if (liveBookingsSb && current.reference) {
+    await liveBookingsSb.delete('citas', `codigo_cita=eq.${encodeURIComponent(current.reference)}`);
+    supabaseDeleted = true;
+  }
+
+  saveTechVisits(visits.filter((item) => item.id !== current.id));
+  res.json({
+    ok: true,
+    deleted: {
+      visit: true,
+      external: Boolean(externalEventId),
+      supabase: supabaseDeleted,
+    },
+    syncResult,
+    visitId: current.id,
+    reference: current.reference,
+  });
+});
+
 app.get('/api/conformities', authRequired, (req, res) => {
   const user = req.user;
   const countryScope = resolveRequestCountryContext(req, req.user);
-  const canSeeAll = canUserSeeAllOperations(user);
+  const canSeeAll = canUserSeeConformitiesBoard(user);
   const userEmail = normalizeEmail(user?.email);
   const orders = readJSON(files.installationOrders, []).map(normalizeInstallationOrder);
   const visits = readJSON(files.techVisits, []).map(normalizeTechVisit);
@@ -1113,12 +1355,13 @@ app.post('/api/conformities', authRequired, async (req, res) => {
   if (orderId || conformity.quoteId) {
     const visits = readJSON(files.techVisits, []);
     let visitsChanged = false;
+    let syncedInstallationVisit = null;
     for (let i = 0; i < visits.length; i += 1) {
       const currentVisit = normalizeTechVisit(visits[i]);
       const isTarget = currentVisit.type === 'instalacion'
         && ((orderId && currentVisit.installationOrderId === orderId) || (conformity.quoteId && currentVisit.quoteId === conformity.quoteId));
       if (!isTarget) continue;
-      visits[i] = normalizeTechVisit({
+      const nextVisit = normalizeTechVisit({
         ...currentVisit,
         status: 'pendiente_cierre',
         installationOrderId: orderId || currentVisit.installationOrderId,
@@ -1133,9 +1376,37 @@ app.post('/api/conformities', authRequired, async (req, res) => {
           quoteId: conformity.quoteId || currentVisit.quoteId,
         }),
       });
+      const linkedQuote = quote || normalizeStoredQuote(rawQuotes[quoteIndex] || {});
+      const clickupSync = await syncTechVisitToClickUp(nextVisit, { quote: linkedQuote });
+      visits[i] = normalizeTechVisit({
+        ...nextVisit,
+        clickupTaskId: clickupSync.taskId || nextVisit.clickupTaskId,
+        clickupTaskUrl: clickupSync.taskUrl || nextVisit.clickupTaskUrl,
+        clickupSyncedAt: clickupSync.syncedAt || nextVisit.clickupSyncedAt,
+        clickupSyncError: clickupSync.ok ? '' : String(clickupSync.error || nextVisit.clickupSyncError || '').trim(),
+      });
+      syncedInstallationVisit = visits[i];
       visitsChanged = true;
     }
     if (visitsChanged) saveTechVisits(visits);
+    await notifyConformityMilestone({
+      conformity,
+      quote: normalizeStoredQuote(rawQuotes[quoteIndex] || quote || {}),
+      actor: req.user,
+    });
+    appendOperationalAuditLog({
+      actor: req.user,
+      action: 'conformity_generated',
+      entityType: 'conformity',
+      entityId: conformity.id,
+      countryCode: conformity.countryCode,
+      summary: `Conformidad generada para ${conformity.clientName || conformity.quoteId}`,
+      detail: {
+        quoteId: conformity.quoteId,
+        installationOrderId: orderId || '',
+        clickupTaskId: syncedInstallationVisit?.clickupTaskId || '',
+      },
+    });
   }
 
   res.json({ ok: true, conformity, emailDelivery: conformity.emailDelivery });
@@ -1144,7 +1415,7 @@ app.post('/api/conformities', authRequired, async (req, res) => {
 app.get('/api/conformities/:id/pdf', authRequired, async (req, res) => {
   const user = req.user;
   const countryScope = resolveRequestCountryContext(req, req.user);
-  const canSeeAll = canUserSeeAllOperations(user);
+  const canSeeAll = canUserSeeConformitiesBoard(user);
   const orders = readJSON(files.installationOrders, []).map(normalizeInstallationOrder);
   const visits = readJSON(files.techVisits, []).map(normalizeTechVisit);
   const conformity = readJSON(files.conformities, []).map(normalizeConformityRecord).find((item) => String(item.id || '').trim() === req.params.id);
@@ -1325,11 +1596,7 @@ app.patch('/api/tech/visits/:id', authRequired, async (req, res) => {
   if (index < 0) return res.status(404).json({ error: 'Visita no encontrada' });
 
   const current = normalizeTechVisit(visits[index]);
-  if (!userCanAccessCountry(req.user, current.countryCode)) {
-    return res.status(403).json({ error: 'No tienes permiso para actualizar esta visita.' });
-  }
-  const sameTech = normalizeEmail(current.assignedTechEmail) === normalizeEmail(req.user?.email);
-  if (req.user?.role !== 'admin' && !sameTech) {
+  if (!canUserUpdateVisit(req.user, current)) {
     return res.status(403).json({ error: 'No tienes permiso para actualizar esta visita' });
   }
 
@@ -1356,13 +1623,38 @@ app.patch('/api/tech/visits/:id', authRequired, async (req, res) => {
   if (next.status === 'cerrada') {
     next.closedAt = new Date().toISOString();
   }
-  visits[index] = next;
+  const relatedQuote = next.quoteId
+    ? readJSON(files.quotes, []).map(normalizeStoredQuote).find((item) => item.id === next.quoteId) || null
+    : null;
+  const clickupSync = await syncTechVisitToClickUp(next, { quote: relatedQuote });
+  visits[index] = normalizeTechVisit({
+    ...next,
+    clickupTaskId: clickupSync.taskId || next.clickupTaskId,
+    clickupTaskUrl: clickupSync.taskUrl || next.clickupTaskUrl,
+    clickupSyncedAt: clickupSync.syncedAt || next.clickupSyncedAt,
+    clickupSyncError: clickupSync.ok ? '' : String(clickupSync.error || next.clickupSyncError || '').trim(),
+  });
   saveTechVisits(visits);
   const notifications = [];
-  if (current.status !== 'en_ruta' && next.status === 'en_ruta') {
-    notifications.push(...await notifyVisitOnTheWay(next));
+  if (current.status !== 'en_ruta' && visits[index].status === 'en_ruta') {
+    notifications.push(...await notifyVisitOnTheWay(visits[index]));
   }
-  res.json({ ...normalizeTechVisit(next), notifications });
+  appendOperationalAuditLog({
+    actor: req.user,
+    action: 'visit_updated',
+    entityType: current.type === 'instalacion' ? 'installation_visit' : 'visit',
+    entityId: current.id,
+    countryCode: current.countryCode,
+    summary: `Visita ${current.id} actualizada a ${visits[index].status}`,
+    detail: {
+      previousStatus: current.status,
+      nextStatus: visits[index].status,
+      quoteId: visits[index].quoteId,
+      installationOrderId: visits[index].installationOrderId,
+      clickupTaskId: visits[index].clickupTaskId || '',
+    },
+  });
+  res.json({ ...normalizeTechVisit(visits[index]), notifications });
 });
 
 app.post('/api/internal/tech-visits', internalBotAuth, async (req, res) => {
@@ -1427,6 +1719,20 @@ app.post('/api/internal/tech-visits', internalBotAuth, async (req, res) => {
     visits.push(syncedVisit);
   }
   writeJSON(files.techVisits, visits);
+  appendOperationalAuditLog({
+    actor: { id: 'chatbot', name: 'Chatbot EVINKA', email: 'chatbot@evinka.local', role: 'bot', status: 'active', employeeCode: 'BOT', notificationPhone: '', allowedCountries: [syncedVisit.countryCode || ''], allowedQueues: [] },
+    action: existingIndex >= 0 ? 'visit_upserted_from_chatbot' : 'visit_created_from_chatbot',
+    entityType: 'visit',
+    entityId: syncedVisit.id,
+    countryCode: syncedVisit.countryCode,
+    summary: `Chatbot registró la visita ${syncedVisit.reference || syncedVisit.id}`,
+    detail: {
+      reference: syncedVisit.reference,
+      clientName: syncedVisit.clientName,
+      clickupTaskId: syncedVisit.clickupTaskId || '',
+      created: existingIndex < 0,
+    },
+  });
   res.json({ ok: true, created: existingIndex < 0, visit: syncedVisit, clickupSync });
 });
 
@@ -1780,6 +2086,285 @@ function safeUser(user) {
   };
 }
 
+function splitCsv(value = '') {
+  return String(value || '')
+    .split(',')
+    .map((item) => String(item || '').trim())
+    .filter(Boolean);
+}
+
+function findOperationalRecipient({ email = '', name = '' } = {}) {
+  const users = readUsers();
+  const normalizedEmail = normalizeEmail(email);
+  const normalizedName = String(name || '').trim().toLowerCase();
+  if (normalizedEmail) {
+    const byEmail = users.find((item) => normalizeEmail(item.email) === normalizedEmail);
+    if (byEmail) return byEmail;
+  }
+  if (normalizedName) {
+    const byName = users.find((item) => String(item.name || '').trim().toLowerCase() === normalizedName);
+    if (byName) return byName;
+  }
+  return null;
+}
+
+function buildRecipientEntry({ name = '', email = '', phone = '', role = '', clickupUserId = '', source = '' } = {}) {
+  return {
+    name: String(name || '').trim(),
+    email: normalizeEmail(email || ''),
+    phone: String(phone || '').trim(),
+    role: String(role || '').trim(),
+    clickupUserId: String(clickupUserId || '').trim(),
+    source: String(source || '').trim(),
+  };
+}
+
+function dedupeRecipients(entries = []) {
+  const seen = new Set();
+  return entries.filter((entry) => {
+    const key = [normalizeEmail(entry.email), String(entry.phone || '').trim(), String(entry.name || '').trim().toLowerCase()].join('|');
+    if (!key.replace(/\|/g, '')) return false;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
+function resolveMilestoneRecipients(kind = '') {
+  const users = readUsers();
+  const raul = findOperationalRecipient({ email: RAUL_DEFAULT_EMAIL, name: 'Raul Flores' });
+  const antonio = findOperationalRecipient({ email: 'antonio.milla@evinka.tech', name: 'ANTONIO' });
+  const sebastianName = process.env.EVINKA_NOTIFY_SEBASTIAN_NAME || 'Sebastián';
+  const mirkoName = process.env.EVINKA_NOTIFY_MIRKO_NAME || 'Mirko';
+  const sebastian = findOperationalRecipient({ email: process.env.EVINKA_NOTIFY_SEBASTIAN_EMAIL || '', name: sebastianName });
+  const mirko = findOperationalRecipient({ email: process.env.EVINKA_NOTIFY_MIRKO_EMAIL || '', name: mirkoName });
+  if (kind === 'abono_50') {
+    return dedupeRecipients([
+      buildRecipientEntry({
+        name: sebastian?.name || sebastianName,
+        email: sebastian?.email || process.env.EVINKA_NOTIFY_SEBASTIAN_EMAIL || '',
+        phone: sebastian?.notificationPhone || process.env.EVINKA_NOTIFY_SEBASTIAN_PHONE || '',
+        role: sebastian?.role || 'finanzas',
+        clickupUserId: process.env.EVINKA_NOTIFY_SEBASTIAN_CLICKUP_USER_ID || '',
+        source: sebastian ? 'users.json' : 'env',
+      }),
+      buildRecipientEntry({
+        name: mirko?.name || mirkoName,
+        email: mirko?.email || process.env.EVINKA_NOTIFY_MIRKO_EMAIL || '',
+        phone: mirko?.notificationPhone || process.env.EVINKA_NOTIFY_MIRKO_PHONE || '',
+        role: mirko?.role || 'finanzas',
+        clickupUserId: process.env.EVINKA_NOTIFY_MIRKO_CLICKUP_USER_ID || '',
+        source: mirko ? 'users.json' : 'env',
+      }),
+    ]);
+  }
+  if (kind === 'conformity_done') {
+    return dedupeRecipients([
+      buildRecipientEntry({
+        name: raul?.name || 'Raul Flores',
+        email: raul?.email || RAUL_DEFAULT_EMAIL,
+        phone: raul?.notificationPhone || RAUL_DEFAULT_PHONE,
+        role: raul?.role || 'kam_b2c',
+        clickupUserId: process.env.EVINKA_NOTIFY_RAUL_CLICKUP_USER_ID || '',
+        source: raul ? 'users.json' : 'default',
+      }),
+      buildRecipientEntry({
+        name: antonio?.name || 'Antonio',
+        email: antonio?.email || '',
+        phone: antonio?.notificationPhone || '',
+        role: antonio?.role || 'kam_b2c',
+        source: antonio ? 'users.json' : '',
+      }),
+    ]);
+  }
+  if (kind === 'b2b_priority') {
+    return dedupeRecipients([
+      buildRecipientEntry({
+        name: antonio?.name || 'Antonio',
+        email: antonio?.email || '',
+        phone: antonio?.notificationPhone || '',
+        role: antonio?.role || 'kam_b2c',
+        source: antonio ? 'users.json' : '',
+      }),
+      buildRecipientEntry({
+        name: raul?.name || 'Raul Flores',
+        email: raul?.email || RAUL_DEFAULT_EMAIL,
+        phone: raul?.notificationPhone || RAUL_DEFAULT_PHONE,
+        role: raul?.role || 'kam_b2c',
+        source: raul ? 'users.json' : 'default',
+      }),
+    ]);
+  }
+  return dedupeRecipients([]);
+}
+
+function appendOperationalAuditLog({
+  actor = null,
+  action = '',
+  entityType = '',
+  entityId = '',
+  countryCode = '',
+  status = 'success',
+  summary = '',
+  detail = {},
+} = {}) {
+  const logs = readJSON(files.auditLog, []);
+  logs.push({
+    id: `${Date.now().toString(36)}-${crypto.randomBytes(3).toString('hex')}`,
+    at: new Date().toISOString(),
+    actor: actor ? safeUser(actor) : null,
+    action: String(action || '').trim(),
+    entityType: String(entityType || '').trim(),
+    entityId: String(entityId || '').trim(),
+    countryCode: normalizeCountryCode(countryCode || '') || '',
+    status: String(status || 'success').trim(),
+    summary: String(summary || '').trim(),
+    detail: detail || {},
+  });
+  if (logs.length > AUDIT_LOG_LIMIT) {
+    logs.splice(0, logs.length - AUDIT_LOG_LIMIT);
+  }
+  writeJSON(files.auditLog, logs);
+}
+
+function buildOperationalAuditFeed({ limit = 120, countryCode = '', entityType = '' } = {}) {
+  const requestedCountry = normalizeCountryCode(countryCode || '');
+  const requestedType = String(entityType || '').trim().toLowerCase();
+  const events = readJSON(files.auditLog, [])
+    .filter((item) => {
+      if (requestedCountry && requestedCountry !== 'ALL' && normalizeCountryCode(item.countryCode || '') !== requestedCountry) return false;
+      if (requestedType && requestedType !== 'all' && String(item.entityType || '').trim().toLowerCase() !== requestedType) return false;
+      return true;
+    })
+    .sort((a, b) => new Date(b.at || 0).getTime() - new Date(a.at || 0).getTime())
+    .slice(0, Math.max(1, Math.min(300, Number(limit) || 120)));
+  return {
+    generatedAt: new Date().toISOString(),
+    summary: {
+      total: events.length,
+      lastEventAt: events[0]?.at || null,
+    },
+    events,
+  };
+}
+
+async function postClickUpTaskComment(taskId, text = '') {
+  const commentText = String(text || '').trim();
+  if (!CLICKUP_API_TOKEN || !taskId || !commentText) return { ok: false, skipped: true };
+  try {
+    await clickUpRequest('POST', `/task/${encodeURIComponent(taskId)}/comment`, {
+      comment_text: commentText,
+      notify_all: false,
+    });
+    return { ok: true };
+  } catch (error) {
+    return { ok: false, error: error.message };
+  }
+}
+
+async function notifyOperationalRecipients({ recipients = [], subject = '', text = '', html = '', whatsappText = '', clickupTaskId = '', auditMeta = {} } = {}) {
+  const normalizedRecipients = dedupeRecipients(recipients);
+  const result = {
+    email: [],
+    whatsapp: [],
+    clickup: [],
+    skipped: [],
+  };
+  for (const recipient of normalizedRecipients) {
+    if (mailer && recipient.email) {
+      try {
+        await mailer.sendMail({ to: [recipient.email], subject, text, html: html || `<div style="font-family:Arial,sans-serif;line-height:1.6;color:#111827;white-space:pre-wrap;">${escapeHtml(text)}</div>` });
+        result.email.push(recipient.email);
+      } catch (error) {
+        result.skipped.push(`email:${recipient.email}:${error.message}`);
+      }
+    }
+    const phone = normalizePhoneForWhatsApp(recipient.phone || '');
+    if (meta && phone) {
+      try {
+        await meta.sendText(phone, whatsappText || text);
+        result.whatsapp.push(`+${phone}`);
+      } catch (error) {
+        result.skipped.push(`whatsapp:${phone}:${error.message}`);
+      }
+    }
+  }
+  if (clickupTaskId) {
+    const comment = await postClickUpTaskComment(clickupTaskId, text);
+    if (comment.ok) result.clickup.push(clickupTaskId);
+    else if (!comment.skipped) result.skipped.push(`clickup:${clickupTaskId}:${comment.error || 'unknown'}`);
+  }
+  appendOperationalAuditLog({
+    actor: auditMeta.actor || null,
+    action: auditMeta.action || 'notification_sent',
+    entityType: auditMeta.entityType || 'notification',
+    entityId: auditMeta.entityId || clickupTaskId || '',
+    countryCode: auditMeta.countryCode || '',
+    summary: auditMeta.summary || subject,
+    detail: {
+      recipients: normalizedRecipients,
+      result,
+      clickupTaskId,
+      ...auditMeta.detail,
+    },
+  });
+  return result;
+}
+
+async function notifyAbono50Milestone({ quote, actor = null } = {}) {
+  const recipients = resolveMilestoneRecipients('abono_50');
+  if (!recipients.length) return { ok: false, skipped: true, reason: 'no_recipients' };
+  const amount = safeNumber(quote?.initialPayment?.amount, safeNumber(quote?.total, 0) * 0.5);
+  const observation = String(quote?.initialPayment?.observation || '').trim() || 'Abono 50% confirmado desde EVINKA.';
+  return notifyOperationalRecipients({
+    recipients,
+    subject: `EVINKA · Abono 50% confirmado · ${quote?.clientName || 'Cliente'}`,
+    text: [
+      `Cliente: ${quote?.clientName || '-'}`,
+      `Cotización: ${quote?.id || '-'}`,
+      `Monto: ${amount || 0}`,
+      `Observación: ${observation}`,
+      `Contacto: ${quote?.phone || '-'}`,
+    ].join('\n'),
+    whatsappText: `EVINKA ⚡\nAbono 50% confirmado\nCliente: ${quote?.clientName || '-'}\nCotización: ${quote?.id || '-'}\nMonto: ${amount || 0}\nTeléfono: ${quote?.phone || '-'}`,
+    clickupTaskId: String(quote?.clickupTaskId || '').trim(),
+    auditMeta: {
+      actor,
+      action: 'abono_50_notified',
+      entityType: 'payment',
+      entityId: quote?.id || '',
+      countryCode: quote?.countryCode || '',
+      summary: `Abono 50% notificado para ${quote?.clientName || quote?.id || 'cliente'}`,
+    },
+  });
+}
+
+async function notifyConformityMilestone({ conformity, quote = null, actor = null } = {}) {
+  const recipients = resolveMilestoneRecipients('conformity_done');
+  if (!recipients.length) return { ok: false, skipped: true, reason: 'no_recipients' };
+  return notifyOperationalRecipients({
+    recipients,
+    subject: `EVINKA · Instalación / conformidad finalizada · ${conformity?.clientName || quote?.clientName || 'Cliente'}`,
+    text: [
+      'La conformidad quedó generada y enviada.',
+      `Cliente: ${conformity?.clientName || quote?.clientName || '-'}`,
+      `Orden: ${conformity?.installationOrderId || quote?.installationOrderId || '-'}`,
+      `Cotización: ${conformity?.quoteId || quote?.id || '-'}`,
+      `Contacto: ${conformity?.clientEmail || quote?.email || '-'} / ${quote?.phone || '-'}`,
+    ].join('\n'),
+    whatsappText: `EVINKA ⚡\nConformidad finalizada\nCliente: ${conformity?.clientName || quote?.clientName || '-'}\nOrden: ${conformity?.installationOrderId || quote?.installationOrderId || '-'}\nCotización: ${conformity?.quoteId || quote?.id || '-'}`,
+    clickupTaskId: String(quote?.clickupTaskId || '').trim(),
+    auditMeta: {
+      actor,
+      action: 'conformity_notified',
+      entityType: 'conformity',
+      entityId: conformity?.id || conformity?.installationOrderId || '',
+      countryCode: conformity?.countryCode || quote?.countryCode || '',
+      summary: `Conformidad notificada para ${conformity?.clientName || quote?.clientName || 'cliente'}`,
+    },
+  });
+}
+
 function publicConfig(countryCode = 'PE') {
   const activeCountry = normalizeCountryCode(countryCode) || 'ALL';
   const config = buildAppConfig(activeCountry);
@@ -1803,7 +2388,7 @@ function normalizeQuoteStatus(value) {
     aceptada: 'aceptada_cliente',
   };
   const normalized = aliases[status] || status;
-  const allowed = new Set(['cotizada', 'lista_envio', 'recotizar', 'cancelada', 'aceptada_cliente', 'instalada']);
+  const allowed = new Set(['cotizada', 'lista_envio', 'recotizar', 'cancelada', 'aceptada_cliente', 'instalada', 'abono_100_confirmado']);
   return allowed.has(normalized) ? normalized : 'cotizada';
 }
 
@@ -1833,6 +2418,32 @@ function normalizeStoredQuote(quote = {}) {
     }),
     status: normalizeQuoteStatus(quote?.status || 'cotizada'),
     conformityStatus: String(quote?.conformityStatus || 'not_started').trim(),
+    initialPayment: quote?.initialPayment && typeof quote.initialPayment === 'object'
+      ? {
+          confirmedAt: String(quote.initialPayment.confirmedAt || quote.clientAcceptedAt || '').trim(),
+          amount: safeNumber(quote.initialPayment.amount, safeNumber(quote.total, 0) * 0.5),
+          observation: String(quote.initialPayment.observation || '').trim(),
+          confirmedBy: quote.initialPayment.confirmedBy ? safeUser(quote.initialPayment.confirmedBy) : (quote.clientAcceptedBy ? safeUser(quote.clientAcceptedBy) : null),
+        }
+      : {
+          confirmedAt: String(quote.clientAcceptedAt || '').trim(),
+          amount: safeNumber(quote.total, 0) * 0.5,
+          observation: '',
+          confirmedBy: quote.clientAcceptedBy ? safeUser(quote.clientAcceptedBy) : null,
+        },
+    finalPayment: quote?.finalPayment && typeof quote.finalPayment === 'object'
+      ? {
+          confirmedAt: String(quote.finalPayment.confirmedAt || '').trim(),
+          amount: safeNumber(quote.finalPayment.amount, safeNumber(quote.total, 0)),
+          observation: String(quote.finalPayment.observation || '').trim(),
+          confirmedBy: quote.finalPayment.confirmedBy ? safeUser(quote.finalPayment.confirmedBy) : null,
+        }
+      : {
+          confirmedAt: '',
+          amount: safeNumber(quote.total, 0),
+          observation: '',
+          confirmedBy: null,
+        },
   };
 }
 
@@ -1985,6 +2596,10 @@ function buildTechVisitFromCalendarBooking(row = {}, existing, defaultTech = {})
     updatedAt: String(row.actualizado_en || row.confirmada_en || current?.updatedAt || new Date().toISOString()).trim(),
     startedAt: current?.startedAt || '',
     closedAt: current?.closedAt || '',
+    clickupTaskId: current?.clickupTaskId || '',
+    clickupTaskUrl: current?.clickupTaskUrl || '',
+    clickupSyncedAt: current?.clickupSyncedAt || '',
+    clickupSyncError: current?.clickupSyncError || '',
     updatedBy: current?.updatedBy || null,
   });
 }
@@ -4286,7 +4901,7 @@ function defaultRoleMatrix() {
         aliases: ['admin'],
         tabs: ['quote', 'quotes', 'visits', 'ops', 'conformities', 'advisor', 'admin'],
         modules: ['inicio', 'asesor', 'visitas', 'cotizaciones', 'instalaciones', 'conformidades', 'auditoria', 'cuentas', 'configuracion'],
-        permissions: ['users.manage', 'roles.manage', 'catalog.manage', 'pricing.manage', 'quotes.write', 'quotes.review', 'visits.assign', 'visits.execute', 'installations.assign', 'installations.execute', 'conformities.review', 'conformities.sign', 'audit.read', 'advisor.handle'],
+        permissions: ['quotes.create', 'users.manage', 'roles.manage', 'catalog.manage', 'pricing.manage', 'quotes.write', 'quotes.review', 'visits.assign', 'visits.execute', 'installations.assign', 'installations.execute', 'conformities.review', 'conformities.sign', 'audit.read', 'advisor.handle'],
       },
       {
         id: 'supervisor',
@@ -4294,7 +4909,7 @@ function defaultRoleMatrix() {
         aliases: ['supervisor', 'tecnico_supervisor', 'supervisor_tecnico', 'tech_supervisor', 'technical_supervisor'],
         tabs: ['quote', 'quotes', 'visits', 'ops', 'conformities', 'advisor'],
         modules: ['inicio', 'asesor', 'visitas', 'cotizaciones', 'instalaciones', 'conformidades', 'auditoria'],
-        permissions: ['quotes.write', 'quotes.review', 'visits.assign', 'visits.execute', 'installations.assign', 'installations.execute', 'conformities.review', 'advisor.handle', 'audit.read'],
+        permissions: ['quotes.create', 'quotes.write', 'quotes.review', 'visits.assign', 'visits.execute', 'installations.assign', 'installations.execute', 'conformities.review', 'advisor.handle', 'audit.read'],
       },
       {
         id: 'asesor_comercial',
@@ -4302,7 +4917,15 @@ function defaultRoleMatrix() {
         aliases: ['advisor', 'asesor', 'asesor_comercial', 'asesor_humano', 'human_advisor', 'commercial', 'comercial', 'sales', 'ventas'],
         tabs: ['quote', 'quotes', 'visits', 'advisor'],
         modules: ['inicio', 'asesor', 'visitas_iniciales', 'cotizaciones', 'historial_cliente'],
-        permissions: ['quotes.write', 'quotes.review', 'visits.assign', 'advisor.handle'],
+        permissions: ['quotes.create', 'quotes.write', 'quotes.review', 'visits.assign', 'advisor.handle'],
+      },
+      {
+        id: 'asesor_venta',
+        label: 'Asesor de venta',
+        aliases: ['asesor_venta', 'asesor_ventas', 'sales_advisor', 'venta', 'ventas'],
+        tabs: ['quote', 'quotes', 'visits', 'conformities', 'advisor'],
+        modules: ['inicio', 'asesor', 'visitas_iniciales', 'cotizaciones', 'historial_cliente', 'conformidades'],
+        permissions: ['quotes.create', 'quotes.write', 'quotes.review', 'visits.assign', 'conformities.review', 'advisor.handle'],
       },
       {
         id: 'tecnico_visitas',
@@ -4310,7 +4933,7 @@ function defaultRoleMatrix() {
         aliases: ['tech', 'tecnico', 'tecnico_visitas', 'visit_tech'],
         tabs: ['visits', 'quotes'],
         modules: ['inicio', 'visitas', 'detalle_tecnico', 'cotizaciones_consulta', 'evidencias'],
-        permissions: ['visits.execute', 'quotes.review'],
+        permissions: ['quotes.create', 'visits.execute', 'quotes.review'],
       },
       {
         id: 'tecnico_instalador',
@@ -4609,7 +5232,7 @@ function nextEmployeeCode(users = [], role = 'tech', usedCodes = new Set()) {
     ? 'ADM'
     : normalizedRole === 'supervisor'
       ? 'SUP'
-      : normalizedRole === 'asesor_comercial'
+      : normalizedRole.startsWith('asesor')
         ? 'ASE'
         : normalizedRole === 'tecnico_instalador'
           ? 'INS'
@@ -4648,7 +5271,54 @@ function canUserSeeAllOperations(user = {}) {
   const email = normalizeEmail(user.email || '');
   return role === 'admin'
     || role === 'supervisor'
+    || role === 'asesor_venta'
     || email === 'luis.campos@evinka.tech';
+}
+
+function userRoleHasTab(user = {}, tabId = '') {
+  const role = normalizeManagedUserRole(user.role || 'tech');
+  const definition = getRoleMatrix().roles.find((item) => item.id === role);
+  return Array.isArray(definition?.tabs) && definition.tabs.includes(String(tabId || '').trim());
+}
+
+function canUserSeeVisitsBoard(user = {}) {
+  return canUserSeeAllOperations(user) || userRoleHasTab(user, 'visits');
+}
+
+function canUserSeeInstallationBoard(user = {}) {
+  return canUserSeeAllOperations(user) || userRoleHasTab(user, 'ops');
+}
+
+function canUserSeeConformitiesBoard(user = {}) {
+  return canUserSeeAllOperations(user) || userRoleHasTab(user, 'conformities');
+}
+
+function userRoleHasPermission(user = {}, permission = '') {
+  const role = normalizeManagedUserRole(user.role || 'tech');
+  const definition = getRoleMatrix().roles.find((item) => item.id === role);
+  return Array.isArray(definition?.permissions)
+    && definition.permissions.includes(String(permission || '').trim());
+}
+
+function canUserManageCommercialQuoteFlow(user = {}) {
+  const email = normalizeEmail(user.email || '');
+  return userRoleHasPermission(user, 'quotes.write') || email === 'luis.campos@evinka.tech';
+}
+
+function canUserCreateQuote(user = {}) {
+  return userRoleHasPermission(user, 'quotes.create') || canUserManageCommercialQuoteFlow(user);
+}
+
+function canUserScheduleInstallation(user = {}) {
+  return canUserManageCommercialQuoteFlow(user);
+}
+
+function canUserReadAudit(user = {}) {
+  return user?.role === 'admin' || userRoleHasPermission(user, 'audit.read');
+}
+
+function canUserConfirmFullPayment(user = {}) {
+  return canUserManageCommercialQuoteFlow(user);
 }
 
 function canUserGenerateConformity(user = {}) {
@@ -4658,6 +5328,19 @@ function canUserGenerateConformity(user = {}) {
     || role === 'supervisor'
     || role === 'tecnico_instalador'
     || email === 'luis.campos@evinka.tech';
+}
+
+function canUserUpdateVisit(user = {}, visit = {}) {
+  const current = normalizeTechVisit(visit);
+  if (!userCanAccessCountry(user, current.countryCode)) return false;
+  if (normalizeManagedUserRole(user.role || '') === 'admin') return true;
+  if (normalizeEmail(current.assignedTechEmail) === normalizeEmail(user?.email)) return true;
+  if (current.type === 'instalacion') {
+    return userRoleHasPermission(user, 'installations.execute')
+      || userRoleHasPermission(user, 'installations.assign')
+      || canUserManageCommercialQuoteFlow(user);
+  }
+  return userRoleHasPermission(user, 'visits.execute') || canUserManageCommercialQuoteFlow(user);
 }
 
 function isInstallationOrderReadyForConformity(order = {}) {
@@ -5261,7 +5944,125 @@ function buildClickUpVisitTaskName(visit = {}) {
   return `${client} - ${date} - ${time}`;
 }
 
-function buildClickUpVisitTaskDescription(visit = {}) {
+let clickUpFieldMapCache = null;
+
+function findQuoteForVisit(visit = {}) {
+  const quoteId = String(visit.quoteId || '').trim();
+  if (!quoteId) return null;
+  return readJSON(files.quotes, [])
+    .map(normalizeStoredQuote)
+    .find((item) => item.id === quoteId) || null;
+}
+
+function buildLeadSourceLabel(visit = {}) {
+  const source = String(visit.source || '').trim().toLowerCase();
+  if (source === 'chatbot') return 'Chatbot WhatsApp EVINKA';
+  if (source === 'app') return 'Cotizador / operación EVINKA';
+  return String(visit.source || 'EVINKA').trim() || 'EVINKA';
+}
+
+function extractVehicleBrand(visit = {}, quote = null) {
+  const raw = String(quote?.vehicleModel || '').trim();
+  if (!raw) return '';
+  return raw.split(/[\/,-]/)[0].trim();
+}
+
+function extractDistrictFromAddress(address = '') {
+  const value = String(address || '').replace(/\s+/g, ' ').trim();
+  if (!value) return '';
+  const compact = value;
+  const limaCercado = compact.match(/\b(lima cercado|cercado de lima)\b/i);
+  if (limaCercado) return 'Lima Cercado';
+  const numberMatch = compact.match(/\d+[A-Za-z-]*\s+(.*)$/);
+  const tail = String(numberMatch?.[1] || '').trim();
+  const tokens = tail ? tail.split(/\s+/).filter(Boolean) : [];
+  while (tokens.length > 1 && ['lima', 'callao', 'peru', 'perú', 'colombia', 'bogota', 'bogotá', 'medellin', 'medellín', 'cali'].includes(tokens[tokens.length - 1].toLowerCase())) {
+    tokens.pop();
+  }
+  if (tokens.length >= 2) return tokens.slice(-2).join(' ');
+  if (tokens.length === 1) return tokens[0];
+  return '';
+}
+
+function resolveClickUpDistrict(visit = {}, quote = null) {
+  return String(
+    visit.clientDistrict
+    || visit.district
+    || quote?.locality
+    || quote?.neighborhood
+    || extractDistrictFromAddress(visit.clientAddress || quote?.address || '')
+    || ''
+  ).trim();
+}
+
+function resolveClickUpVisitStatus(visit = {}, quote = null) {
+  const visitStatus = String(visit.status || '').trim().toLowerCase();
+  const quoteStatus = String(quote?.status || '').trim().toLowerCase();
+  const conformityStatus = String(quote?.conformityStatus || '').trim().toLowerCase();
+  if (quoteStatus === 'abono_100_confirmado') return 'Closed';
+  if (conformityStatus === 'pdf_generated' || ['pendiente_cierre', 'cerrada'].includes(visitStatus) || quoteStatus === 'instalada') {
+    return 'finalizados';
+  }
+  if (String(visit.type || '').trim().toLowerCase() === 'instalacion' || ['agendada', 'en_ruta', 'en_visita'].includes(visitStatus)) {
+    return 'en ejecución';
+  }
+  if (['recotizar', 'cancelada'].includes(quoteStatus) || ['recotizar', 'cancelada', 'reprogramada'].includes(visitStatus)) {
+    return 'trabajo previo / a la espe';
+  }
+  if (quoteStatus === 'aceptada_cliente') {
+    return 'cotizados';
+  }
+  if (
+    visitStatus === 'pendiente_cotizacion'
+    || visitStatus === 'cotizada'
+    || ['cotizada', 'lista_envio'].includes(quoteStatus)
+  ) {
+    return CLICKUP_B2C_QUOTE_PENDING_STATUS;
+  }
+  return CLICKUP_B2C_STATUS;
+}
+
+async function getClickUpFieldMap() {
+  if (clickUpFieldMapCache) return clickUpFieldMapCache;
+  const data = await clickUpRequest('GET', `/list/${encodeURIComponent(CLICKUP_B2C_LIST_ID)}/field`);
+  const map = {};
+  for (const field of data.fields || []) {
+    const name = String(field?.name || '').trim().toLowerCase();
+    if (!name) continue;
+    map[name] = field;
+  }
+  clickUpFieldMapCache = map;
+  return map;
+}
+
+async function buildClickUpCustomFields(visit = {}, quote = null) {
+  const fieldMap = await getClickUpFieldMap();
+  const values = [];
+  const pushValue = (fieldName, value) => {
+    const field = fieldMap[String(fieldName || '').trim().toLowerCase()];
+    if (!field || value == null || value === '') return;
+    values.push({ id: field.id, value });
+  };
+
+  const rawPhone = String(visit.clientPhone || quote?.phone || '').trim();
+  const phoneDigits = normalizePhoneForWhatsApp(rawPhone);
+  const phone = phoneDigits ? `+${phoneDigits}` : '';
+  const address = String(visit.clientAddress || quote?.address || '').trim();
+  const leadSource = buildLeadSourceLabel(visit);
+  const vehicleBrand = extractVehicleBrand(visit, quote);
+  const district = resolveClickUpDistrict(visit, quote);
+
+  pushValue('numero del cliente', phone);
+  pushValue('ubicacion del cliente', address);
+  pushValue('procedencia del lead', leadSource);
+  pushValue('distrito', district);
+  // Se usa solo el campo de texto para evitar duplicar datos entre "MARCA" y "🚙 MARCA".
+  pushValue('🚙 marca', vehicleBrand);
+  return values;
+}
+
+function buildClickUpVisitTaskDescription(visit = {}, quote = null) {
+  const normalizedStatus = String(visit.status || '').trim().toLowerCase();
   const lines = [
     'Visita técnica creada automáticamente desde el chatbot de WhatsApp.',
     '',
@@ -5273,14 +6074,19 @@ function buildClickUpVisitTaskDescription(visit = {}) {
     `Fecha programada: ${visit.scheduledAt ? formatDate(visit.scheduledAt) : '-'}`,
     `Franja: ${visit.timeWindow || '-'}`,
     `Referencia: ${visit.reference || '-'}`,
+    `Estado operativo: ${normalizedStatus || '-'}`,
     `Técnico asignado: ${visit.assignedTechName || visit.assignedTechEmail || '-'}`,
+    `Procedencia del lead: ${buildLeadSourceLabel(visit)}`,
+    `Cotización: ${quote?.id || visit.quoteId || '-'}`,
+    `Estado cotización: ${quote?.status || '-'}`,
+    `Orden instalación: ${quote?.installationOrderId || visit.installationOrderId || '-'}`,
     '',
     `Notas: ${visit.notes || 'Sin notas.'}`,
   ];
   return lines.join('\n').trim();
 }
 
-function buildClickUpVisitPayload(visit = {}) {
+async function buildClickUpVisitPayload(visit = {}, quote = null) {
   const scheduledAt = visit.scheduledAt ? new Date(visit.scheduledAt) : null;
   const startMs = scheduledAt && Number.isFinite(scheduledAt.getTime())
     ? scheduledAt.getTime()
@@ -5289,20 +6095,22 @@ function buildClickUpVisitPayload(visit = {}) {
     ? CLICKUP_DEFAULT_DURATION_MINUTES
     : 60;
   const dueMs = startMs ? startMs + durationMinutes * 60 * 1000 : null;
+  const customFields = await buildClickUpCustomFields(visit, quote);
   return {
     name: buildClickUpVisitTaskName(visit),
-    description: buildClickUpVisitTaskDescription(visit),
-    status: CLICKUP_B2C_STATUS,
+    description: buildClickUpVisitTaskDescription(visit, quote),
+    status: resolveClickUpVisitStatus(visit, quote),
     priority: 3,
     start_date: startMs ? String(startMs) : undefined,
     start_date_time: Boolean(startMs),
     due_date: dueMs ? String(dueMs) : undefined,
     due_date_time: Boolean(dueMs),
+    custom_fields: customFields,
   };
 }
 
-function buildClickUpCreateVisitPayload(visit = {}) {
-  const payload = buildClickUpVisitPayload(visit);
+async function buildClickUpCreateVisitPayload(visit = {}, quote = null) {
+  const payload = await buildClickUpVisitPayload(visit, quote);
   if (Number.isFinite(CLICKUP_B2C_DEFAULT_ASSIGNEE_ID) && CLICKUP_B2C_DEFAULT_ASSIGNEE_ID > 0) {
     payload.assignees = [CLICKUP_B2C_DEFAULT_ASSIGNEE_ID];
   }
@@ -5325,15 +6133,50 @@ async function clickUpRequest(method, endpoint, payload = null) {
   return data;
 }
 
+async function syncClickUpCustomFields(taskId, fields = []) {
+  for (const field of fields) {
+    if (!field?.id) continue;
+    await clickUpRequest(
+      'POST',
+      `/task/${encodeURIComponent(taskId)}/field/${encodeURIComponent(field.id)}`,
+      { value: field.value },
+    );
+  }
+}
+
+async function requestGlobalVisitDeleteSync({ eventId = '', ticket = '', countryCode = '' } = {}) {
+  const normalizedEventId = String(eventId || '').trim();
+  const normalizedTicket = String(ticket || '').trim();
+  if (!normalizedEventId && !normalizedTicket) return { ok: true, skipped: true };
+  const response = await fetch(`${META_WEBHOOK_INTERNAL_URL}/api/internal/global-visit-delete`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'x-evinka-bot-key': BOT_VISITS_API_KEY,
+    },
+    body: JSON.stringify({
+      eventId: normalizedEventId,
+      ticket: normalizedTicket,
+      countryCode: String(countryCode || '').trim().toUpperCase(),
+    }),
+  });
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    throw new Error(data.error || `No pude eliminar la visita globalmente en meta-webhook (${response.status}).`);
+  }
+  return data;
+}
+
 function shouldSyncVisitToClickUp(visit = {}) {
   const status = String(visit.status || '').trim().toLowerCase();
   return clickUpEnabled()
     && String(visit.source || '').trim().toLowerCase() === 'chatbot'
+    && String(visit.countryCode || '').trim().toUpperCase() === 'PE'
     && Boolean(String(visit.scheduledAt || '').trim())
     && !['cancelada', 'cerrada'].includes(status);
 }
 
-async function syncTechVisitToClickUp(visit = {}) {
+async function syncTechVisitToClickUp(visit = {}, { quote = null } = {}) {
   if (!clickUpEnabled()) {
     return {
       ok: false,
@@ -5347,10 +6190,15 @@ async function syncTechVisitToClickUp(visit = {}) {
   }
 
   try {
-    const payload = buildClickUpVisitPayload(visit);
+    const linkedQuote = quote || findQuoteForVisit(visit);
+    const payload = await buildClickUpVisitPayload(visit, linkedQuote);
+    const { custom_fields: customFields = [], ...taskPayload } = payload;
     const task = visit.clickupTaskId
-      ? await clickUpRequest('PUT', `/task/${encodeURIComponent(visit.clickupTaskId)}`, payload)
-      : await clickUpRequest('POST', `/list/${encodeURIComponent(CLICKUP_B2C_LIST_ID)}/task`, buildClickUpCreateVisitPayload(visit));
+      ? await clickUpRequest('PUT', `/task/${encodeURIComponent(visit.clickupTaskId)}`, taskPayload)
+      : await clickUpRequest('POST', `/list/${encodeURIComponent(CLICKUP_B2C_LIST_ID)}/task`, await buildClickUpCreateVisitPayload(visit, linkedQuote));
+    if (customFields.length) {
+      await syncClickUpCustomFields(String(task.id || visit.clickupTaskId || '').trim(), customFields);
+    }
     return {
       ok: true,
       skipped: false,

@@ -273,7 +273,13 @@ function phonePretty(value = '') {
 }
 
 function userPhoneFromConversation(conversation) {
-  return String(conversation?.id_usuario || '').replace(/^wco_/, '').replace(/^whatsapp_/, '');
+  const rawUserId = String(conversation?.id_usuario || '').trim();
+  const normalized = rawUserId.replace(/^wco_/, '').replace(/^whatsapp_/, '');
+  const digits = normalizePhone(normalized).replace(/^\+/, '');
+  if (/^(51\d{9}|57\d{10}|9\d{8}|3\d{9})$/.test(digits)) {
+    return normalized.startsWith('+') ? normalized : `+${digits}`;
+  }
+  return '';
 }
 
 function inferCountryFromPhone(phone = '') {
@@ -293,6 +299,11 @@ function inferConversationCountry({ conversation = null, user = null, profile = 
   const combined = `${province} ${district}`;
   if (/(BOGOT|MEDELL|CALI|USAQU|SUBA|CHAPINERO|ENGATIV|FONTIBON|KENNEDY|MOSQUERA|CHIA|SABANETA|ENVIGADO|JAMUNDI|SOACHA)/.test(combined)) return 'CO';
   return inferCountryFromPhone(userPhoneFromConversation(conversation) || user?.telefono_principal || '');
+}
+
+function normalizeCountryScope(value = '') {
+  const normalized = String(value || '').trim().toUpperCase();
+  return ['PE', 'CO', 'ALL'].includes(normalized) ? normalized : '';
 }
 
 function userAllowsCountry(user, countryCode) {
@@ -877,8 +888,8 @@ async function listInboxConversations({ mode = 'active' } = {}) {
   const normalizedMode = String(mode || 'active').toLowerCase();
   const includeFullWhatsappHistory = normalizedMode === 'bot' || normalizedMode === 'all' || normalizedMode === 'resolved';
   const relevant = includeFullWhatsappHistory
-    ? conversations.filter((item) => item.canal === 'whatsapp')
-    : conversations.filter((item) => item.estado_conversacion === 'handoff' || item.requiere_handoff || state.conversations?.[item.id_conversacion]);
+    ? conversations.filter((item) => item.canal === 'whatsapp' && item.paso_actual !== 'lead_captado')
+    : conversations.filter((item) => item.canal === 'whatsapp' && item.paso_actual !== 'lead_captado' && (item.estado_conversacion === 'handoff' || item.requiere_handoff || state.conversations?.[item.id_conversacion]));
   if (!relevant.length) return [];
 
   const userIds = [...new Set(relevant.map((item) => item.id_usuario).filter(Boolean))];
@@ -1417,15 +1428,19 @@ app.post('/api/logout', authOptional, (req, res) => {
 app.get('/api/inbox/conversations', authRequired, async (req, res) => {
   try {
     const items = await listInboxConversations({ mode: String(req.query.status || 'active').toLowerCase() });
+    const requestedCountry = normalizeCountryScope(req.query.country || '');
     const allowedItems = items.filter((item) => userAllowsCountry(req.user, item.countryCode));
+    const scopedItems = requestedCountry && requestedCountry !== 'ALL'
+      ? allowedItems.filter((item) => String(item.countryCode || '').toUpperCase() === requestedCountry)
+      : allowedItems;
     const status = String(req.query.status || 'active').toLowerCase();
     const filtered = status === 'all'
-      ? allowedItems
+      ? scopedItems
       : status === 'resolved'
-        ? allowedItems.filter((item) => item.status === 'resolved')
+        ? scopedItems.filter((item) => item.status === 'resolved')
         : status === 'bot'
-          ? allowedItems
-        : allowedItems.filter((item) => item.status !== 'resolved');
+          ? scopedItems
+        : scopedItems.filter((item) => item.status !== 'resolved');
     res.json(filtered);
   } catch (error) {
     console.error(error);

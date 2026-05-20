@@ -18,6 +18,47 @@ function toIsoLocal(date) {
   return date.toISOString().replace(/\.\d{3}Z$/, '');
 }
 
+function resolvePreferredPendingStatus(value = '') {
+  const raw = String(value || '').trim();
+  if (!raw) return 'pendiente visita técnica';
+  if (raw.toLowerCase() === 'open') return 'pendiente visita técnica';
+  return raw;
+}
+
+function normalizeStatusKey(value = '') {
+  return String(value || '').trim().toLowerCase();
+}
+
+function customFieldValue(task = {}, fieldName = '') {
+  const normalizedName = String(fieldName || '').trim().toLowerCase();
+  if (!normalizedName) return '';
+  const field = (task.custom_fields || []).find((item) => String(item?.name || '').trim().toLowerCase() === normalizedName);
+  const value = field?.value;
+  return value == null ? '' : String(value).trim();
+}
+
+function extractDistrictFromAddress(address = '') {
+  const value = String(address || '').replace(/\s+/g, ' ').trim();
+  if (!value) return '';
+  const numberMatch = value.match(/\d+[A-Za-z-]*\s+(.*)$/);
+  const tail = String(numberMatch?.[1] || '').trim();
+  if (!tail) return '';
+  const tokens = tail.split(/\s+/).filter(Boolean);
+  while (tokens.length > 1 && ['lima', 'callao', 'peru', 'perú', 'colombia', 'bogota', 'bogotá', 'medellin', 'medellín', 'cali'].includes(tokens[tokens.length - 1].toLowerCase())) {
+    tokens.pop();
+  }
+  if (!tokens.length) return '';
+  if (tokens.length >= 2) return tokens.slice(-2).join(' ');
+  return tokens[0];
+}
+
+function extractDistrictFromText(text = '') {
+  const match = String(text || '').match(/(?:distrito|localidad)\s*:\s*([^\n\r]+)/i);
+  if (match) return String(match[1] || '').trim();
+  const addressMatch = String(text || '').match(/direcci[oó]n\s*:\s*([^\n\r]+)/i);
+  return extractDistrictFromAddress(addressMatch?.[1] || '');
+}
+
 export class ClickUpCalendarClient {
   constructor({
     apiToken = requiredEnv('CLICKUP_API_TOKEN'),
@@ -31,7 +72,13 @@ export class ClickUpCalendarClient {
   } = {}) {
     this.apiToken = apiToken;
     this.listId = String(listId || '').trim();
-    this.pendingStatus = String(pendingStatus || 'Open').trim().toLowerCase();
+    this.pendingStatus = resolvePreferredPendingStatus(pendingStatus);
+    this.pendingStatusKeys = [...new Set([
+      normalizeStatusKey(this.pendingStatus),
+      'pendiente a visita',
+      'pendiente visita técnica',
+      'open',
+    ].filter(Boolean))];
     this.closedStatus = String(closedStatus || 'Closed').trim();
     this.defaultTimeZone = defaultTimeZone;
     this.defaultAssigneeId = Number.isFinite(defaultAssigneeId) ? defaultAssigneeId : 0;
@@ -59,15 +106,52 @@ export class ClickUpCalendarClient {
     return data;
   }
 
+  async getFieldMap() {
+    if (this.fieldMap) return this.fieldMap;
+    const data = await this.request(`/list/${encodeURIComponent(this.listId)}/field`);
+    const map = {};
+    for (const field of data?.fields || []) {
+      const name = String(field?.name || '').trim().toLowerCase();
+      if (!name) continue;
+      map[name] = field;
+    }
+    this.fieldMap = map;
+    return map;
+  }
+
+  async setCustomFieldByName(taskId, fieldName, value) {
+    const cleaned = String(value || '').trim();
+    if (!taskId || !fieldName || !cleaned) return { ok: true, skipped: true };
+    const fieldMap = await this.getFieldMap();
+    const field = fieldMap[String(fieldName || '').trim().toLowerCase()];
+    if (!field?.id) return { ok: true, skipped: true };
+    return this.request(`/task/${encodeURIComponent(taskId)}/field/${encodeURIComponent(field.id)}`, {
+      method: 'POST',
+      body: { value: cleaned },
+    });
+  }
+
+  async syncDistrictField(taskId, text = '') {
+    const district = extractDistrictFromText(text);
+    if (!district) return { ok: true, skipped: true };
+    return this.setCustomFieldByName(taskId, 'DISTRITO', district);
+  }
+
   normalizeTaskAsEvent(task = {}) {
     const start = task.start_date ? new Date(Number(task.start_date)) : null;
     const end = task.due_date ? new Date(Number(task.due_date)) : null;
+    const district = customFieldValue(task, 'DISTRITO')
+      || extractDistrictFromText(task.description || task.text_content || '');
+    const content = [
+      task.description || task.text_content || '',
+      district ? `Distrito: ${district}` : '',
+    ].filter(Boolean).join('\n').trim();
     return {
       id: String(task.id || '').trim(),
       subject: task.name || '',
       isCancelled: false,
-      bodyPreview: task.description || task.text_content || '',
-      body: { content: task.description || task.text_content || '' },
+      bodyPreview: content,
+      body: { content },
       start: start ? { dateTime: toIsoLocal(start), timeZone: this.defaultTimeZone } : null,
       end: end ? { dateTime: toIsoLocal(end), timeZone: this.defaultTimeZone } : null,
       location: { displayName: '' },
@@ -92,7 +176,7 @@ export class ClickUpCalendarClient {
     }
 
     return tasks
-      .filter((task) => String(task?.status?.status || '').trim().toLowerCase() === this.pendingStatus)
+      .filter((task) => this.pendingStatusKeys.includes(normalizeStatusKey(task?.status?.status || '')))
       .filter((task) => {
         const start = task.start_date ? new Date(Number(task.start_date)) : null;
         const end = task.due_date ? new Date(Number(task.due_date)) : start;
@@ -139,7 +223,7 @@ export class ClickUpCalendarClient {
     return {
       name: String(subject || 'Visita EVINKA').trim() || 'Visita EVINKA',
       description: String(body || '').trim(),
-      status: process.env.CLICKUP_B2C_STATUS || 'Open',
+      status: this.pendingStatus,
       start_date: start ? String(start.getTime()) : undefined,
       start_date_time: Boolean(start),
       due_date: due ? String(due.getTime()) : undefined,
@@ -150,12 +234,14 @@ export class ClickUpCalendarClient {
 
   async createEvent({ subject, startDateTime, endDateTime, timeZone = this.defaultTimeZone, body = '' }) {
     const payload = this.buildBasePayload({ subject, startDateTime, endDateTime, timeZone, body });
-    payload.status = process.env.CLICKUP_B2C_STATUS || 'Open';
+    payload.status = this.pendingStatus;
     if (this.defaultAssigneeId > 0) payload.assignees = [this.defaultAssigneeId];
-    return this.request(`/list/${encodeURIComponent(this.listId)}/task`, {
+    const task = await this.request(`/list/${encodeURIComponent(this.listId)}/task`, {
       method: 'POST',
       body: payload,
     });
+    await this.syncDistrictField(task?.id, body);
+    return task;
   }
 
   async updateEvent(eventId, patch = {}) {
@@ -176,11 +262,15 @@ export class ClickUpCalendarClient {
         payload.due_date_time = true;
       }
     }
-    if (!Object.keys(payload).length) return { ok: true, skipped: true };
-    return this.request(`/task/${encodeURIComponent(eventId)}`, {
+    if (!Object.keys(payload).length && patch.body?.content == null) return { ok: true, skipped: true };
+    const task = Object.keys(payload).length ? await this.request(`/task/${encodeURIComponent(eventId)}`, {
       method: 'PUT',
       body: payload,
-    });
+    }) : { ok: true, skipped: true, id: eventId };
+    if (patch.body?.content != null) {
+      await this.syncDistrictField(eventId, patch.body.content);
+    }
+    return task;
   }
 
   async cancelEvent(eventId, comment = 'Cancelada desde EVINKABOT.') {
@@ -190,6 +280,13 @@ export class ClickUpCalendarClient {
         status: this.closedStatus,
         description: String(comment || '').trim() || 'Cancelada desde EVINKABOT.',
       },
+    });
+    return { ok: true };
+  }
+
+  async deleteEvent(eventId) {
+    await this.request(`/task/${encodeURIComponent(eventId)}`, {
+      method: 'DELETE',
     });
     return { ok: true };
   }

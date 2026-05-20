@@ -29,7 +29,7 @@ class _QuotesModuleScreenState extends State<QuotesModuleScreen> {
 
   @override
   Widget build(BuildContext context) {
-    if (!widget.user.canEditCommercialFlow) {
+    if (!widget.user.canViewQuotes) {
       return Scaffold(
         appBar: AppBar(title: const Text('Cotizaciones')),
         body: const Center(
@@ -45,26 +45,29 @@ class _QuotesModuleScreenState extends State<QuotesModuleScreen> {
       );
     }
     final screens = [
-      QuoteBuilderScreen(user: widget.user),
+      if (widget.user.canCreateQuotes) QuoteBuilderScreen(user: widget.user),
       QuotesHistoryScreen(user: widget.user),
     ];
+    final destinations = [
+      if (widget.user.canCreateQuotes)
+        const NavigationDestination(
+          icon: Icon(Icons.request_quote_outlined),
+          selectedIcon: Icon(Icons.request_quote),
+          label: 'Nueva',
+        ),
+      const NavigationDestination(
+        icon: Icon(Icons.folder_open_outlined),
+        selectedIcon: Icon(Icons.folder_open),
+        label: 'Cotizaciones',
+      ),
+    ];
+    final safeIndex = _currentIndex.clamp(0, screens.length - 1);
     return Scaffold(
-      body: IndexedStack(index: _currentIndex, children: screens),
+      body: IndexedStack(index: safeIndex, children: screens),
       bottomNavigationBar: NavigationBar(
-        selectedIndex: _currentIndex,
+        selectedIndex: safeIndex,
         onDestinationSelected: (index) => setState(() => _currentIndex = index),
-        destinations: const [
-          NavigationDestination(
-            icon: Icon(Icons.request_quote_outlined),
-            selectedIcon: Icon(Icons.request_quote),
-            label: 'Nueva',
-          ),
-          NavigationDestination(
-            icon: Icon(Icons.folder_open_outlined),
-            selectedIcon: Icon(Icons.folder_open),
-            label: 'Cotizaciones',
-          ),
-        ],
+        destinations: destinations,
       ),
     );
   }

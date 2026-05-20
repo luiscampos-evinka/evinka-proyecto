@@ -474,7 +474,7 @@ class _QuoteBuilderScreenState extends State<QuoteBuilderScreen> {
           IconButton(onPressed: _loadConfig, icon: const Icon(Icons.refresh)),
         ],
       ),
-      body: !widget.user.canEditCommercialFlow
+      body: !widget.user.canCreateQuotes
           ? _restrictedAccess(theme)
           : _loading
               ? const Center(child: CircularProgressIndicator())
@@ -940,7 +940,7 @@ class _QuoteBuilderScreenState extends State<QuoteBuilderScreen> {
                           ?.copyWith(fontWeight: FontWeight.w800)),
                   const SizedBox(height: 12),
                   Text(
-                    'Este módulo queda reservado para Admin y Comercial. El técnico no puede ver precios, márgenes ni ejecutar acciones comerciales desde la app.',
+                    'Este usuario no puede generar cotizaciones desde la app. El flujo comercial y de conformidad sigue restringido según el rol.',
                     style: theme.textTheme.bodyLarge,
                   ),
                   if (widget.initialVisit != null) ...[
@@ -1088,25 +1088,25 @@ class _QuoteBuilderScreenState extends State<QuoteBuilderScreen> {
                       onPressed: _openPdf,
                       icon: const Icon(Icons.picture_as_pdf_outlined),
                       label: const Text('Abrir PDF')),
-                if (quote.canConfirmForSend)
+                if (widget.user.canEditCommercialFlow && quote.canConfirmForSend)
                   FilledButton.tonalIcon(
                     onPressed: _saving ? null : _confirmQuoteOnly,
                     icon: const Icon(Icons.verified_outlined),
                     label: const Text('Confirmar cotización'),
                   ),
-                if (quote.canMarkClientAccepted)
+                if (widget.user.canEditCommercialFlow && quote.canMarkClientAccepted)
                   FilledButton.icon(
                     onPressed: _saving ? null : _markClientAccepted,
                     icon: const Icon(Icons.thumb_up_alt_outlined),
-                    label: const Text('Cliente acepta'),
+                    label: const Text('Abono 50%'),
                   ),
-                if (quote.canRequestRecotizar)
+                if (widget.user.canEditCommercialFlow && quote.canRequestRecotizar)
                   OutlinedButton.icon(
                     onPressed: _saving ? null : _requestRecotizar,
                     icon: const Icon(Icons.refresh_outlined),
                     label: const Text('Recotizar'),
                   ),
-                if (quote.canCancel)
+                if (widget.user.canEditCommercialFlow && quote.canCancel)
                   OutlinedButton.icon(
                     onPressed: _saving ? null : _cancelQuote,
                     icon: const Icon(Icons.cancel_outlined),
@@ -1120,13 +1120,14 @@ class _QuoteBuilderScreenState extends State<QuoteBuilderScreen> {
                     label: Text(
                         'Orden: ${quote.installationOrderId.isNotEmpty ? quote.installationOrderId : _acceptedOrderId}'),
                   ),
-                if (quote.canScheduleInstallation)
+                if (widget.user.canEditCommercialFlow && quote.canScheduleInstallation)
                   Text(
-                    'Aceptada por cliente. Agenda la cita desde el detalle de visita.',
+                    'Abono inicial del 50% confirmado. Agenda la cita desde el detalle de visita.',
                     style: TextStyle(color: _mutedText),
                   ),
                 if ((quote.installationOrderId.isNotEmpty ||
                         _acceptedOrderId.isNotEmpty) &&
+                    widget.user.canReviewConformityFlow &&
                     widget.initialVisit == null)
                   FilledButton.icon(
                     onPressed: _saving ? null : _openConformidad,

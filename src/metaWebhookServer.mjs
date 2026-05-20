@@ -25,8 +25,26 @@ const sb = new SupabaseRest({
 
 function extractTicketFromCalendarBody(body = '') {
   const text = String(body || '');
-  const match = text.match(/(?:Código|Codigo)\s*:\s*([^\n\r]+)/i);
+  const match = text.match(/(?:Código|Codigo|Referencia)\s*:\s*([^\n\r]+)/i);
   return String(match?.[1] || '').trim();
+}
+
+function inferCalendarCountryHint(value = '') {
+  const text = String(value || '').toUpperCase();
+  if (!text) return null;
+  if (text.includes('COLOMBIA') || text.includes('ÁREA ') || text.includes('MEDELLÍN') || text.includes('CALI') || text.includes('BOGOTÁ') || text.includes('BOGOTA')) return 'CO';
+  if (text.includes('PERÚ') || text.includes('PERU') || text.includes('LIMA') || text.includes('CAÑETE') || text.includes('CANETE') || text.includes('CALLAO')) return 'PE';
+  return null;
+}
+
+function resolveCalendarCountry(payload = {}) {
+  return inferCalendarCountryHint(payload?.countryCode)
+    || inferCalendarCountryHint(payload?.clientZone)
+    || inferCalendarCountryHint(payload?.body?.content)
+    || inferCalendarCountryHint(payload?.body)
+    || inferCalendarCountryHint(payload?.location?.displayName)
+    || inferCalendarCountryHint(payload?.location)
+    || null;
 }
 
 class HybridCalendarClient {
@@ -37,17 +55,36 @@ class HybridCalendarClient {
   }
 
   async listEvents(options = {}) {
+    const country = resolveCalendarCountry(options);
+    if (country === 'PE' && this.clickup) return this.clickup.listEvents(options);
+    if (country === 'CO' && this.microsoft) return this.microsoft.listEvents(options);
     if (this.clickup) return this.clickup.listEvents(options);
     if (this.microsoft) return this.microsoft.listEvents(options);
     return [];
   }
 
   async createEvent(payload = {}) {
+    const country = resolveCalendarCountry(payload);
+    if (country === 'PE' && this.clickup) {
+      const clickupResult = await this.clickup.createEvent(payload);
+      return {
+        ...(clickupResult || {}),
+        id: clickupResult?.id || null,
+        clickupTaskId: clickupResult?.id || null,
+      };
+    }
+    if (country === 'CO' && this.microsoft) {
+      const microsoftEvent = await this.microsoft.createEvent(payload);
+      return {
+        ...(microsoftEvent || {}),
+        id: microsoftEvent?.id || null,
+        clickupTaskId: null,
+      };
+    }
+
     let microsoftEvent = null;
     let clickupResult = null;
-    if (this.microsoft) {
-      microsoftEvent = await this.microsoft.createEvent(payload);
-    }
+    if (this.microsoft) microsoftEvent = await this.microsoft.createEvent(payload);
     if (this.clickup) {
       try {
         clickupResult = await this.clickup.createEvent(payload);
@@ -63,45 +100,106 @@ class HybridCalendarClient {
   }
 
   async updateEvent(eventId, patch = {}) {
-    let ticket = '';
+    const country = resolveCalendarCountry(patch);
+    let ticket = extractTicketFromCalendarBody(patch?.body?.content || '');
+
+    if (country === 'PE' && this.clickup && eventId) {
+      await this.clickup.updateEvent(eventId, patch);
+      return { ok: true, ticket };
+    }
+    if (country === 'CO' && this.microsoft && eventId) {
+      await this.microsoft.updateEvent(eventId, patch);
+      return { ok: true, ticket };
+    }
+
     if (this.microsoft && eventId) {
       try {
         const current = await this.microsoft.getEvent(eventId);
-        ticket = extractTicketFromCalendarBody(current?.body?.content || '');
+        ticket = ticket || extractTicketFromCalendarBody(current?.body?.content || '');
+        await this.microsoft.updateEvent(eventId, patch);
+        if (this.clickup && ticket) {
+          const task = await this.clickup.findTaskByTicket(ticket);
+          if (task?.id) await this.clickup.updateEvent(task.id, patch);
+        }
+        return { ok: true, ticket };
       } catch (error) {
         console.error('HybridCalendarClient microsoft.getEvent failed before update:', error);
       }
-      await this.microsoft.updateEvent(eventId, patch);
     }
-    if (this.clickup && ticket) {
-      try {
-        const task = await this.clickup.findTaskByTicket(ticket);
-        if (task?.id) await this.clickup.updateEvent(task.id, patch);
-      } catch (error) {
-        console.error('HybridCalendarClient clickup.updateEvent failed:', error);
-      }
+
+    if (this.clickup && eventId) {
+      await this.clickup.updateEvent(eventId, patch);
+      return { ok: true, ticket };
     }
     return { ok: true, ticket };
   }
 
   async cancelEvent(eventId, comment = 'Cancelada desde EVINKABOT.') {
-    let ticket = '';
+    const patch = typeof comment === 'object' && comment !== null ? comment : { comment };
+    const country = resolveCalendarCountry(patch);
+    const note = String(patch.comment || 'Cancelada desde EVINKABOT.').trim() || 'Cancelada desde EVINKABOT.';
+    let ticket = extractTicketFromCalendarBody(patch?.body?.content || '');
+
+    if (country === 'PE' && this.clickup && eventId) {
+      await this.clickup.cancelEvent(eventId, note);
+      return { ok: true, ticket };
+    }
+    if (country === 'CO' && this.microsoft && eventId) {
+      await this.microsoft.cancelEvent(eventId, note);
+      return { ok: true, ticket };
+    }
+
     if (this.microsoft && eventId) {
       try {
         const current = await this.microsoft.getEvent(eventId);
-        ticket = extractTicketFromCalendarBody(current?.body?.content || '');
+        ticket = ticket || extractTicketFromCalendarBody(current?.body?.content || '');
+        await this.microsoft.cancelEvent(eventId, note);
+        if (this.clickup && ticket) {
+          const task = await this.clickup.findTaskByTicket(ticket);
+          if (task?.id) await this.clickup.cancelEvent(task.id, note);
+        }
+        return { ok: true, ticket };
       } catch (error) {
         console.error('HybridCalendarClient microsoft.getEvent failed before cancel:', error);
       }
-      await this.microsoft.cancelEvent(eventId, comment);
     }
-    if (this.clickup && ticket) {
+    if (this.clickup && eventId) {
+      await this.clickup.cancelEvent(eventId, note);
+    }
+    return { ok: true, ticket };
+  }
+
+  async deleteEvent(eventId, info = {}) {
+    const payload = typeof info === 'object' && info !== null ? info : {};
+    const country = resolveCalendarCountry(payload);
+    let ticket = String(payload.ticket || '').trim();
+
+    if (country === 'PE' && this.clickup && eventId) {
+      await this.clickup.deleteEvent(eventId);
+      return { ok: true, ticket };
+    }
+    if (country === 'CO' && this.microsoft && eventId) {
+      await this.microsoft.deleteEvent(eventId);
+      return { ok: true, ticket };
+    }
+
+    if (this.microsoft && eventId) {
       try {
-        const task = await this.clickup.findTaskByTicket(ticket);
-        if (task?.id) await this.clickup.cancelEvent(task.id, comment);
+        const current = await this.microsoft.getEvent(eventId);
+        ticket = ticket || extractTicketFromCalendarBody(current?.body?.content || '');
+        await this.microsoft.deleteEvent(eventId);
+        if (this.clickup && ticket) {
+          const task = await this.clickup.findTaskByTicket(ticket);
+          if (task?.id) await this.clickup.deleteEvent(task.id);
+        }
+        return { ok: true, ticket };
       } catch (error) {
-        console.error('HybridCalendarClient clickup.cancelEvent failed:', error);
+        console.error('HybridCalendarClient microsoft.getEvent failed before delete:', error);
       }
+    }
+
+    if (this.clickup && eventId) {
+      await this.clickup.deleteEvent(eventId);
     }
     return { ok: true, ticket };
   }
@@ -438,6 +536,12 @@ function loadWhatsAppRoleMap() {
   }
 }
 
+function findOperationalUserByPhone(phone = '') {
+  const normalized = String(phone || '').replace(/[^+\d]/g, '');
+  if (!normalized) return null;
+  return loadOperationalUsers().find((user) => String(user.notificationPhone || '').replace(/[^+\d]/g, '') === normalized) || null;
+}
+
 function readJsonFile(filePath, fallback) {
   try {
     if (!fs.existsSync(filePath)) return fallback;
@@ -471,6 +575,12 @@ function normalizeCountryList(value) {
     : [];
 }
 
+function normalizeQueueList(value) {
+  return Array.isArray(value)
+    ? [...new Set(value.map((item) => String(item || '').trim().toLowerCase()).filter(Boolean))]
+    : [];
+}
+
 function normalizeLooseText(value = '') {
   return String(value || '')
     .normalize('NFD')
@@ -491,6 +601,7 @@ function loadOperationalUsers() {
         status: String(user.status || 'active').trim().toLowerCase(),
         notificationPhone: normalizeNotificationPhone(user.notificationPhone || user.phone || ''),
         allowedCountries: normalizeCountryList(user.allowedCountries),
+        allowedQueues: normalizeQueueList(user.allowedQueues),
       }))
     : [];
 }
@@ -533,6 +644,99 @@ function userAllowsCountry(user = {}, countryCode = null) {
   return allowed.includes(String(countryCode || '').trim().toUpperCase());
 }
 
+function userAllowsQueue(user = {}, queueKey = '') {
+  const normalizedQueue = String(queueKey || '').trim().toLowerCase();
+  if (!normalizedQueue) return true;
+  const allowed = normalizeQueueList(user.allowedQueues);
+  return allowed.includes(normalizedQueue);
+}
+
+function advisorQueueLabel(queueKey = '') {
+  switch (String(queueKey || '').trim().toLowerCase()) {
+    case 'b2b': return 'B2B / Corporativo';
+    case 'agenda': return 'Agenda';
+    case 'postventa': return 'Postventa';
+    case 'pagos': return 'Pagos';
+    default: return 'Comercial';
+  }
+}
+
+function isCorporateConversation(conversation = {}) {
+  const haystack = normalizeLooseText([
+    conversation?.motivo_handoff,
+    conversation?.subestado_flujo,
+    conversation?.paso_actual,
+    conversation?.resumen,
+    conversation?.intencion_principal,
+  ].filter(Boolean).join(' '));
+  if (!haystack) return false;
+  return haystack.includes('corporativo')
+    || haystack.includes('empresa')
+    || haystack.includes('b2b')
+    || haystack.includes('asesor_corporativo')
+    || haystack.includes('contacto corporativo');
+}
+
+function resolveAdvisorQueue({ conversation } = {}) {
+  const haystack = normalizeLooseText([
+    conversation?.motivo_handoff,
+    conversation?.subestado_flujo,
+    conversation?.paso_actual,
+    conversation?.resumen,
+    conversation?.intencion_principal,
+  ].filter(Boolean).join(' '));
+  if (!haystack) return 'comercial';
+
+  if (isCorporateConversation(conversation)) return 'b2b';
+
+  const hasKeyword = (keywords = []) => keywords.some((keyword) => haystack.includes(keyword));
+  if (hasKeyword(['boleta', 'boletas', 'pago', 'pagos', 'abono', 'deposito', 'factura', 'facturacion', 'caja', 'comprobante'])) return 'pagos';
+  if (hasKeyword(['agenda', 'agendar', 'agendamiento', 'reprogram', 'calendario', 'cita', 'horario'])) return 'agenda';
+  if (hasKeyword(['postventa', 'garantia', 'garantias', 'soporte tecnico', 'falla', 'mantenimiento', 'incidencia'])) return 'postventa';
+  return 'comercial';
+}
+
+function isPreferredB2BAdvisor(user = {}, countryCode = null) {
+  const normalizedCountry = String(countryCode || '').trim().toUpperCase() || 'PE';
+  const email = normalizeEmail(user.email || '');
+  const code = String(user.employeeCode || '').trim().toUpperCase();
+  const name = normalizeLooseText(user.name || '');
+  if (normalizedCountry === 'PE') {
+    return email === 'antonio.milla@evinka.tech' || code === 'ANTONIO' || name === 'antonio';
+  }
+  return false;
+}
+
+function prioritizeAdvisorRecipients(recipients = [], { queueKey = '', countryCode = null } = {}) {
+  const normalizedQueue = String(queueKey || '').trim().toLowerCase();
+  const list = [...recipients];
+  if (normalizedQueue === 'b2b') {
+    list.sort((a, b) => {
+      const aPreferred = isPreferredB2BAdvisor(a, countryCode) ? 1 : 0;
+      const bPreferred = isPreferredB2BAdvisor(b, countryCode) ? 1 : 0;
+      if (aPreferred !== bPreferred) return bPreferred - aPreferred;
+      return String(a.name || '').localeCompare(String(b.name || ''));
+    });
+  }
+  return list;
+}
+
+function resolveAdvisorAlertRecipients({ countryCode = null, queueKey = '' } = {}) {
+  const normalizedQueue = String(queueKey || '').trim().toLowerCase();
+  const baseRecipients = loadOperationalUsers().filter((user) => (
+    user.status === 'active'
+    && isAdvisorAlertRole(user)
+    && userAllowsCountry(user, countryCode)
+    && user.notificationPhone
+  ));
+  if (!normalizedQueue) return baseRecipients;
+  let queueRecipients = baseRecipients.filter((user) => userAllowsQueue(user, normalizedQueue));
+  if (!queueRecipients.length && normalizedQueue === 'b2b') {
+    queueRecipients = baseRecipients.filter((user) => userAllowsQueue(user, 'comercial'));
+  }
+  return prioritizeAdvisorRecipients(queueRecipients.length ? queueRecipients : baseRecipients, { queueKey: normalizedQueue, countryCode });
+}
+
 function advisorChannelForCountry(countryCode = null) {
   if (String(countryCode || '').trim().toUpperCase() === 'CO') {
     return whatsappChannels.find((channel) => channel.key === 'co') || defaultWhatsAppChannel;
@@ -540,7 +744,7 @@ function advisorChannelForCountry(countryCode = null) {
   return defaultWhatsAppChannel;
 }
 
-function buildAdvisorAlertText({ conversation, profile = null, customerPhone = '', customerName = '', countryCode = null }) {
+function buildAdvisorAlertText({ conversation, profile = null, customerPhone = '', customerName = '', countryCode = null, queueKey = 'comercial' }) {
   const countryLabel = String(countryCode || '').trim().toUpperCase() === 'CO' ? 'Colombia' : 'Perú';
   const clientName = String(
     customerName
@@ -551,10 +755,15 @@ function buildAdvisorAlertText({ conversation, profile = null, customerPhone = '
   ).trim();
   const reason = String(conversation?.motivo_handoff || 'Solicitud de asesor').trim();
   const inboxUrl = buildAdvisorCaseUrl(conversation?.id_conversacion, countryCode);
+  const priorityLine = String(queueKey || '').trim().toLowerCase() === 'b2b'
+    ? 'Prioridad: Antonio (B2B)'
+    : null;
   return [
     'Nuevo cliente solicitando asesor EVINKA ⚡',
     '',
     `País: ${countryLabel}`,
+    `Cola: ${advisorQueueLabel(queueKey)}`,
+    ...(priorityLine ? [priorityLine] : []),
     `Cliente: ${clientName}`,
     `Teléfono: ${customerPhone || '-'}`,
     `Motivo: ${reason}`,
@@ -566,12 +775,8 @@ function buildAdvisorAlertText({ conversation, profile = null, customerPhone = '
 }
 
 async function notifyAdvisorRecipients({ conversation, customerPhone, customerName = '', countryCode = null }) {
-  const recipients = loadOperationalUsers().filter((user) => (
-    user.status === 'active'
-    && isAdvisorAlertRole(user)
-    && userAllowsCountry(user, countryCode)
-    && user.notificationPhone
-  ));
+  const queueKey = resolveAdvisorQueue({ conversation });
+  const recipients = resolveAdvisorAlertRecipients({ countryCode, queueKey });
   if (!recipients.length) return { ok: false, skipped: true, reason: 'no_recipients' };
 
   const profileRows = await sb.select('perfiles_cliente', `id_conversacion=eq.${conversation.id_conversacion}&select=*`);
@@ -582,6 +787,7 @@ async function notifyAdvisorRecipients({ conversation, customerPhone, customerNa
     customerPhone,
     customerName,
     countryCode,
+    queueKey,
   });
   const channel = advisorChannelForCountry(countryCode);
   const metaClient = resolveMetaClient(channel.phoneNumberId);
@@ -605,7 +811,7 @@ async function notifyAdvisorRecipients({ conversation, customerPhone, customerNa
   };
 }
 
-function buildAdvisorReminderText({ conversation, profile = null, customerPhone = '', customerName = '', countryCode = null, waitingMinutes = 60, reminderCount = 1 }) {
+function buildAdvisorReminderText({ conversation, profile = null, customerPhone = '', customerName = '', countryCode = null, queueKey = 'comercial', waitingMinutes = 60, reminderCount = 1 }) {
   const countryLabel = String(countryCode || '').trim().toUpperCase() === 'CO' ? 'Colombia' : 'Perú';
   const clientName = String(
     customerName
@@ -616,11 +822,16 @@ function buildAdvisorReminderText({ conversation, profile = null, customerPhone 
   ).trim();
   const reason = String(conversation?.motivo_handoff || 'Solicitud de asesor').trim();
   const inboxUrl = buildAdvisorCaseUrl(conversation?.id_conversacion, countryCode);
+  const priorityLine = String(queueKey || '').trim().toLowerCase() === 'b2b'
+    ? 'Prioridad: Antonio (B2B)'
+    : null;
   return [
     `Recordatorio EVINKA ${reminderCount > 1 ? `#${reminderCount}` : ''} ⏰`,
     '',
     `Cliente esperando asesor hace ${waitingMinutes} min.`,
     `País: ${countryLabel}`,
+    `Cola: ${advisorQueueLabel(queueKey)}`,
+    ...(priorityLine ? [priorityLine] : []),
     `Cliente: ${clientName}`,
     `Teléfono: ${customerPhone || '-'}`,
     `Motivo: ${reason}`,
@@ -632,12 +843,8 @@ function buildAdvisorReminderText({ conversation, profile = null, customerPhone 
 }
 
 async function notifyAdvisorReminder({ conversation, customerPhone, customerName = '', countryCode = null, waitingMinutes = 60, reminderCount = 1 }) {
-  const recipients = loadOperationalUsers().filter((user) => (
-    user.status === 'active'
-    && isAdvisorAlertRole(user)
-    && userAllowsCountry(user, countryCode)
-    && user.notificationPhone
-  ));
+  const queueKey = resolveAdvisorQueue({ conversation });
+  const recipients = resolveAdvisorAlertRecipients({ countryCode, queueKey });
   if (!recipients.length) return { ok: false, skipped: true, reason: 'no_recipients' };
 
   const profileRows = await sb.select('perfiles_cliente', `id_conversacion=eq.${conversation.id_conversacion}&select=*`);
@@ -648,6 +855,7 @@ async function notifyAdvisorReminder({ conversation, customerPhone, customerName
     customerPhone,
     customerName,
     countryCode,
+    queueKey,
     waitingMinutes,
     reminderCount,
   });
@@ -674,7 +882,10 @@ async function notifyAdvisorReminder({ conversation, customerPhone, customerName
 function detectSenderRole(phone = '') {
   const normalized = String(phone || '').replace(/[^+\d]/g, '');
   const roleMap = loadWhatsAppRoleMap();
-  return roleMap.technicians.includes(normalized) ? 'tecnico' : 'cliente';
+  if (roleMap.technicians.includes(normalized)) return 'tecnico';
+  const operationalUser = findOperationalUserByPhone(phone);
+  if (operationalUser && isAdvisorAlertRole(operationalUser)) return 'asesor';
+  return 'cliente';
 }
 
 function roleSourceFor(role) {
@@ -687,8 +898,8 @@ async function resolveInboundRole(phone, userScope = 'default') {
   const user = await engine.ensureUser(phone, userScope);
   const persistedRole = engine.normalizeUserRole(user?.rol_usuario);
   const mappedRole = detectSenderRole(phone);
-  const inferredRole = mappedRole === 'tecnico'
-    ? 'tecnico'
+  const inferredRole = ['tecnico', 'asesor'].includes(mappedRole)
+    ? mappedRole
     : (persistedRole || mappedRole);
   if (inferredRole && persistedRole !== inferredRole) {
     const updated = await engine.syncUserRole(user.id_usuario, inferredRole, roleSourceFor(inferredRole));
@@ -948,6 +1159,16 @@ function scheduleReminder({ to, ticket, dateLabel, hourLabel, address, userScope
   }, delayMs);
   reminderTimers.set(ticket, timer);
   return { ok: true, delayMs };
+}
+
+function clearBookingReminder(ticket = '') {
+  const key = String(ticket || '').trim();
+  if (!key) return false;
+  const timer = reminderTimers.get(key);
+  if (!timer) return false;
+  clearTimeout(timer);
+  reminderTimers.delete(key);
+  return true;
 }
 
 function handoffTimeoutText() {
@@ -1214,8 +1435,16 @@ function resolveMetaClient(phoneNumberId = null) {
 async function sendReply(to, reply, phoneNumberId = null) {
   if (!reply) return;
   const client = resolveMetaClient(phoneNumberId);
+  if (Array.isArray(reply)) {
+    for (const item of reply) await sendReply(to, item, phoneNumberId);
+    return;
+  }
   if (typeof reply === 'string') {
     await client.sendText(to, reply);
+    return;
+  }
+  if (reply.kind === 'sequence') {
+    for (const item of reply.messages || []) await sendReply(to, item, phoneNumberId);
     return;
   }
   if (reply.kind === 'buttons') {
@@ -1445,6 +1674,30 @@ const server = http.createServer(async (req, res) => {
       return;
     }
 
+    if (req.method === 'POST' && url.pathname === '/api/internal/global-visit-delete') {
+      const apiKey = process.env.EVINKA_BOT_VISITS_API_KEY || 'EvinkaBotVisits#2026';
+      const provided = String(req.headers['x-evinka-bot-key'] || '').trim();
+      if (!provided || provided !== apiKey) {
+        res.writeHead(401, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'Bot no autorizado' }));
+        return;
+      }
+      const raw = await readRawBody(req);
+      const payload = JSON.parse(raw.toString('utf8') || '{}');
+      const ticket = String(payload.ticket || '').trim();
+      const eventId = String(payload.eventId || '').trim();
+      const countryCode = String(payload.countryCode || '').trim().toUpperCase();
+      const reminderCleared = clearBookingReminder(ticket);
+      let calendarDeleted = false;
+      if (eventId && calendar?.deleteEvent) {
+        await calendar.deleteEvent(eventId, { ticket, countryCode });
+        calendarDeleted = true;
+      }
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ ok: true, ticket, eventId, reminderCleared, calendarDeleted }));
+      return;
+    }
+
     if (req.method === 'POST' && url.pathname === WEBHOOK_PATH) {
       const raw = await readRawBody(req);
       const signature = req.headers['x-hub-signature-256'];
@@ -1473,6 +1726,8 @@ const server = http.createServer(async (req, res) => {
             role = detectSenderRole(message.from);
             if (role === 'tecnico') {
               await metaClient.sendText(message.from, 'Tu número está registrado como técnico EVINKA. Para no mezclar clientes con alertas técnicas, el flujo comercial ya no se ejecuta en este chat.');
+            } else if (role === 'asesor') {
+              await metaClient.sendText(message.from, 'Tu número está registrado como asesor EVINKA. Este chat queda reservado para alertas operativas, así que el chatbot comercial no se ejecuta aquí.');
             } else {
               await metaClient.sendText(message.from, fallbackBotReply(message));
             }
@@ -1482,6 +1737,10 @@ const server = http.createServer(async (req, res) => {
         }
         if (role === 'tecnico') {
           await handleTechnicianInbound(metaClient, message);
+          continue;
+        }
+        if (role === 'asesor') {
+          await metaClient.sendText(message.from, 'Tu número está registrado como asesor EVINKA. Este chat queda reservado para alertas operativas, así que el chatbot comercial no se ejecuta aquí.');
           continue;
         }
         let reply = null;

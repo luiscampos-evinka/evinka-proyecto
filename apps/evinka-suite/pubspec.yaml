@@ -2,7 +2,7 @@ name: protocolo_cargador
 description: Protocolo de Instalación de Cargador
 
 publish_to: 'none'
-version: 1.0.51+51
+version: 1.0.53+53
 
 environment:
   sdk: '>=3.0.0 <4.0.0'

@@ -32,12 +32,21 @@ class EvinkaUser {
   bool get hasFullAccess => isAdmin || isLuisSupervisor;
   bool get isCommercial => const {
         'comercial',
+        'asesor_comercial',
+        'asesor_venta',
+        'kam_b2c',
+        'kam',
+        'asesor_ventas',
         'ventas',
+        'venta',
         'sales',
         'commercial',
+        'sales_advisor',
       }.contains(normalizedRoleKey);
   bool get isAdvisor => const {
         'asesor',
+        'asesor_comercial',
+        'asesor_venta',
         'asesor_humano',
         'advisor',
         'human_advisor',
@@ -51,6 +60,8 @@ class EvinkaUser {
         'tech',
         'tecnico',
         'tecnico_visita',
+        'tecnico_visitas',
+        'visit_tech',
         'field_tech',
       }.contains(normalizedRoleKey);
   bool get isTech =>
@@ -60,8 +71,13 @@ class EvinkaUser {
       (!isAdmin && !isCommercial && !isAdvisor);
   bool get canSeeCommercialData =>
       hasFullAccess || isCommercial || isTechSupervisor;
+  bool get canCreateQuotes =>
+      hasFullAccess || isCommercial || isTechSupervisor || isVisitTech;
+  bool get canViewQuotes => canCreateQuotes;
   bool get canEditCommercialFlow =>
       hasFullAccess || isCommercial || isTechSupervisor;
+  bool get canReviewConformityFlow =>
+      hasFullAccess || isCommercial || isTechSupervisor || isInstaller;
 
   factory EvinkaUser.fromJson(Map<String, dynamic> json) {
     return EvinkaUser(
@@ -580,10 +596,15 @@ class QuoteRecord {
       normalizedStatus == 'aceptada_cliente' &&
       !hasGeneratedConformity &&
       !hasScheduledInstallation;
+  bool get canMarkFullPayment =>
+      hasGeneratedConformity && normalizedStatus != 'abono_100_confirmado';
   bool get canOpenConformity =>
       hasOrder && (normalizedStatus == 'instalada' || hasGeneratedConformity);
 
   String get statusLabel {
+    if (normalizedStatus == 'abono_100_confirmado') {
+      return 'Proyecto cerrado';
+    }
     if (hasGeneratedConformity) {
       return 'Conformidad generada';
     }
@@ -592,7 +613,7 @@ class QuoteRecord {
         return 'Instalada';
       case 'aceptada':
       case 'aceptada_cliente':
-        return 'Aceptada por cliente';
+        return 'Abono 50% confirmado';
       case 'lista_envio':
         return 'Lista para enviar';
       case 'recotizar':
@@ -600,7 +621,7 @@ class QuoteRecord {
       case 'cancelada':
         return 'Cancelada';
       default:
-        return 'Cotizada';
+        return 'Pendiente comercial';
     }
   }
 
@@ -692,16 +713,33 @@ class TechVisit {
   bool get isClosed => status == 'cerrada';
   bool get isPendingClose => status == 'pendiente_cierre';
   bool get needsAction => !isClosed;
-  bool get isToday {
+  bool get isExpiredUnattended {
     final dt = scheduledDate;
     if (dt == null) return false;
+    final now = DateTime.now();
+    final scheduledDay = DateTime(dt.year, dt.month, dt.day);
+    final today = DateTime(now.year, now.month, now.day);
+    if (!scheduledDay.isBefore(today)) return false;
+    return const {
+      'pendiente',
+      'agendada',
+      'en_ruta',
+      'en_visita',
+    }.contains(status);
+  }
+
+  bool get hideFromBoard => isExpiredUnattended;
+  bool get isVisibleOnBoard => !hideFromBoard;
+  bool get isToday {
+    final dt = scheduledDate;
+    if (dt == null || hideFromBoard) return false;
     final now = DateTime.now();
     return dt.year == now.year && dt.month == now.month && dt.day == now.day;
   }
 
   bool get isThisWeek {
     final dt = scheduledDate;
-    if (dt == null) return false;
+    if (dt == null || hideFromBoard) return false;
     final now = DateTime.now();
     final start = DateTime(now.year, now.month, now.day)
         .subtract(Duration(days: now.weekday - 1));
@@ -711,7 +749,7 @@ class TechVisit {
 
   bool get isThisMonth {
     final dt = scheduledDate;
-    if (dt == null) return false;
+    if (dt == null || hideFromBoard) return false;
     final now = DateTime.now();
     return dt.year == now.year && dt.month == now.month;
   }
@@ -734,6 +772,8 @@ class TechVisit {
   String get typeLabel =>
       isInstallation ? 'Instalación' : 'Evaluación / visita';
   bool get needsQuoteConfirmation => status == 'cotizada';
+  bool get pendingCommercialReview =>
+      status == 'pendiente_cotizacion' || status == 'cotizada';
   bool get needsClientDecision => status == 'lista_envio';
   bool get needsScheduling => status == 'aceptada_cliente';
   bool get needsConformity => status == 'pendiente_conformidad';
@@ -749,7 +789,7 @@ class TechVisit {
 
   bool get isHappeningNow {
     final dt = scheduledDate;
-    if (dt == null || isClosed) return false;
+    if (dt == null || isClosed || hideFromBoard) return false;
     final now = DateTime.now();
     final end = dt.add(const Duration(hours: 1));
     return now.isAfter(dt.subtract(const Duration(minutes: 30))) &&
@@ -758,7 +798,7 @@ class TechVisit {
 
   bool get isUpcomingSoon {
     final dt = scheduledDate;
-    if (dt == null || isClosed) return false;
+    if (dt == null || isClosed || hideFromBoard) return false;
     final now = DateTime.now();
     return dt.isAfter(now) && dt.isBefore(now.add(const Duration(hours: 3)));
   }
@@ -767,7 +807,7 @@ class TechVisit {
     if (status == 'agendada') return 'Ir en ruta';
     if (status == 'en_ruta') return 'Marcar en visita';
     if (needsQuote) return 'Cotizar';
-    if (needsQuoteConfirmation) return 'Confirmar cotización';
+    if (pendingCommercialReview) return 'Pendiente comercial';
     if (needsClientDecision) return 'Registrar respuesta';
     if (needsScheduling) return 'Agendar instalación';
     if (canMarkInstallationCompleted) return 'Marcar instalada';
@@ -795,7 +835,7 @@ class TechVisit {
       case 'lista_envio':
         return 'Lista para enviar';
       case 'aceptada_cliente':
-        return 'Cliente acepta';
+        return 'Abono 50% confirmado';
       case 'cancelada':
         return 'Cotización cancelada';
       case 'recotizar':

@@ -1338,18 +1338,167 @@ function normalizePersonName(value) {
   return String(value || '').replace(/\s+/g, ' ').trim();
 }
 
+function foldText(value) {
+  return String(value || '').normalize('NFD').replace(/\p{Diacritic}/gu, '');
+}
+
+const PUBLIC_MAP_PLACEHOLDER_NAME_PARTS = new Set([
+  'test', 'testing', 'prueba', 'pruebas', 'demo', 'fake', 'falso', 'nombre', 'apellido', 'usuario', 'cliente',
+  'hola', 'aaaa', 'bbbb', 'cccc', 'xxxx', 'qwer', 'qwerty', 'asdf', 'zxcv', 'sksk',
+]);
+
+const PUBLIC_MAP_DISPOSABLE_EMAIL_DOMAINS = new Set([
+  'mailinator.com', 'tempmail.com', '10minutemail.com', 'guerrillamail.com', 'yopmail.com', 'sharklasers.com',
+]);
+
+const PUBLIC_MAP_EMAIL_DOMAIN_CORRECTIONS = new Map([
+  ['gmal.com', 'gmail.com'],
+  ['gmial.com', 'gmail.com'],
+  ['gmai.com', 'gmail.com'],
+  ['gmail.con', 'gmail.com'],
+  ['hmail.com', 'gmail.com'],
+  ['hmail.con', 'gmail.com'],
+  ['hotnail.com', 'hotmail.com'],
+  ['hotmial.com', 'hotmail.com'],
+  ['hotmail.con', 'hotmail.com'],
+  ['outlok.com', 'outlook.com'],
+  ['outlook.con', 'outlook.com'],
+  ['icloud.con', 'icloud.com'],
+  ['yaho.com', 'yahoo.com'],
+  ['yahoo.con', 'yahoo.com'],
+]);
+
+const PUBLIC_MAP_BAD_EMAIL_TLDS = new Set(['con', 'cim', 'comm', 'xom', 'vom']);
+
+function normalizePublicMapNameWords(name) {
+  return normalizePersonName(name)
+    .replace(/[^\p{L}\p{M}' -]/gu, ' ')
+    .split(/\s+/)
+    .map((part) => part.replace(/^[-']+|[-']+$/g, ''))
+    .filter(Boolean);
+}
+
+function assessPublicMapName(name) {
+  const normalizedName = normalizePersonName(name);
+  const words = normalizePublicMapNameWords(normalizedName);
+  const lettersOnly = foldText(words.join(' ')).toLowerCase().replace(/[^a-z]/g, '');
+  const badParts = words
+    .map((part) => foldText(part).toLowerCase().replace(/[^a-z]/g, ''))
+    .filter((part) => part && (PUBLIC_MAP_PLACEHOLDER_NAME_PARTS.has(part) || (part.length >= 4 && new Set(part).size <= 2)));
+
+  if (normalizedName.length < 5 || normalizedName.length > 120) {
+    return { valid: false, normalizedName, reason: 'Ingresa tu nombre y apellido para continuar.' };
+  }
+  if (words.length < 2) {
+    return { valid: false, normalizedName, reason: 'Ingresa tu nombre y apellido para continuar.' };
+  }
+  if (lettersOnly.length < 5) {
+    return { valid: false, normalizedName, reason: 'Ingresa tu nombre completo para continuar.' };
+  }
+  if (badParts.length) {
+    return { valid: false, normalizedName, reason: 'Ingresa tu nombre real para continuar.' };
+  }
+
+  return { valid: true, normalizedName, flags: [] };
+}
+
+function assessPublicMapEmail(email) {
+  const normalizedEmail = normalizeEmail(email);
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalizedEmail)) {
+    return { valid: false, normalizedEmail, reason: 'Ingresa un correo válido para continuar.', flags: [] };
+  }
+
+  const [localPart = '', rawDomain = ''] = normalizedEmail.split('@');
+  const domain = foldText(rawDomain).toLowerCase();
+  const tld = domain.split('.').pop() || '';
+  const correction = PUBLIC_MAP_EMAIL_DOMAIN_CORRECTIONS.get(domain);
+  if (correction) {
+    return { valid: false, normalizedEmail, reason: `Revisa tu correo. ¿Quizá quisiste escribir ${localPart}@${correction}?`, flags: ['typo_domain'] };
+  }
+  if (PUBLIC_MAP_BAD_EMAIL_TLDS.has(tld)) {
+    return { valid: false, normalizedEmail, reason: 'Revisa tu correo e inténtalo de nuevo.', flags: ['invalid_tld'] };
+  }
+
+  const flags = [];
+  const foldedLocal = foldText(localPart).toLowerCase();
+  if (PUBLIC_MAP_DISPOSABLE_EMAIL_DOMAINS.has(domain)) flags.push('disposable_domain');
+  if (foldedLocal.length >= 5 && new Set(foldedLocal.replace(/[^a-z0-9]/g, '')).size <= 3) flags.push('weak_local_part');
+
+  return { valid: true, normalizedEmail, flags };
+}
+
 function isValidPublicMapEmail(email) {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalizeEmail(email));
+}
+
+function computePublicMapLeadQuality({ nameAssessment, emailAssessment }) {
+  const flags = [...new Set([...(nameAssessment?.flags || []), ...(emailAssessment?.flags || [])])];
+  let score = 100;
+  if (flags.includes('disposable_domain')) score -= 45;
+  if (flags.includes('weak_local_part')) score -= 15;
+  const tier = score >= 85 ? 'high' : score >= 60 ? 'medium' : 'low';
+  return { score, tier, flags };
 }
 
 function publicMapLeadUserId() {
   return `wm${Date.now().toString(36)}${crypto.randomBytes(2).toString('hex')}`.slice(0, 20);
 }
 
-async function capturePublicMapLead({ name, email, acceptMarketing, acceptCookies, source = 'solo-mapa.html' }, meta = {}) {
+async function capturePublicMapLead({ name, email, acceptMarketing, acceptCookies, source = 'solo-mapa.html', quality = null }, meta = {}) {
   const normalizedEmail = normalizeEmail(email);
   const normalizedName = normalizePersonName(name);
   const now = new Date().toISOString();
+  const deviceKey = String(meta.deviceKey || 'sin_device').trim() || 'sin_device';
+  const originUrl = String(meta.page || `/${source}`).slice(0, 500);
+  const userAgent = String(meta.userAgent || 'unknown').slice(0, 240);
+  const ip = String(meta.ip || 'unknown').slice(0, 120);
+  const ipHash = ip === 'unknown' ? null : sha256(ip);
+
+  let leadSaved = false;
+  let leadId = null;
+  try {
+    const leadRows = await sb.select(
+      'leads_mapa_publico',
+      `correo=eq.${encodeURIComponent(normalizedEmail)}&device_key=eq.${encodeURIComponent(deviceKey)}&select=id_lead,nombre,telefono,acepta_promociones,acepta_cookies,device_key,fuente,canal,origen_url,utm_source,utm_medium,utm_campaign,user_agent,ip_hash,metadata&limit=1`,
+    );
+    const existingLead = Array.isArray(leadRows) ? leadRows[0] : null;
+    const leadPatch = {
+      id_usuario: null,
+      nombre: normalizedName,
+      correo: normalizedEmail,
+      telefono: null,
+      acepta_promociones: !!acceptMarketing,
+      acepta_cookies: !!acceptCookies,
+      device_key: deviceKey,
+      fuente: 'mapa_publico',
+      canal: 'web_mapa',
+      origen_url: originUrl,
+      utm_source: meta.utmSource ? String(meta.utmSource).slice(0, 120) : null,
+      utm_medium: meta.utmMedium ? String(meta.utmMedium).slice(0, 120) : null,
+      utm_campaign: meta.utmCampaign ? String(meta.utmCampaign).slice(0, 120) : null,
+      user_agent: userAgent,
+      ip_hash: ipHash,
+      metadata: {
+        source,
+        page: originUrl,
+        capturedAt: now,
+        acceptMarketing: !!acceptMarketing,
+        acceptCookies: !!acceptCookies,
+        quality,
+      },
+    };
+
+    if (existingLead?.id_lead) {
+      leadId = existingLead.id_lead;
+      await sb.update('leads_mapa_publico', `id_lead=eq.${encodeURIComponent(existingLead.id_lead)}`, leadPatch);
+    } else {
+      const createdLead = await sb.insert('leads_mapa_publico', leadPatch);
+      leadId = Array.isArray(createdLead) && createdLead[0]?.id_lead ? createdLead[0].id_lead : null;
+    }
+    leadSaved = true;
+  } catch (error) {
+    console.error('public-map-lead table failed:', error);
+  }
 
   const existingRows = await sb.select('usuarios', `correo_electronico=eq.${encodeURIComponent(normalizedEmail)}&select=id_usuario,nombre_visible,nombre_usuario,correo_electronico&limit=1`);
   let user = Array.isArray(existingRows) ? existingRows[0] : null;
@@ -1372,30 +1521,42 @@ async function capturePublicMapLead({ name, email, acceptMarketing, acceptCookie
     }
   }
 
+  if (leadId && user?.id_usuario) {
+    try {
+      await sb.update('leads_mapa_publico', `id_lead=eq.${encodeURIComponent(leadId)}`, { id_usuario: user.id_usuario });
+    } catch (error) {
+      console.error('public-map-lead user-link failed:', error);
+    }
+  }
+
   const summary = JSON.stringify({
     source,
     acceptMarketing: !!acceptMarketing,
     acceptCookies: !!acceptCookies,
-    page: String(meta.page || '/solo-mapa.html').slice(0, 160),
-    ip: String(meta.ip || 'unknown').slice(0, 120),
-    userAgent: String(meta.userAgent || 'unknown').slice(0, 240),
+    page: originUrl.slice(0, 160),
+    ip,
+    userAgent,
     capturedAt: now,
+    quality,
   });
 
   await sb.insert('conversaciones', {
     id_usuario: user?.id_usuario || publicMapLeadUserId(),
-    canal: 'whatsapp',
+    canal: 'web_mapa',
     intencion_principal: 'otro',
-    estado_conversacion: 'open',
+    estado_conversacion: 'closed',
     paso_actual: 'lead_captado',
     subestado_flujo: 'marketing_optin',
+    requiere_handoff: false,
     dio_consentimiento: true,
     consentimiento_fecha: now,
     consentimiento_version: 'mapa_lead_v1',
     resumen: summary,
+    cerrada_en: now,
+    ultimo_mensaje_en: now,
   });
 
-  return { ok: true, idUsuario: user?.id_usuario || null };
+  return { ok: true, idUsuario: user?.id_usuario || null, leadSaved };
 }
 
 function normalizePhone(value) {
@@ -2443,16 +2604,19 @@ const server = http.createServer(async (req, res) => {
       if (!limit.ok) return tooManyRequests(res, baseHeaders, limit.retryAfterSec, 'Demasiados intentos desde esta red. Inténtalo más tarde.');
 
       const body = await readJsonBody(req);
-      const name = normalizePersonName(body.name);
-      const email = normalizeEmail(body.email);
+      const nameAssessment = assessPublicMapName(body.name);
+      const emailAssessment = assessPublicMapEmail(body.email);
+      const name = nameAssessment.normalizedName;
+      const email = emailAssessment.normalizedEmail;
       const acceptMarketing = parseBooleanish(body.acceptMarketing, false);
       const acceptCookies = parseBooleanish(body.acceptCookies, false);
+      const quality = computePublicMapLeadQuality({ nameAssessment, emailAssessment });
 
-      if (name.length < 2 || name.length > 120) {
-        return sendJson(res, 400, { error: 'invalid_name', message: 'Ingresa tu nombre completo para continuar.' }, baseHeaders);
+      if (!nameAssessment.valid) {
+        return sendJson(res, 400, { error: 'invalid_name', message: nameAssessment.reason || 'Ingresa tu nombre completo para continuar.' }, baseHeaders);
       }
-      if (!isValidPublicMapEmail(email)) {
-        return sendJson(res, 400, { error: 'invalid_email', message: 'Ingresa un correo válido para continuar.' }, baseHeaders);
+      if (!emailAssessment.valid) {
+        return sendJson(res, 400, { error: 'invalid_email', message: emailAssessment.reason || 'Ingresa un correo válido para continuar.' }, baseHeaders);
       }
       if (!acceptMarketing || !acceptCookies) {
         return sendJson(res, 400, { error: 'consent_required', message: 'Debes aceptar promociones y cookies para continuar.' }, baseHeaders);
@@ -2465,6 +2629,7 @@ const server = http.createServer(async (req, res) => {
           acceptMarketing,
           acceptCookies,
           source: 'solo-mapa.html',
+          quality,
         }, {
           ip,
           userAgent: req.headers['user-agent'] || 'unknown',

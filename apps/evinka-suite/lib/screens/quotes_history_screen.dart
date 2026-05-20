@@ -128,7 +128,25 @@ class _QuotesHistoryScreenState extends State<QuotesHistoryScreen> {
       quote,
       status: 'aceptada_cliente',
       successMessage:
-          'Cliente aceptado registrado. Ahora ya puedes agendar la instalación.',
+          'Abono inicial del 50% registrado. Ahora ya puedes agendar la instalación.',
+      paymentAmount: quote.total * 0.5,
+      paymentObservation: 'Abono 50% confirmado por KAM desde EVINKA Suite.',
+    );
+  }
+
+  Future<void> _markFullPayment(QuoteRecord quote) async {
+    final ok = await _confirmAction(
+      title: 'Registrar abono 100%',
+      message:
+          'Se marcará el proyecto de ${quote.clientName} como pagado al 100% y cerrado. ¿Continuar?',
+    );
+    if (!ok) return;
+    await _updateQuoteStatus(
+      quote,
+      status: 'abono_100_confirmado',
+      successMessage: 'Abono 100% registrado. El proyecto quedó cerrado.',
+      paymentAmount: quote.total,
+      paymentObservation: 'Abono 100% confirmado por KAM desde EVINKA Suite.',
     );
   }
 
@@ -164,10 +182,18 @@ class _QuotesHistoryScreenState extends State<QuotesHistoryScreen> {
     QuoteRecord quote, {
     required String status,
     required String successMessage,
+    double? paymentAmount,
+    String? paymentObservation,
   }) async {
     setState(() => _busyQuoteId = quote.id);
     try {
-      final updated = await _api.updateQuoteStatus(quote.id, status: status);
+      final updated = await _api.updateQuoteStatus(
+        quote.id,
+        status: status,
+        paymentAmount: paymentAmount,
+        paymentObservation: paymentObservation,
+        paymentDate: DateTime.now().toIso8601String(),
+      );
       if (!mounted) return;
       _replaceQuote(updated);
       ScaffoldMessenger.of(context)
@@ -356,7 +382,7 @@ class _QuotesHistoryScreenState extends State<QuotesHistoryScreen> {
           IconButton(onPressed: _load, icon: const Icon(Icons.refresh))
         ],
       ),
-      body: !widget.user.canEditCommercialFlow
+      body: !widget.user.canViewQuotes
           ? Center(
               child: ConstrainedBox(
                 constraints: const BoxConstraints(maxWidth: 720),
@@ -368,7 +394,7 @@ class _QuotesHistoryScreenState extends State<QuotesHistoryScreen> {
                     child: const Padding(
                       padding: EdgeInsets.all(24),
                       child: Text(
-                        'El historial comercial queda restringido para este rol. Aquí no se muestran precios, PDFs ni acciones de cotización.',
+                        'Este rol no tiene acceso al historial de cotizaciones en la app.',
                         style: TextStyle(
                             fontSize: 16, fontWeight: FontWeight.w600),
                       ),
@@ -464,7 +490,7 @@ class _QuotesHistoryScreenState extends State<QuotesHistoryScreen> {
                                           : () => _markClientAccepted(quote),
                                       icon: const Icon(
                                           Icons.thumb_up_alt_outlined),
-                                      label: const Text('Cliente acepta'),
+                                      label: const Text('Abono 50%'),
                                     ),
                                   if (widget.user.canEditCommercialFlow &&
                                       quote.canRequestRecotizar)
@@ -494,7 +520,17 @@ class _QuotesHistoryScreenState extends State<QuotesHistoryScreen> {
                                           Icons.event_available_outlined),
                                       label: const Text('Agendar instalación'),
                                     ),
-                                  if (quote.canOpenConformity)
+                                  if (widget.user.canEditCommercialFlow &&
+                                      quote.canMarkFullPayment)
+                                    FilledButton.tonalIcon(
+                                      onPressed: isBusy
+                                          ? null
+                                          : () => _markFullPayment(quote),
+                                      icon: const Icon(Icons.payments_outlined),
+                                      label: const Text('Abono 100%'),
+                                    ),
+                                  if (widget.user.canReviewConformityFlow &&
+                                      quote.canOpenConformity)
                                     OutlinedButton.icon(
                                       onPressed: isBusy
                                           ? null

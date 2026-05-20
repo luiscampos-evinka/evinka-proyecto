@@ -153,4 +153,11 @@ export class MicrosoftGraphClient {
     });
     return { ok: true };
   }
+
+  async deleteEvent(eventId) {
+    await this.request(`/users/${encodeURIComponent(this.senderEmail)}/events/${encodeURIComponent(eventId)}`, {
+      method: 'DELETE',
+    });
+    return { ok: true };
+  }
 }

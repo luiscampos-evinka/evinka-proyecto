@@ -78,7 +78,9 @@ class _SuiteDashboardScreenState extends State<SuiteDashboardScreen> {
       var activeVisits = 0;
       TechVisit? nextVisit;
       if (_canSeeVisitsModule) {
-        final visits = await _api.getTechVisits();
+        final visits = (await _api.getTechVisits())
+            .where((item) => item.isVisibleOnBoard)
+            .toList();
         activeVisits = visits.where((item) => !item.isClosed).length;
         visits.sort((a, b) {
           int score(TechVisit visit) {

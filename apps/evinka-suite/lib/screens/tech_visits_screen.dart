@@ -41,7 +41,7 @@ class _TechVisitsScreenState extends State<TechVisitsScreen> {
         return ad.compareTo(bd);
       });
       if (!mounted) return;
-      setState(() => _visits = visits);
+      setState(() => _visits = visits.where((item) => item.isVisibleOnBoard).toList());
     } catch (e) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
@@ -143,6 +143,7 @@ class _TechVisitsScreenState extends State<TechVisitsScreen> {
 
   List<TechVisit> _visitsForDay(DateTime day) {
     return _visits.where((item) {
+      if (!item.isVisibleOnBoard) return false;
       final dt = item.scheduledDate;
       return dt != null &&
           dt.year == day.year &&

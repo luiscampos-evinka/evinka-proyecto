@@ -43,7 +43,8 @@ class EvinkaApiService {
     for (final part in parts) {
       final trimmed = part.trim();
       if (trimmed.startsWith('cotizador_session=')) {
-        return Uri.decodeComponent(trimmed.substring('cotizador_session='.length));
+        return Uri.decodeComponent(
+            trimmed.substring('cotizador_session='.length));
       }
     }
     return null;
@@ -290,7 +291,9 @@ class EvinkaApiService {
         .where((e) {
           final raw = Map<String, dynamic>.from(e as Map);
           final country = raw['countryCode']?.toString().trim().toUpperCase();
-          return country == null || country.isEmpty || country == EvinkaAppConfig.countryCode;
+          return country == null ||
+              country.isEmpty ||
+              country == EvinkaAppConfig.countryCode;
         })
         .map((e) => QuoteRecord.fromJson(Map<String, dynamic>.from(e as Map)))
         .toList();
@@ -326,6 +329,9 @@ class EvinkaApiService {
     required String status,
     String? visitId,
     String? reference,
+    double? paymentAmount,
+    String? paymentObservation,
+    String? paymentDate,
   }) async {
     final data = await _jsonRequest(
       '/api/quotes/${Uri.encodeComponent(id)}/status',
@@ -334,6 +340,10 @@ class EvinkaApiService {
         'status': status,
         if (visitId != null) 'visitId': visitId,
         if (reference != null) 'reference': reference,
+        if (paymentAmount != null) 'paymentAmount': paymentAmount,
+        if (paymentObservation != null)
+          'paymentObservation': paymentObservation,
+        if (paymentDate != null) 'paymentDate': paymentDate,
       }),
     );
     return QuoteRecord.fromJson(
@@ -372,7 +382,9 @@ class EvinkaApiService {
         .where((e) {
           final raw = Map<String, dynamic>.from(e as Map);
           final country = raw['countryCode']?.toString().trim().toUpperCase();
-          return country == null || country.isEmpty || country == EvinkaAppConfig.countryCode;
+          return country == null ||
+              country.isEmpty ||
+              country == EvinkaAppConfig.countryCode;
         })
         .map((e) => TechVisit.fromJson(Map<String, dynamic>.from(e as Map)))
         .toList();

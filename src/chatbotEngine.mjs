@@ -163,14 +163,14 @@ Si quieres, prueba otra localidad o escríbenos al 3242853029.`;
 
 const CO_ZONE_BOOKING_OPTIONS = [
   { id: 'CO_ZONE_OTHERS', title: 'Otras ciudades', description: 'Si no encuentras tu localidad o ciudad en la lista' },
-  { id: 'CO_ZONE_1', title: 'Suba-Usaquén', zone: 'ÁREA 1 — SUBA–USAQUÉN', locality: 'Suba / Usaquén', description: 'Para visitas en Suba o Usaquén' },
-  { id: 'CO_ZONE_2', title: 'Chapinero-Barrios Unidos-Teusaquillo', zone: 'ÁREA 2 — CHAPINERO–BARRIOS UNIDOS–TEUSAQUILLO', locality: 'Chapinero / Barrios Unidos / Teusaquillo', description: 'Para visitas en este grupo de localidades' },
-  { id: 'CO_ZONE_3', title: 'Engativá-Fontibón', zone: 'ÁREA 3 — ENGATIVÁ–FONTIBÓN', locality: 'Engativá / Fontibón', description: 'Para visitas en Engativá o Fontibón' },
-  { id: 'CO_ZONE_4', title: 'Kennedy-Puente Aranda-Bosa', zone: 'ÁREA 4 — KENNEDY–PUENTE ARANDA–BOSA', locality: 'Kennedy / Puente Aranda / Bosa / Soacha / Sibaté', description: 'Incluye Kennedy, Puente Aranda, Bosa, Soacha y Sibaté' },
-  { id: 'CO_ZONE_5', title: 'La Candelaria-Santa Fe-Los Mártires-Antonio Nariño-Rafael Uribe Uribe', zone: 'ÁREA 5 — LA CANDELARIA–SANTA FE–LOS MÁRTIRES–ANTONIO NARIÑO–RAFAEL URIBE URIBE', locality: 'La Candelaria / Santa Fe / Los Mártires / Antonio Nariño / Rafael Uribe Uribe', description: 'Para visitas en este grupo de localidades' },
-  { id: 'CO_ZONE_6', title: 'Mosquera-Funza-Tenjo-Cota', zone: 'ÁREA 6 — MOSQUERA–FUNZA–TENJO–COTA', locality: 'Mosquera / Funza / Tenjo / Cota', description: 'Para visitas en Mosquera, Funza, Tenjo o Cota' },
-  { id: 'CO_ZONE_7', title: 'Chía-Cajicá-Sopó', zone: 'ÁREA 7 — CHÍA–CAJICÁ–SOPÓ', locality: 'Chía / Cajicá / Sopó', description: 'Para visitas en Chía, Cajicá o Sopó' },
-  { id: 'CO_ZONE_8', title: 'La Calera-Usme-San Cristóbal-Tunjuelito-Ciudad Bolívar', zone: 'ÁREA 8 — LA CALERA–USME–SAN CRISTÓBAL–TUNJUELITO–CIUDAD BOLÍVAR', locality: 'La Calera / Usme / San Cristóbal / Tunjuelito / Ciudad Bolívar', description: 'Para visitas en este grupo de localidades' },
+  { id: 'CO_ZONE_1', title: 'Suba-Usaquén', zone: 'ÁREA 1 — SUBA–USAQUÉN', locality: 'Suba / Usaquén', description: 'Suba, Usaquén' },
+  { id: 'CO_ZONE_2', title: 'Chapinero-Barrios Unidos-Teusaquillo', zone: 'ÁREA 2 — CHAPINERO–BARRIOS UNIDOS–TEUSAQUILLO', locality: 'Chapinero / Barrios Unidos / Teusaquillo', description: 'Chapinero, Barrios Unidos, Teusaquillo' },
+  { id: 'CO_ZONE_3', title: 'Engativá-Fontibón', zone: 'ÁREA 3 — ENGATIVÁ–FONTIBÓN', locality: 'Engativá / Fontibón', description: 'Engativá, Fontibón' },
+  { id: 'CO_ZONE_4', title: 'Kennedy-Puente Aranda-Bosa', zone: 'ÁREA 4 — KENNEDY–PUENTE ARANDA–BOSA', locality: 'Kennedy / Puente Aranda / Bosa / Soacha / Sibaté', description: 'Kennedy, Puente Aranda, Bosa, Soacha, Sibaté' },
+  { id: 'CO_ZONE_5', title: 'La Candelaria-Santa Fe-Los Mártires', zone: 'ÁREA 5 — LA CANDELARIA–SANTA FE–LOS MÁRTIRES–ANTONIO NARIÑO–RAFAEL URIBE URIBE', locality: 'La Candelaria / Santa Fe / Los Mártires / Antonio Nariño / Rafael Uribe Uribe', description: 'La Candelaria, Santa Fe, Los Mártires, Antonio Nariño, Rafael Uribe Uribe' },
+  { id: 'CO_ZONE_6', title: 'Mosquera-Funza-Tenjo-Cota', zone: 'ÁREA 6 — MOSQUERA–FUNZA–TENJO–COTA', locality: 'Mosquera / Funza / Tenjo / Cota', description: 'Mosquera, Funza, Tenjo, Cota' },
+  { id: 'CO_ZONE_7', title: 'Chía-Cajicá-Sopó', zone: 'ÁREA 7 — CHÍA–CAJICÁ–SOPÓ', locality: 'Chía / Cajicá / Sopó', description: 'Chía, Cajicá, Sopó' },
+  { id: 'CO_ZONE_8', title: 'La Calera-Usme-San Cristóbal', zone: 'ÁREA 8 — LA CALERA–USME–SAN CRISTÓBAL–TUNJUELITO–CIUDAD BOLÍVAR', locality: 'La Calera / Usme / San Cristóbal / Tunjuelito / Ciudad Bolívar', description: 'La Calera, Usme, San Cristóbal, Tunjuelito, Ciudad Bolívar' },
 ];
 
 const NORTH = ['ancón','carabayllo','comas','independencia','los olivos','puente piedra','san martín de porres','santa rosa','callao','bellavista','carmen de la legua-reynoso','la perla','la punta','ventanilla','mi perú','rímac'];
@@ -490,8 +490,18 @@ const STEP_INTERACTIVE_CODE_MAP = {
   confirmando_direccion_instalacion: { address_confirm: 'A', address_edit: 'B' },
   confirmando_vehiculo: { vehicle_confirm: 'A', vehicle_edit: 'B' },
   seleccionando_campo_vehiculo: { vehicle_field_brand: 'A', vehicle_field_model: 'B', vehicle_field_type: 'C' },
+  capturando_datos_booking_residencial: { booking_doc_cc: 'A', booking_doc_nit: 'B', booking_doc_passport: 'C' },
   confirmando_datos_booking_residencial: { booking_confirm: 'A', booking_edit: 'B' },
-  seleccionando_campo_booking_residencial: { booking_field_name: 'A', booking_field_phone: 'B', booking_field_email: 'C', booking_field_address: 'D' },
+  seleccionando_campo_booking_residencial: {
+    booking_field_neighborhood: 'A',
+    booking_field_address: 'B',
+    booking_field_vehicle_brand: 'C',
+    booking_field_name: 'D',
+    booking_field_doc_type: 'E',
+    booking_field_doc_number: 'F',
+    booking_field_email: 'G',
+    booking_field_phone: 'H',
+  },
   confirmando_agendamiento: { schedule_yes: 'A', schedule_not_now: 'B' },
   sin_agenda_por_ahora: { menu_main: 'A', continue_later: 'B' },
   confirmando_ticket: { ticket_confirm: 'A', ticket_other: 'B' },
@@ -515,6 +525,7 @@ const DYNAMIC_STEP_ID_PREFIX = {
   seleccionando_hora: 'hour_',
   seleccionando_hora_reprogramacion: 'hour_',
   seleccionando_cita_identidad: 'ticket_',
+  capturando_datos_booking_residencial: 'booking_',
 };
 
 function extractInteractiveReply(payloadCrudo = null) {
@@ -639,8 +650,7 @@ function detectPhoneCountry(phone = '') {
 
 function defaultZoneForCountry(country = '') {
   if (country === 'CO') return 'ÁREA 2 — CHAPINERO–BARRIOS UNIDOS–TEUSAQUILLO';
-  if (country === 'PE') return 'LIMA CENTRO';
-  return 'SIN ZONA';
+  return null;
 }
 
 function countryFromIntent(value = '') {
@@ -733,17 +743,17 @@ function resolveProfileZone(profile = {}, options = {}) {
     profile?.provincia_recibo,
   ].filter(Boolean).join(' | ');
 
-  return profile?.zona_cliente
-    || inferZone(combinedLocation, countryHint)
+  return inferZone(combinedLocation, countryHint)
     || inferZone(profile?.distrito_instalacion, countryHint)
     || inferZone(profile?.distrito_recibo, countryHint)
     || inferZone(profile?.direccion_instalacion, countryHint)
     || inferZone(profile?.direccion_recibo, countryHint)
+    || profile?.zona_cliente
     || null;
 }
 
 const TEMP_BLOCKED_APPOINTMENT_DATES = {
-  PE: new Set(['2026-05-18']),
+  PE: new Set(),
 };
 
 function isTemporarilyBlockedAppointmentDate(date, zone = null) {
@@ -835,8 +845,15 @@ function weekdayForDate(date) {
 }
 
 function eventZoneFromText(text = '') {
-  const match = String(text || '').match(/zona\s*:\s*([^\n\r]+)/i);
-  return match ? cleanTextValue(match[1]).toUpperCase() : null;
+  const raw = String(text || '');
+  const zoneMatch = raw.match(/zona\s*:\s*([^\n\r]+)/i);
+  if (zoneMatch) return cleanTextValue(zoneMatch[1]).toUpperCase();
+  const districtMatch = raw.match(/(?:distrito|localidad)\s*:\s*([^\n\r]+)/i);
+  if (districtMatch) {
+    const inferredFromDistrict = inferZone(districtMatch[1]);
+    if (inferredFromDistrict) return inferredFromDistrict;
+  }
+  return inferZone(raw) || null;
 }
 
 function overlaps(startA, endA, startB, endB) {
@@ -1332,49 +1349,128 @@ function personFieldPrompt(field, other = false) {
   return `${intro}\n\n${highlightedFieldRequest('Correo electrónico')}`;
 }
 
-const BOOKING_DATA_NOTICE_CO = '🔒 Tus datos se usan solo para gestionar tu visita, según la política de tratamiento de datos de EVINKA en Colombia.';
+const BOOKING_DATA_NOTICE_CO = '📍 ¡Perfecto! Hemos registrado correctamente la localidad seleccionada.\n\n🔐 Antes de continuar, queremos informarte que los datos suministrados serán tratados conforme a nuestra política de tratamiento de datos personales, garantizando su confidencialidad y uso adecuado únicamente para fines relacionados con el proceso de atención.\n\nAl continuar, aceptas el tratamiento de tus datos de acuerdo con la normativa vigente. 😊';
 
-function bookingFieldPrompt(field, { includeNotice = false } = {}) {
-  const intro = 'Ya casi 👌\n\nTengo el horario. Solo me faltan tus datos para cerrar la reserva.';
-  const notice = includeNotice ? `\n\n${BOOKING_DATA_NOTICE_CO}` : '';
-  if (field === 'nombre' && includeNotice) {
-    return `Al continuar con este proceso, aceptas el tratamiento de tus datos personales conforme a la Política de Tratamiento de Datos de EVINKA, en cumplimiento de la normativa vigente en Colombia, incluyendo la Ley 1581 de 2012 y demás disposiciones aplicables.\n\nTu información será utilizada únicamente para gestionar tu solicitud y brindarte una mejor atención 😊\n\nAhora, escribe nombre y apellidos 👌`;
-  }
-  if (field === 'nombre') return `${intro}${notice}\n\n${highlightedFieldRequest('Nombre y apellidos')}`;
-  if (field === 'telefono') return `${intro}${notice}\n\n${highlightedFieldRequest('Número de teléfono')}`;
-  if (field === 'correo') return `${intro}${notice}\n\n${highlightedFieldRequest('Correo electrónico')}`;
-  return `${intro}${notice}\n\n${highlightedFieldRequest('Dirección exacta')}`;
+const BOOKING_DOCUMENT_TYPE_OPTIONS = {
+  A: 'Cédula de ciudadanía',
+  B: 'NIT',
+  C: 'Pasaporte',
+};
+
+const BOOKING_DOCUMENT_TYPE_NORMALIZED = {
+  cedula: 'Cédula de ciudadanía',
+  'cédula': 'Cédula de ciudadanía',
+  cc: 'Cédula de ciudadanía',
+  nit: 'NIT',
+  pasaporte: 'Pasaporte',
+  passport: 'Pasaporte',
+};
+
+const BOOKING_VEHICLE_BRAND_OPTIONS = [
+  'BYD',
+  'Tesla',
+  'Geely',
+  'Kia',
+  'Chery',
+  'Jeep',
+  'SEAT',
+  'Volvo',
+  'Deepal',
+  'Farizon',
+  'Chevrolet',
+  'Renault',
+  'BMW',
+  'Otro',
+];
+
+const BOOKING_VEHICLE_BRAND_NORMALIZED = Object.fromEntries(
+  BOOKING_VEHICLE_BRAND_OPTIONS.map((brand) => [normalize(brand).replace(/\s+/g, ''), brand]),
+);
+
+const BOOKING_VEHICLE_BRAND_PAGE_1 = ['BYD', 'Tesla', 'Geely', 'Kia', 'Chery', 'Jeep', 'SEAT', 'Volvo', 'Deepal'];
+const BOOKING_VEHICLE_BRAND_PAGE_2 = ['Farizon', 'Chevrolet', 'Renault', 'BMW', 'Otro'];
+
+function nextBookingField(data = {}) {
+  if (!data.barrio) return 'barrio';
+  if (!data.direccion) return 'direccion';
+  if (!data.marca_vehiculo) return 'marca_vehiculo';
+  if (!data.nombre) return 'nombre';
+  if (!data.tipo_documento) return 'tipo_documento';
+  if (!data.numero_documento) return 'numero_documento';
+  if (!data.correo) return 'correo';
+  if (!data.telefono) return 'telefono';
+  return null;
 }
 
-function parseSingleBookingField(field, text) {
+function bookingFieldPrompt(field) {
+  if (field === 'barrio') return '🏘️ Para continuar con tu solicitud, por favor indícanos tu barrio.';
+  if (field === 'direccion') return '📍 Gracias. Ahora compártenos tu dirección completa.';
+  if (field === 'marca_vehiculo' || field === 'marca_vehiculo_more') return '🚘 Selecciona la marca de tu vehículo.';
+  if (field === 'nombre') return '✍️ Luego, indícanos tus nombres y apellidos completos.';
+  if (field === 'tipo_documento') return '🪪 Ahora selecciona el tipo de documento con el que deseas registrarte:\n\n1️⃣ Cédula de ciudadanía\n2️⃣ NIT\n3️⃣ Pasaporte';
+  if (field === 'numero_documento') return '📄 Por favor, ingresa tu número de documento de identidad.';
+  if (field === 'correo') return '📧 Ahora compártenos tu correo electrónico.';
+  return '📱 Finalmente, indícanos tu número de celular.\nCon esta información podremos continuar con tu proceso de manera más ágil.';
+}
+
+function parseSingleBookingField(field, text, letter = null) {
+  if (field === 'barrio') {
+    const barrio = cleanTextValue(text);
+    return barrio && barrio.length >= 3 ? barrio : null;
+  }
+  if (field === 'direccion') {
+    const direccion = cleanTextValue(text);
+    return direccion && direccion.length >= 6 ? direccion : null;
+  }
+  if (field === 'marca_vehiculo' || field === 'marca_vehiculo_more') {
+    const source = letter || text;
+    const normalized = normalize(source).replace(/\s+/g, '');
+    return BOOKING_VEHICLE_BRAND_NORMALIZED[normalized] || null;
+  }
   if (field === 'nombre') {
     const nombre = normalizeNameCandidate(text);
     return nombre && nombre.split(/\s+/).length >= 2 ? nombre : null;
   }
-  if (field === 'telefono') {
-    const telefono = normalizeContactPhone(text);
-    return isValidContactPhone(telefono) ? telefono : null;
+  if (field === 'tipo_documento') {
+    if (letter && BOOKING_DOCUMENT_TYPE_OPTIONS[letter]) return BOOKING_DOCUMENT_TYPE_OPTIONS[letter];
+    const normalized = normalize(text).replace(/\s+/g, '');
+    return BOOKING_DOCUMENT_TYPE_NORMALIZED[normalized] || null;
+  }
+  if (field === 'numero_documento') {
+    const doc = cleanTextValue(text).replace(/\s+/g, '').replace(/[^A-Z0-9-]/gi, '').toUpperCase();
+    return doc && doc.length >= 5 ? doc : null;
   }
   if (field === 'correo') {
     return String(text || '').match(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/i)?.[0]?.toLowerCase() || null;
   }
-  const direccion = cleanTextValue(text);
-  return direccion && direccion.length >= 6 ? direccion : null;
+  const telefono = normalizeContactPhone(text);
+  return isValidContactPhone(telefono) ? telefono : null;
 }
 
 function invalidBookingFieldPrompt(field) {
-  if (field === 'nombre') return 'Ups, no alcancé a leer bien tu nombre completo. Envíamelo otra vez.';
-  if (field === 'telefono') return 'Ups, no pude leer bien tu número. Envíamelo otra vez.';
-  if (field === 'correo') return 'Ups, no pude leer bien tu correo. Envíamelo otra vez.';
-  return 'Ups, no pude leer bien la dirección. Envíamela otra vez.';
+  if (field === 'barrio') return 'No pude leer bien el barrio. Envíamelo otra vez, por favor.';
+  if (field === 'direccion') return 'No pude leer bien la dirección completa. Envíamela otra vez, por favor.';
+  if (field === 'marca_vehiculo' || field === 'marca_vehiculo_more') return 'Por favor selecciona una marca válida de la lista.';
+  if (field === 'nombre') return 'No pude leer bien tus nombres y apellidos completos. Envíamelos otra vez, por favor.';
+  if (field === 'tipo_documento') return 'Por favor selecciona una opción válida de tipo de documento.';
+  if (field === 'numero_documento') return 'No pude leer bien el número de documento. Envíamelo otra vez, por favor.';
+  if (field === 'correo') return 'No pude leer bien el correo electrónico. Envíamelo otra vez, por favor.';
+  return 'No pude leer bien el número de celular. Envíamelo otra vez, por favor.';
 }
 
 function bookingSummary(data = {}) {
-  return `Así quedaría tu reserva 👌\n\n- Zona: ${data.zone || '-'}\n- Fecha: ${data.dateLabel || '-'}\n- Hora: ${data.hourLabel || '-'}\n- Nombre: ${data.nombre || '-'}\n- Teléfono: ${data.telefono || '-'}\n- Correo: ${data.correo || '-'}\n- Dirección: ${data.direccion || '-'}\n\n¿Todo bien?`;
+  return `Así quedaría tu información 👌\n\n- Localidad: ${data.localidad || '-'}\n- Barrio: ${data.barrio || '-'}\n- Dirección completa: ${data.direccion || '-'}\n- Marca del vehículo: ${data.marca_vehiculo || '-'}\n- Nombres y apellidos: ${data.nombre || '-'}\n- Tipo de documento: ${data.tipo_documento || '-'}\n- Número de documento: ${data.numero_documento || '-'}\n- Correo electrónico: ${data.correo || '-'}\n- Número de celular: ${data.telefono || '-'}\n\n¿Deseas continuar con el agendamiento?`;
 }
 
 function bookingCorrectionMenu(data = {}) {
-  return `Claro ✨\n\n¿Qué quieres corregir?\n\nA. Nombre (${data.nombre || '-'})\nB. Teléfono (${data.telefono || '-'})\nC. Correo (${data.correo || '-'})\nD. Dirección (${data.direccion || '-'})\n\nElige una opción.`;
+  return `Claro ✨\n\n¿Qué dato deseas corregir?\n\nA. Barrio (${data.barrio || '-'})\nB. Dirección completa (${data.direccion || '-'})\nC. Marca del vehículo (${data.marca_vehiculo || '-'})\nD. Nombres y apellidos (${data.nombre || '-'})\nE. Tipo de documento (${data.tipo_documento || '-'})\nF. Número de documento (${data.numero_documento || '-'})\nG. Correo electrónico (${data.correo || '-'})\nH. Número de celular (${data.telefono || '-'})`;
+}
+
+function bookingAddressLine(data = {}) {
+  const address = cleanTextValue(data.direccion || '');
+  const neighborhood = cleanTextValue(data.barrio || '');
+  if (address && neighborhood) return `${address}, Barrio ${neighborhood}`;
+  return address || neighborhood || '';
 }
 
 function parseSupportCaseSummary(summary) {
@@ -1807,6 +1903,13 @@ function advisorHandoffText(country = null) {
   return `Gracias por contactarnos.\n\nTe estamos comunicando con un asesor de ${brand} para atender tu caso de forma personalizada.\n\nEn breve uno de nuestros asesores continuará contigo por este mismo chat.\n\nSi en cualquier momento deseas volver al menú principal, escribe MENU.`;
 }
 
+function personalizedZoneHandoffText(country = null, customerName = '') {
+  const brand = country === 'CO' ? 'EVINKA Colombia' : 'EVINKA';
+  const firstName = String(customerName || '').trim().split(/\s+/).filter(Boolean)[0] || '';
+  const greeting = firstName ? `${firstName}, ` : '';
+  return `${greeting}no pude identificar automáticamente la zona correcta para tu dirección.\n\nPara no agendarte mal, voy a pasarte con un asesor de ${brand} para que revise tu ubicación y te ayude a continuar de forma personalizada.\n\nEn breve uno de nuestros asesores seguirá contigo por este mismo chat.`;
+}
+
 function advisorInactiveText() {
   return `Por el momento no tenemos un asesor activo en este canal.\n\n¿Qué deseas hacer ahora?\n\nA. Volver al menú principal`;
 }
@@ -1947,7 +2050,7 @@ function interactiveReplyForStep(step, text, { resumen, subestado } = {}) {
         id: item.id,
         title: clipLabel(item.title, 24),
         description: item.description || '',
-      })), { title: 'Seleccionar un servicio', buttonText: 'Elegir zona' });
+      })), { title: 'Seleccionar localidad', buttonText: 'Elegir zona' });
     case 'localidad_co_no_disponible':
       return makeStepButtons(step, text, [
         { id: 'A', title: 'Otra localidad' },
@@ -2018,18 +2121,43 @@ function interactiveReplyForStep(step, text, { resumen, subestado } = {}) {
         { id: 'B', title: 'Modelo' },
         { id: 'C', title: 'Tipo' },
       ]);
+    case 'capturando_datos_booking_residencial':
+      if (subestado === 'tipo_documento') {
+        return makeStepButtons(step, text, [
+          { id: 'booking_doc_cc', title: '1️⃣ Cédula' },
+          { id: 'booking_doc_nit', title: '2️⃣ NIT' },
+          { id: 'booking_doc_passport', title: '3️⃣ Pasaporte' },
+        ]);
+      }
+      if (subestado === 'marca_vehiculo') {
+        return makeStepList(step, text, [
+          ...BOOKING_VEHICLE_BRAND_PAGE_1.map((brand) => ({ id: brand, title: clipLabel(brand, 24), description: '' })),
+          { id: 'MORE', title: 'Más opciones', description: 'Ver más marcas' },
+        ], { title: 'Marca del vehículo', buttonText: 'Elegir marca' });
+      }
+      if (subestado === 'marca_vehiculo_more') {
+        return makeStepList(step, text, [
+          ...BOOKING_VEHICLE_BRAND_PAGE_2.map((brand) => ({ id: brand, title: clipLabel(brand, 24), description: '' })),
+          { id: 'BACK', title: 'Volver', description: 'Regresar al listado anterior' },
+        ], { title: 'Marca del vehículo', buttonText: 'Elegir marca' });
+      }
+      return null;
     case 'confirmando_datos_booking_residencial':
       return makeStepButtons(step, text, [
-        { id: 'A', title: 'Sí, reservar' },
+        { id: 'A', title: 'Sí, continuar' },
         { id: 'B', title: 'Corregir' },
       ]);
     case 'seleccionando_campo_booking_residencial':
-      return makeStepButtons(step, text, [
-        { id: 'A', title: 'Nombre' },
-        { id: 'B', title: 'Teléfono' },
-        { id: 'C', title: 'Correo' },
-        { id: 'D', title: 'Dirección' },
-      ]);
+      return makeStepList(step, text, [
+        { id: 'booking_field_neighborhood', title: 'Barrio', description: 'Corregir barrio' },
+        { id: 'booking_field_address', title: 'Dirección completa', description: 'Corregir dirección completa' },
+        { id: 'booking_field_vehicle_brand', title: 'Marca del vehículo', description: 'Corregir marca del vehículo' },
+        { id: 'booking_field_name', title: 'Nombres y apellidos', description: 'Corregir nombres y apellidos' },
+        { id: 'booking_field_doc_type', title: 'Tipo de documento', description: 'Corregir tipo de documento' },
+        { id: 'booking_field_doc_number', title: 'Número de documento', description: 'Corregir número de documento' },
+        { id: 'booking_field_email', title: 'Correo electrónico', description: 'Corregir correo electrónico' },
+        { id: 'booking_field_phone', title: 'Número de celular', description: 'Corregir número de celular' },
+      ], { title: 'Dato a corregir' });
     case 'confirmando_agendamiento':
       return makeStepButtons(step, text, [
         { id: 'A', title: 'Sí, agendar' },
@@ -2141,7 +2269,7 @@ function finalConfirmation({ ticket, dateLabel, hourLabel, address, country = nu
     if (kind === 'rescheduled') {
       return `¡Listo! ✨ Tu visita quedó actualizada.\n\nTicket: ${ticket}\nFecha: ${dateLabel}\nHora: ${hourLabel}\nDirección: ${address}\n\nSi quieres moverla otra vez o cancelarla, escríbenos por aquí.`;
     }
-    return `¡Listo! 🎉 Tu visita quedó confirmada.\n\nTicket: ${ticket}\nFecha: ${dateLabel}\nHora: ${hourLabel}\nDirección: ${address}\n\nGracias por elegir EVINKA.`;
+    return `✅ Tu visita técnica fue agendada exitosamente.\n\nTicket de reserva: ${ticket}\nFecha: ${dateLabel}\nHora: ${hourLabel}\nDirección: ${address}\n\nSi deseas continuar, puedes volver al menú principal o reprogramar la visita desde aquí.`;
   }
   return `Listo ✅\nTu visita técnica quedó confirmada.\n\nTicket: ${ticket}\nFecha: ${dateLabel}\nHora: ${hourLabel}\nDirección: ${address}\n\nSi más adelante necesitas reprogramar o cancelar, escríbenos por este mismo medio.\n\n¡Gracias por elegir EVINKA! ⚡`;
 }
@@ -2269,6 +2397,8 @@ export class ChatbotEngine {
       startDateTime: `${date}T00:00:00-05:00`,
       endDateTime: `${date}T23:59:59-05:00`,
       top: 100,
+      clientZone,
+      countryCode: inferCountryFromZone(clientZone) || null,
     });
     const normalizedClientZone = String(clientZone || '').toUpperCase().trim();
     const sharedCapacity = inferCountryFromZone(clientZone) === 'CO' ? COLOMBIA_SHARED_TECH_CAPACITY : 1;
@@ -2298,6 +2428,7 @@ export class ChatbotEngine {
     const location = `${appointment.direccion_cita || profile.direccion_instalacion || ''}`.trim();
     const attendeeEmail = profile.correo_receptor || appointment.correo_cliente || '';
     const attendees = attendeeEmail ? [{ emailAddress: { address: attendeeEmail, name: profile.nombre_receptor || appointment.nombre_cliente || attendeeEmail }, type: 'required' }] : [];
+    const countryCode = inferCountryFromZone(profile.zona_cliente || appointment.zona_cliente || profile.provincia_instalacion || appointment.provincia_cita || '') || null;
 
     if (appointment.microsoft_event_id) {
       await this.calendar.updateEvent(appointment.microsoft_event_id, {
@@ -2307,6 +2438,7 @@ export class ChatbotEngine {
         body: { contentType: 'text', content: body },
         location: { displayName: location },
         attendees,
+        countryCode,
       });
       return appointment.microsoft_event_id;
     }
@@ -2320,6 +2452,7 @@ export class ChatbotEngine {
       location,
       attendees,
       categories: ['EVINKA'],
+      countryCode,
     });
     return event.id;
   }
@@ -2345,6 +2478,7 @@ export class ChatbotEngine {
       .filter(Boolean)
       .join(' ')
       .trim();
+    const countryCode = inferCountryFromZone(profile.zona_cliente || appointment.zona_cliente || profile.provincia_instalacion || appointment.provincia_cita || '') || null;
     return this.visitPublisher({
       reference: appointment.codigo_cita,
       source: 'chatbot',
@@ -2362,7 +2496,8 @@ export class ChatbotEngine {
       installationOrderId: '',
       assignedTechEmail: process.env.TECH_VISITS_DEFAULT_EMAIL || 'luis.campos@evinka.tech',
       assignedTechName: process.env.TECH_VISITS_DEFAULT_NAME || 'Luis Campos',
-      clickupTaskId: this.calendar?.provider === 'clickup' ? (appointment.microsoft_event_id || '') : '',
+      countryCode,
+      clickupTaskId: countryCode === 'PE' ? (appointment.microsoft_event_id || '') : '',
       checklist: [
         'Confirmar acceso al sitio',
         'Tomar fotos iniciales',
@@ -2552,6 +2687,20 @@ export class ChatbotEngine {
     return { kind: 'text', text: addAdvisorHint(text, nextStep) };
   }
 
+  async replySequence(conversation, messages = [], patch = {}) {
+    await this.patchConversation(conversation.id_conversacion, { ultimo_mensaje_en: new Date().toISOString(), ...patch });
+    const normalized = [];
+    const nextStep = patch.paso_actual || conversation.paso_actual || 'menu_principal';
+    for (let i = 0; i < messages.length; i += 1) {
+      const item = messages[i];
+      const text = typeof item === 'string' ? item : String(item?.text || '');
+      await this.logMessage(conversation.id_conversacion, conversation.id_usuario, 'assistant', text);
+      const interactive = interactiveReplyForStep(i === messages.length - 1 ? nextStep : '__sequence__', text, { resumen: patch.resumen ?? conversation.resumen ?? null, subestado: patch.subestado_flujo ?? conversation.subestado_flujo ?? null });
+      normalized.push(interactive || { kind: 'text', text });
+    }
+    return { kind: 'sequence', messages: normalized };
+  }
+
   async applyReceiptData(conversation, data, media = null, { partial = false } = {}) {
     const origenRecibo = media?.mimeType === 'application/pdf'
       ? 'pdf'
@@ -2618,9 +2767,9 @@ export class ChatbotEngine {
     const step = conversation.paso_actual || 'menu_principal';
     const letter = pickLetter(text, payloadCrudo, step);
     const corporateLead = extractCorporateLead(text);
-    const sendToAdvisor = (reason = 'Soporte humano solicitado') => this.reply(
+    const sendToAdvisor = (reason = 'Soporte humano solicitado', customText = null) => this.reply(
       conversation,
-      advisorHandoffText(selectedCountry),
+      customText || advisorHandoffText(selectedCountry),
       {
         paso_actual: 'handoff_asesor',
         subestado_flujo: selectedCountry === 'CO' ? 'asesor_co' : 'asesor_pe',
@@ -2756,7 +2905,7 @@ export class ChatbotEngine {
     }
     const continueWithCountry = async (menuOption, country) => {
       const forcedZone = defaultZoneForCountry(country);
-      if (profile?.id_perfil) {
+      if (profile?.id_perfil && forcedZone) {
         profile = await this.patchProfile(conversation.id_conversacion, { zona_cliente: forcedZone }) || profile;
       }
       if (menuOption === 'A' && country === 'CO') return this.reply(conversation, CO_LOCATION_PROMPT, { intencion_principal: 'instalacion_cargador', paso_actual: 'capturando_localidad_co', subestado_flujo: 'localidad_inicial' });
@@ -3099,9 +3248,20 @@ export class ChatbotEngine {
         direccion_instalacion: localityLabel,
         estado_perfil: 'ready_for_schedule',
       });
-      const options = await this.availableDateHourOptionsForZone(zone);
-      if (!options.length) return this.reply(conversation, 'Por ahora no encontré horarios disponibles para esa zona.\n\nTe llevo al menú principal para seguir con el bot.', { paso_actual: 'menu_principal', subestado_flujo: 'sin_disponibilidad', estado_conversacion: 'open', requiere_handoff: false, motivo_handoff: null, resumen: null, intencion_principal: null });
-      return this.reply(conversation, combinedSlotsPrompt(zone, options), { paso_actual: 'seleccionando_bloque_horario', subestado_flujo: 'agenda_directa', resumen: JSON.stringify(options) });
+      const draft = {
+        kind: 'booking_residencial_co',
+        zone,
+        localidad: localityLabel,
+        barrio: '',
+        direccion: '',
+        marca_vehiculo: '',
+        nombre: '',
+        tipo_documento: '',
+        numero_documento: '',
+        correo: '',
+        telefono: '',
+      };
+      return this.replySequence(conversation, [BOOKING_DATA_NOTICE_CO, bookingFieldPrompt('barrio')], { paso_actual: 'capturando_datos_booking_residencial', subestado_flujo: 'barrio', resumen: JSON.stringify(draft) });
     }
 
     if (step === 'localidad_co_no_disponible') {
@@ -3355,7 +3515,13 @@ export class ChatbotEngine {
           await this.patchProfile(conversation.id_conversacion, { zona_cliente: zone });
           profile = { ...profile, zona_cliente: zone };
         }
-        if (!zone) return this.reply(conversation, 'No pude identificar una zona válida para esta dirección.\n\nTe llevo al menú principal para seguir con el bot.', { paso_actual: 'menu_principal', subestado_flujo: 'zona_no_reconocida', estado_conversacion: 'open', requiere_handoff: false, motivo_handoff: null, resumen: null, intencion_principal: null });
+        if (!zone) {
+          const customerName = normalizeDisplayName(user?.nombre_visible || profile?.nombre_receptor || profileName || '');
+          return sendToAdvisor(
+            'Zona no reconocida automáticamente; requiere validación manual antes de agendar.',
+            personalizedZoneHandoffText(selectedCountry, customerName),
+          );
+        }
         const days = await this.availableDaysForZone(zone);
         if (!days.length) return this.reply(conversation, 'Por ahora no encontré horarios disponibles en el calendario para esa zona.\n\nTe llevo al menú principal para seguir con el bot.', { paso_actual: 'menu_principal', subestado_flujo: 'sin_disponibilidad', estado_conversacion: 'open', requiere_handoff: false, motivo_handoff: null, resumen: null, intencion_principal: null });
         return this.reply(conversation, daysPrompt(zone, days), { paso_actual: 'seleccionando_dia', subestado_flujo: 'agenda_dia', resumen: JSON.stringify(days) });
@@ -3385,6 +3551,60 @@ export class ChatbotEngine {
       const zone = resolveProfileZone(profile, { phone: this.phoneForUserId(conversation.id_usuario), country: selectedCountry }) || defaultZoneForCountry(selectedCountry);
       if (!chosen) return this.reply(conversation, combinedSlotsPrompt(zone, options), { paso_actual: 'seleccionando_bloque_horario', subestado_flujo: 'agenda_directa', resumen: conversation.resumen || null });
       profile = await this.getOrCreateProfile(conversation);
+      if (selectedCountry === 'CO') {
+        const addressLine = profile.direccion_instalacion || '';
+        const appointment = await this.createOrUpdateAppointment(conversation, profile, {
+          codigo_cita: this.ticketFor(chosen.date, conversation.id_conversacion),
+          fecha_cita: chosen.date,
+          hora_inicio: chosen.time,
+          hora_fin: chosen.endTime,
+          fecha_hora_inicio: `${chosen.date}T${chosen.time}-05:00`,
+          fecha_hora_fin: `${chosen.date}T${chosen.endTime}-05:00`,
+          nombre_cliente: profile.nombre_receptor,
+          telefono_cliente: profile.telefono_receptor,
+          dni_cliente: profile.dni_receptor || profile.ruc_receptor,
+          correo_cliente: profile.correo_receptor,
+          direccion_cita: addressLine,
+          distrito_cita: profile.distrito_instalacion,
+          provincia_cita: 'Colombia',
+          zona_cliente: zone,
+          zona_dia: zone,
+          control_zona: zone,
+          etiqueta_horario: compactScheduleLabel(chosen.time, chosen.endTime),
+          marca_vehiculo: profile.marca_vehiculo,
+          modelo_vehiculo: null,
+          potencia_kw: null,
+          fase_electrica: 'no_definido',
+          validacion_recibo: false,
+          estado_cita: 'confirmada',
+          aprobacion: 'aprobada',
+          confirmada_por_cliente: true,
+          confirmada_en: new Date().toISOString(),
+        });
+        let microsoftEventId = null;
+        try {
+          microsoftEventId = await this.ensureCalendarEvent({ appointment, profile, dateLabel: chosen.dateLabel, hourLabel: chosen.hourLabel, ticket: appointment.codigo_cita });
+          if (microsoftEventId) {
+            appointment.microsoft_event_id = microsoftEventId;
+            await this.sb.update('citas', `id_cita=eq.${appointment.id_cita}`, { microsoft_event_id: microsoftEventId, observaciones: calendarSyncNote(this.calendar?.provider) });
+          }
+        } catch (error) {
+          console.error('ensureCalendarEvent failed:', error);
+        }
+        const finalAddress = `${addressLine} ${profile.distrito_instalacion || ''} Colombia`.trim();
+        try {
+          await this.scheduleBookingReminder({ userId: conversation.id_usuario, ticket: appointment.codigo_cita, dateLabel: chosen.dateLabel, hourLabel: chosen.hourLabel, address: finalAddress });
+        } catch (error) {
+          console.error('scheduleBookingReminder failed:', error);
+        }
+        try {
+          await this.publishTechVisit({ conversation, profile, appointment, dateLabel: chosen.dateLabel, hourLabel: chosen.hourLabel });
+        } catch (error) {
+          console.error('publishTechVisit failed:', error);
+        }
+        await this.patchProfile(conversation.id_conversacion, { estado_perfil: 'scheduled' });
+        return this.reply(conversation, finalConfirmation({ ticket: appointment.codigo_cita, dateLabel: chosen.dateLabel, hourLabel: chosen.hourLabel, address: finalAddress, country: 'CO' }), { paso_actual: 'cita_confirmada', subestado_flujo: 'agenda_confirmada', estado_conversacion: 'closed', accion_ticket_actual: 'confirm', codigo_ticket_solicitado: appointment.codigo_cita, cerrada_en: new Date().toISOString() });
+      }
       const draft = {
         kind: 'booking_residencial_co',
         zone,
@@ -3417,6 +3637,7 @@ export class ChatbotEngine {
       profile = await this.getOrCreateProfile(conversation);
       if (selectedCountry === 'CO') {
         const zone = resolveProfileZone(profile, { phone: this.phoneForUserId(conversation.id_usuario), country: selectedCountry }) || defaultZoneForCountry(selectedCountry);
+        const currentDocument = profile.ruc_receptor || profile.dni_receptor || '';
         const draft = {
           kind: 'booking_residencial_co',
           zone,
@@ -3425,17 +3646,21 @@ export class ChatbotEngine {
           hourLabel: chosen.label,
           time: chosen.time,
           endTime: chosen.endTime,
+          barrio: '',
+          marca_vehiculo: profile.marca_vehiculo || '',
+          tipo_documento: profile.ruc_receptor ? 'NIT' : (profile.dni_receptor ? 'Cédula de ciudadanía' : ''),
+          numero_documento: currentDocument,
           nombre: profile.nombre_receptor || '',
           telefono: profile.telefono_receptor || '',
           correo: profile.correo_receptor || '',
           direccion: profile.direccion_instalacion && profile.direccion_instalacion !== profile.distrito_instalacion ? profile.direccion_instalacion : '',
           localidad: profile.distrito_instalacion || '',
         };
-        const nextField = !draft.nombre ? 'nombre' : !draft.telefono ? 'telefono' : !draft.correo ? 'correo' : 'direccion';
-        if (draft.nombre && draft.telefono && draft.correo && draft.direccion) {
+        const nextField = nextBookingField(draft);
+        if (!nextField) {
           return this.reply(conversation, bookingSummary(draft), { paso_actual: 'confirmando_datos_booking_residencial', subestado_flujo: 'booking_co', resumen: JSON.stringify(draft) });
         }
-        return this.reply(conversation, bookingFieldPrompt(nextField, { includeNotice: true }), { paso_actual: 'capturando_datos_booking_residencial', subestado_flujo: nextField, resumen: JSON.stringify(draft) });
+        return this.reply(conversation, bookingFieldPrompt(nextField), { paso_actual: 'capturando_datos_booking_residencial', subestado_flujo: nextField, resumen: JSON.stringify(draft) });
       }
       const appointment = await this.createOrUpdateAppointment(conversation, profile, {
         codigo_cita: this.ticketFor(date, conversation.id_conversacion),
@@ -3504,14 +3729,19 @@ export class ChatbotEngine {
 
     if (step === 'capturando_datos_booking_residencial') {
       const draft = (() => { try { return JSON.parse(conversation.resumen || '{}'); } catch { return {}; } })();
-      const field = conversation.subestado_flujo || 'nombre';
-      const value = parseSingleBookingField(field, text);
+      const field = conversation.subestado_flujo || nextBookingField(draft) || 'barrio';
+      if (field === 'marca_vehiculo' && (letter === 'MORE' || includesNormalized(['more', 'más opciones', 'mas opciones', 'ver mas marcas', 'ver más marcas'], text))) {
+        return this.reply(conversation, bookingFieldPrompt('marca_vehiculo_more'), { paso_actual: 'capturando_datos_booking_residencial', subestado_flujo: 'marca_vehiculo_more', resumen: conversation.resumen || null });
+      }
+      if (field === 'marca_vehiculo_more' && (letter === 'BACK' || includesNormalized(['back', 'volver', 'regresar'], text))) {
+        return this.reply(conversation, bookingFieldPrompt('marca_vehiculo'), { paso_actual: 'capturando_datos_booking_residencial', subestado_flujo: 'marca_vehiculo', resumen: conversation.resumen || null });
+      }
+      const value = parseSingleBookingField(field, text, letter);
       if (!value) return this.reply(conversation, `${invalidBookingFieldPrompt(field)}\n\n${bookingFieldPrompt(field)}`, { paso_actual: 'capturando_datos_booking_residencial', subestado_flujo: field, resumen: conversation.resumen || null });
-      draft[field] = value;
-      if (!draft.nombre) return this.reply(conversation, bookingFieldPrompt('nombre'), { paso_actual: 'capturando_datos_booking_residencial', subestado_flujo: 'nombre', resumen: JSON.stringify(draft) });
-      if (!draft.telefono) return this.reply(conversation, bookingFieldPrompt('telefono'), { paso_actual: 'capturando_datos_booking_residencial', subestado_flujo: 'telefono', resumen: JSON.stringify(draft) });
-      if (!draft.correo) return this.reply(conversation, bookingFieldPrompt('correo'), { paso_actual: 'capturando_datos_booking_residencial', subestado_flujo: 'correo', resumen: JSON.stringify(draft) });
-      if (!draft.direccion) return this.reply(conversation, bookingFieldPrompt('direccion'), { paso_actual: 'capturando_datos_booking_residencial', subestado_flujo: 'direccion', resumen: JSON.stringify(draft) });
+      draft.marca_vehiculo = (field === 'marca_vehiculo' || field === 'marca_vehiculo_more') ? value : draft.marca_vehiculo;
+      if (field !== 'marca_vehiculo' && field !== 'marca_vehiculo_more') draft[field] = value;
+      const pendingField = nextBookingField(draft);
+      if (pendingField) return this.reply(conversation, bookingFieldPrompt(pendingField), { paso_actual: 'capturando_datos_booking_residencial', subestado_flujo: pendingField, resumen: JSON.stringify(draft) });
       return this.reply(conversation, bookingSummary(draft), { paso_actual: 'confirmando_datos_booking_residencial', subestado_flujo: 'booking_co', resumen: JSON.stringify(draft) });
     }
 
@@ -3520,15 +3750,20 @@ export class ChatbotEngine {
       if (!letter) return this.reply(conversation, bookingSummary(draft), { paso_actual: 'confirmando_datos_booking_residencial', subestado_flujo: 'booking_co', resumen: conversation.resumen || null });
       if (letter === 'B') return this.reply(conversation, bookingCorrectionMenu(draft), { paso_actual: 'seleccionando_campo_booking_residencial', subestado_flujo: 'booking_co', resumen: JSON.stringify(draft) });
       if (letter === 'A') {
+        const documentValue = cleanTextValue(draft.numero_documento || '');
+        const addressLine = bookingAddressLine(draft);
         await this.patchProfile(conversation.id_conversacion, {
+          marca_vehiculo: draft.marca_vehiculo,
           nombre_receptor: draft.nombre,
+          dni_receptor: draft.tipo_documento === 'NIT' ? null : documentValue,
+          ruc_receptor: draft.tipo_documento === 'NIT' ? documentValue : null,
           telefono_receptor: draft.telefono,
           correo_receptor: draft.correo,
-          direccion_instalacion: draft.direccion,
+          direccion_instalacion: addressLine,
           distrito_instalacion: draft.localidad || draft.zone,
           provincia_instalacion: 'Colombia',
           zona_cliente: draft.zone,
-          estado_perfil: 'scheduled',
+          estado_perfil: 'ready_for_schedule',
         });
         try {
           await this.sb.update('usuarios', `id_usuario=eq.${conversation.id_usuario}`, { nombre_visible: draft.nombre, nombre_usuario: draft.nombre, correo_electronico: draft.correo, telefono_principal: draft.telefono });
@@ -3537,26 +3772,29 @@ export class ChatbotEngine {
           if (!message.includes('usuarios_correo_key')) throw error;
           await this.sb.update('usuarios', `id_usuario=eq.${conversation.id_usuario}`, { nombre_visible: draft.nombre, nombre_usuario: draft.nombre, telefono_principal: draft.telefono });
         }
+        const options = await this.availableDateHourOptionsForZone(draft.zone);
+        if (!options.length) return this.reply(conversation, 'Por ahora no encontré horarios disponibles para esa zona.\n\nTe llevo al menú principal para seguir con el bot.', { paso_actual: 'menu_principal', subestado_flujo: 'sin_disponibilidad', estado_conversacion: 'open', requiere_handoff: false, motivo_handoff: null, resumen: null, intencion_principal: null });
         profile = await this.getOrCreateProfile(conversation);
+        const chosen = options[0];
         const appointment = await this.createOrUpdateAppointment(conversation, profile, {
-          codigo_cita: this.ticketFor(draft.date, conversation.id_conversacion),
-          fecha_cita: draft.date,
-          hora_inicio: draft.time,
-          hora_fin: draft.endTime,
-          fecha_hora_inicio: `${draft.date}T${draft.time}-05:00`,
-          fecha_hora_fin: `${draft.date}T${draft.endTime}-05:00`,
+          codigo_cita: this.ticketFor(chosen.date, conversation.id_conversacion),
+          fecha_cita: chosen.date,
+          hora_inicio: chosen.time,
+          hora_fin: chosen.endTime,
+          fecha_hora_inicio: `${chosen.date}T${chosen.time}-05:00`,
+          fecha_hora_fin: `${chosen.date}T${chosen.endTime}-05:00`,
           nombre_cliente: draft.nombre,
           telefono_cliente: draft.telefono,
-          dni_cliente: null,
+          dni_cliente: documentValue || null,
           correo_cliente: draft.correo,
-          direccion_cita: draft.direccion,
+          direccion_cita: addressLine,
           distrito_cita: draft.localidad || draft.zone,
           provincia_cita: 'Colombia',
           zona_cliente: draft.zone,
           zona_dia: draft.zone,
           control_zona: draft.zone,
-          etiqueta_horario: compactScheduleLabel(draft.time, draft.endTime),
-          marca_vehiculo: null,
+          etiqueta_horario: compactScheduleLabel(chosen.time, chosen.endTime),
+          marca_vehiculo: draft.marca_vehiculo || null,
           modelo_vehiculo: null,
           potencia_kw: null,
           fase_electrica: 'no_definido',
@@ -3568,7 +3806,7 @@ export class ChatbotEngine {
         });
         let microsoftEventId = null;
         try {
-          microsoftEventId = await this.ensureCalendarEvent({ appointment, profile: { ...profile, nombre_receptor: draft.nombre, correo_receptor: draft.correo, telefono_receptor: draft.telefono, direccion_instalacion: draft.direccion, distrito_instalacion: draft.localidad || draft.zone, provincia_instalacion: 'Colombia', zona_cliente: draft.zone }, dateLabel: draft.dateLabel, hourLabel: draft.hourLabel, ticket: appointment.codigo_cita });
+          microsoftEventId = await this.ensureCalendarEvent({ appointment, profile: { ...profile, marca_vehiculo: draft.marca_vehiculo, nombre_receptor: draft.nombre, correo_receptor: draft.correo, telefono_receptor: draft.telefono, direccion_instalacion: addressLine, distrito_instalacion: draft.localidad || draft.zone, provincia_instalacion: 'Colombia', zona_cliente: draft.zone }, dateLabel: chosen.dateLabel, hourLabel: chosen.hourLabel, ticket: appointment.codigo_cita });
           if (microsoftEventId) {
             appointment.microsoft_event_id = microsoftEventId;
             await this.sb.update('citas', `id_cita=eq.${appointment.id_cita}`, { microsoft_event_id: microsoftEventId, observaciones: calendarSyncNote(this.calendar?.provider) });
@@ -3576,25 +3814,26 @@ export class ChatbotEngine {
         } catch (error) {
           console.error('ensureCalendarEvent failed:', error);
         }
-        const finalAddress = `${draft.direccion} ${draft.localidad || ''} Colombia`.trim();
+        const finalAddress = `${addressLine} ${draft.localidad || ''} Colombia`.trim();
         try {
-          await this.scheduleBookingReminder({ userId: conversation.id_usuario, ticket: appointment.codigo_cita, dateLabel: draft.dateLabel, hourLabel: draft.hourLabel, address: finalAddress });
+          await this.scheduleBookingReminder({ userId: conversation.id_usuario, ticket: appointment.codigo_cita, dateLabel: chosen.dateLabel, hourLabel: chosen.hourLabel, address: finalAddress });
         } catch (error) {
           console.error('scheduleBookingReminder failed:', error);
         }
         try {
-          await this.publishTechVisit({ conversation, profile: { ...profile, nombre_receptor: draft.nombre, correo_receptor: draft.correo, telefono_receptor: draft.telefono, direccion_instalacion: draft.direccion, distrito_instalacion: draft.localidad || draft.zone, provincia_instalacion: 'Colombia', zona_cliente: draft.zone }, appointment, dateLabel: draft.dateLabel, hourLabel: draft.hourLabel });
+          await this.publishTechVisit({ conversation, profile: { ...profile, marca_vehiculo: draft.marca_vehiculo, nombre_receptor: draft.nombre, correo_receptor: draft.correo, telefono_receptor: draft.telefono, direccion_instalacion: addressLine, distrito_instalacion: draft.localidad || draft.zone, provincia_instalacion: 'Colombia', zona_cliente: draft.zone }, appointment, dateLabel: chosen.dateLabel, hourLabel: chosen.hourLabel });
         } catch (error) {
           console.error('publishTechVisit failed:', error);
         }
-        return this.reply(conversation, finalConfirmation({ ticket: appointment.codigo_cita, dateLabel: draft.dateLabel, hourLabel: draft.hourLabel, address: finalAddress, country: 'CO' }), { paso_actual: 'cita_confirmada', subestado_flujo: 'agenda_confirmada', estado_conversacion: 'closed', accion_ticket_actual: 'confirm', codigo_ticket_solicitado: appointment.codigo_cita, cerrada_en: new Date().toISOString() });
+        await this.patchProfile(conversation.id_conversacion, { estado_perfil: 'scheduled' });
+        return this.reply(conversation, finalConfirmation({ ticket: appointment.codigo_cita, dateLabel: chosen.dateLabel, hourLabel: chosen.hourLabel, address: finalAddress, country: 'CO' }), { paso_actual: 'cita_confirmada', subestado_flujo: 'agenda_confirmada', estado_conversacion: 'closed', accion_ticket_actual: 'confirm', codigo_ticket_solicitado: appointment.codigo_cita, cerrada_en: new Date().toISOString() });
       }
     }
 
     if (step === 'seleccionando_campo_booking_residencial') {
       const draft = (() => { try { return JSON.parse(conversation.resumen || '{}'); } catch { return {}; } })();
       if (!letter) return this.reply(conversation, bookingCorrectionMenu(draft), { paso_actual: 'seleccionando_campo_booking_residencial', subestado_flujo: 'booking_co', resumen: conversation.resumen || null });
-      const map = { A: 'nombre', B: 'telefono', C: 'correo', D: 'direccion' };
+      const map = { A: 'barrio', B: 'direccion', C: 'marca_vehiculo', D: 'nombre', E: 'tipo_documento', F: 'numero_documento', G: 'correo', H: 'telefono' };
       const field = map[letter];
       if (!field) return this.reply(conversation, bookingCorrectionMenu(draft), { paso_actual: 'seleccionando_campo_booking_residencial', subestado_flujo: 'booking_co', resumen: conversation.resumen || null });
       return this.reply(conversation, bookingFieldPrompt(field), { paso_actual: 'capturando_datos_booking_residencial', subestado_flujo: field, resumen: JSON.stringify(draft) });

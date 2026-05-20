@@ -40,11 +40,14 @@ class _TechVisitDetailScreenState extends State<TechVisitDetailScreen> {
 
   bool get _hasGeneratedConformity => _quote?.hasGeneratedConformity == true;
   bool get _canOpenConformidad =>
-      _visit.installationOrderId.isNotEmpty && !_hasGeneratedConformity;
+      widget.user.canReviewConformityFlow &&
+      _visit.installationOrderId.isNotEmpty &&
+      !_hasGeneratedConformity;
   bool get _canCloseVisitNow =>
       !_visit.isClosed &&
       (_visit.isPendingClose || _visit.status == 'visitada');
   bool get _canManageCommercialFlow => widget.user.canEditCommercialFlow;
+  bool get _canCreateQuote => widget.user.canCreateQuotes;
 
   @override
   void initState() {
@@ -398,6 +401,10 @@ class _TechVisitDetailScreenState extends State<TechVisitDetailScreen> {
         status: 'aceptada_cliente',
         visitId: _visit.id,
         reference: _visit.reference,
+        paymentAmount: quote.total * 0.5,
+        paymentObservation:
+            'Abono 50% confirmado por KAM desde detalle de visita.',
+        paymentDate: DateTime.now().toIso8601String(),
       );
       final updatedVisit = await _api.updateTechVisit(
         _visit.id,
@@ -415,13 +422,52 @@ class _TechVisitDetailScreenState extends State<TechVisitDetailScreen> {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
           content: Text(
-              'Cliente marcado como aceptado. Falta agendar la instalación.'),
+              'Abono inicial del 50% registrado. Falta agendar la instalación.'),
         ),
       );
     } catch (e) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text('No pude registrar la aceptación: $e')),
+      );
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  Future<void> _markFullPayment() async {
+    final quote = _quote;
+    if (quote == null) return;
+    final ok = await _confirmAction(
+      title: 'Registrar abono 100%',
+      message:
+          'Se marcará el proyecto de ${quote.clientName} como pagado al 100% y cerrado. ¿Continuar?',
+    );
+    if (!ok) return;
+    setState(() => _busy = true);
+    try {
+      final updatedQuote = await _api.updateQuoteStatus(
+        quote.id,
+        status: 'abono_100_confirmado',
+        visitId: _visit.id,
+        reference: _visit.reference,
+        paymentAmount: quote.total,
+        paymentObservation:
+            'Abono 100% confirmado por KAM desde detalle de visita.',
+        paymentDate: DateTime.now().toIso8601String(),
+      );
+      if (!mounted) return;
+      setState(() {
+        _quote = updatedQuote;
+      });
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+            content: Text('Abono 100% registrado. Proyecto cerrado.')),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('No pude registrar el abono 100%: $e')),
       );
     } finally {
       if (mounted) setState(() => _busy = false);
@@ -900,15 +946,15 @@ class _TechVisitDetailScreenState extends State<TechVisitDetailScreen> {
       primaryIcon = Icons.place_outlined;
       helperText = 'Ya vas en camino. Cuando llegues, marca en visita.';
     } else if (_visit.needsQuote) {
-      if (!_canManageCommercialFlow) primaryLabel = 'Pendiente comercial';
-      primaryAction = _canManageCommercialFlow ? _openQuoteBuilder : null;
+      if (!_canCreateQuote) primaryLabel = 'Pendiente comercial';
+      primaryAction = _canCreateQuote ? _openQuoteBuilder : null;
       primaryIcon = Icons.request_quote_outlined;
-      helperText = _canManageCommercialFlow
+      helperText = _canCreateQuote
           ? (_visit.isInstallation
               ? 'Esta visita es de instalación, pero aún requiere cotización antes de seguir.'
               : 'El siguiente paso real es cotizar esta visita de evaluación.')
           : 'La visita ya quedó lista para diagnóstico. La cotización la continúa el área comercial.';
-    } else if (_visit.needsQuoteConfirmation) {
+    } else if (_visit.pendingCommercialReview) {
       if (!_canManageCommercialFlow) primaryLabel = 'Pendiente comercial';
       primaryAction = _canManageCommercialFlow ? _confirmQuote : null;
       primaryIcon = Icons.verified_outlined;
@@ -920,15 +966,15 @@ class _TechVisitDetailScreenState extends State<TechVisitDetailScreen> {
       primaryAction = null;
       primaryIcon = Icons.mark_email_read_outlined;
       helperText = _canManageCommercialFlow
-          ? 'La cotización ya salió. Ahora registra si el cliente acepta, pide recotizar o cancela.'
+          ? 'La cotización ya salió. Ahora registra si el cliente confirmó el abono del 50%, pide recotizar o cancela.'
           : 'La cotización ya salió. El seguimiento con el cliente lo lleva el área comercial.';
     } else if (_visit.needsScheduling) {
       if (!_canManageCommercialFlow) primaryLabel = 'Pendiente de agenda';
       primaryAction = _canManageCommercialFlow ? _scheduleInstallation : null;
       primaryIcon = Icons.event_available_outlined;
       helperText = _canManageCommercialFlow
-          ? 'El cliente aceptó. Ahora sí toca agendar la instalación.'
-          : 'La cotización ya fue aceptada. La agenda de instalación queda pendiente de coordinación.';
+          ? 'El abono inicial del 50% ya fue confirmado. Ahora sí toca agendar la instalación.'
+          : 'El abono inicial del 50% ya fue confirmado. La agenda de instalación queda pendiente de coordinación.';
     } else if (_visit.canMarkInstallationCompleted) {
       primaryAction = () => _updateVisit('pendiente_conformidad');
       primaryIcon = Icons.home_repair_service_outlined;
@@ -1135,7 +1181,7 @@ class _TechVisitDetailScreenState extends State<TechVisitDetailScreen> {
           runSpacing: 10,
           children: [
             FilledButton.icon(
-              onPressed: _busy ? null : _openQuoteBuilder,
+              onPressed: _busy || !_canCreateQuote ? null : _openQuoteBuilder,
               icon: const Icon(Icons.request_quote_outlined),
               label: Text(
                   _visit.hasQuote ? 'Ver / revisar cotización' : 'Cotizar'),
@@ -1146,39 +1192,49 @@ class _TechVisitDetailScreenState extends State<TechVisitDetailScreen> {
                 icon: const Icon(Icons.picture_as_pdf_outlined),
                 label: const Text('Abrir PDF'),
               ),
-            if (quote?.canConfirmForSend == true)
+            if (_canManageCommercialFlow && quote?.canConfirmForSend == true)
               FilledButton.tonalIcon(
                 onPressed: _busy ? null : _confirmQuote,
                 icon: const Icon(Icons.verified_outlined),
                 label: const Text('Confirmar cotización'),
               ),
-            if (quote?.canMarkClientAccepted == true)
+            if (_canManageCommercialFlow &&
+                quote?.canMarkClientAccepted == true)
               FilledButton.icon(
                 onPressed: _busy ? null : _markClientAccepted,
                 icon: const Icon(Icons.thumb_up_alt_outlined),
-                label: const Text('Cliente acepta'),
+                label: const Text('Abono 50%'),
               ),
-            if (quote?.canRequestRecotizar == true)
+            if (_canManageCommercialFlow && quote?.canRequestRecotizar == true)
               OutlinedButton.icon(
                 onPressed: _busy ? null : _requestRecotizar,
                 icon: const Icon(Icons.refresh_outlined),
                 label: const Text('Recotizar'),
               ),
-            if (quote?.canCancel == true)
+            if (_canManageCommercialFlow && quote?.canCancel == true)
               OutlinedButton.icon(
                 onPressed: _busy ? null : _cancelQuote,
                 icon: const Icon(Icons.cancel_outlined),
                 label: const Text('Cotización cancelada'),
               ),
-            if (quote?.canScheduleInstallation == true)
+            if (_canManageCommercialFlow &&
+                quote?.canScheduleInstallation == true)
               FilledButton.icon(
                 onPressed: _busy ? null : _scheduleInstallation,
                 icon: const Icon(Icons.event_available_outlined),
                 label: const Text('Agendar instalación'),
               ),
+            if (_canManageCommercialFlow && quote?.canMarkFullPayment == true)
+              FilledButton.tonalIcon(
+                onPressed: _busy ? null : _markFullPayment,
+                icon: const Icon(Icons.payments_outlined),
+                label: const Text('Abono 100%'),
+              ),
           ],
         ),
-        if (quote != null && quote.canConfirmForSend)
+        if (_canManageCommercialFlow &&
+            quote != null &&
+            quote.canConfirmForSend)
           Padding(
             padding: const EdgeInsets.only(top: 12),
             child: Text(
@@ -1191,6 +1247,12 @@ class _TechVisitDetailScreenState extends State<TechVisitDetailScreen> {
   }
 
   Widget _conformidadBody() {
+    if (!widget.user.canReviewConformityFlow) {
+      return Text(
+        'La conformidad la gestiona instalación/comercial. Este rol no la opera desde la app.',
+        style: TextStyle(color: _mutedText),
+      );
+    }
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [

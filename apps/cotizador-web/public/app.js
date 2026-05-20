@@ -8,6 +8,7 @@ const state = {
   techVisits: [],
   installationOrders: [],
   conformities: [],
+  auditFeed: [],
   adminUsers: [],
   selectedTab: 'quote',
   catalogDraft: null,
@@ -15,9 +16,10 @@ const state = {
   conformityOrderId: '',
   conformityPhotoFiles: [null, null],
   conformitySignatureData: { installer: '', client: '' },
+  authExpiredNotified: false,
 };
 
-const TAB_ORDER = ['quote', 'quotes', 'visits', 'ops', 'conformities', 'advisor', 'admin'];
+const TAB_ORDER = ['quote', 'quotes', 'visits', 'ops', 'conformities', 'advisor', 'audit', 'admin'];
 
 const el = (id) => document.getElementById(id);
 
@@ -78,6 +80,24 @@ function loadThemePreference() {
   setTheme(preferred === 'light' ? 'light' : 'dark', { persist: false });
 }
 
+async function handleUnauthorizedResponse(res, fallbackMessage = 'Tu sesión venció. Vuelve a iniciar sesión.') {
+  if (res?.status !== 401) return false;
+  state.user = null;
+  state.config = null;
+  state.clients = [];
+  state.quotes = [];
+  state.techVisits = [];
+  state.installationOrders = [];
+  state.conformities = [];
+  state.adminUsers = [];
+  showLogin();
+  if (!state.authExpiredNotified) {
+    state.authExpiredNotified = true;
+    alert(fallbackMessage);
+  }
+  return true;
+}
+
 function setTheme(theme, { persist = true } = {}) {
   state.theme = theme === 'light' ? 'light' : 'dark';
   document.body.dataset.theme = state.theme;
@@ -94,6 +114,7 @@ async function loadSession() {
   const data = await res.json();
   state.user = data.user;
   state.config = data.config;
+  state.authExpiredNotified = false;
   state.activeCountry = data.config?.activeCountry || resolveDefaultCountry(data.user);
   if (!state.user) {
     showLogin();
@@ -107,6 +128,7 @@ async function loadSession() {
     loadTechVisits(),
     loadInstallationOrders(),
     loadConformities(),
+    canReadAudit() ? loadAuditFeed() : Promise.resolve(),
     state.user.role === 'admin' ? loadAdminUsers() : Promise.resolve(),
   ]);
   applyAdvisorPrefillFromQuery();
@@ -151,6 +173,7 @@ function setTab(name) {
     if (panel) panel.classList.toggle('hidden', tab !== nextTab);
   });
   if (nextTab === 'advisor') reloadAdvisorFrame(false);
+  if (nextTab === 'audit') loadAuditFeed();
 }
 
 function reloadAdvisorFrame(force = true) {
@@ -172,7 +195,7 @@ function applyAdvisorPrefillFromQuery() {
   const params = new URLSearchParams(window.location.search);
   if (params.get('source') !== 'advisor') return;
   const form = el('quoteForm');
-  if (!form || !canEditCommercialFlow()) return;
+  if (!form || !canCreateQuote()) return;
   const map = [
     ['clientName', 'clientName'],
     ['email', 'email'],
@@ -232,6 +255,7 @@ async function onLogout() {
 
 async function loadCatalog() {
   const res = await fetch(withCountryQuery('/api/catalog'));
+  if (await handleUnauthorizedResponse(res, 'Tu sesión del cotizador venció. Ingresa otra vez para seguir.')) return;
   if (!res.ok) return;
   state.catalog = await res.json();
   state.catalogDraft = structuredClone(state.catalog);
@@ -1012,6 +1036,7 @@ async function onGenerateQuote(event) {
     body: JSON.stringify(body),
   });
   const data = await res.json().catch(() => ({}));
+  if (await handleUnauthorizedResponse(res, 'Tu sesión del cotizador venció antes de guardar la cotización. Ingresa otra vez.')) return;
   if (!res.ok) return alert(data.error || 'No pude generar la cotización.');
   const quote = data;
   renderQuoteResult(quote);
@@ -1077,6 +1102,7 @@ function renderQuoteResult(quote) {
 
 async function loadClients() {
   const res = await fetch(withCountryQuery('/api/clients'));
+  if (await handleUnauthorizedResponse(res, 'Tu sesión del cotizador venció. Ingresa otra vez para seguir.')) return;
   if (!res.ok) return;
   const data = await res.json().catch(() => []);
   state.clients = Array.isArray(data) ? data : [];
@@ -1104,6 +1130,7 @@ function renderClientCard(client) {
 
 async function loadQuotes() {
   const res = await fetch(withCountryQuery('/api/quotes'));
+  if (await handleUnauthorizedResponse(res, 'Tu sesión del cotizador venció. Ingresa otra vez para seguir.')) return;
   if (!res.ok) return;
   const data = await res.json().catch(() => []);
   state.quotes = Array.isArray(data) ? data : [];
@@ -1125,6 +1152,33 @@ async function acceptQuote(id) {
 
 window.acceptQuote = acceptQuote;
 
+function buildQuoteProgressSteps(quote = {}) {
+  const visit = (state.techVisits || []).find((item) => String(item.quoteId || '').trim() === String(quote.id || '').trim()) || null;
+  const visitDecorated = visit ? decorateVisit(visit) : null;
+  const steps = [
+    { label: 'Visita', done: Boolean(visitDecorated), current: Boolean(visitDecorated && ['agendada', 'en_ruta', 'en_visita', 'visitada'].includes(visitDecorated.status)), hint: visitDecorated?.statusLabel || 'Sin visita ligada' },
+    { label: 'Cotización', done: ['cotizada', 'lista_envio', 'aceptada_cliente', 'instalada', 'abono_100_confirmado'].includes(quote.normalizedStatus), current: quote.normalizedStatus === 'cotizada', hint: quote.normalizedStatus === 'cotizada' ? 'Cotizada' : 'Pendiente' },
+    { label: 'Envío', done: ['lista_envio', 'aceptada_cliente', 'instalada', 'abono_100_confirmado'].includes(quote.normalizedStatus), current: quote.normalizedStatus === 'lista_envio', hint: ['lista_envio', 'aceptada_cliente', 'instalada', 'abono_100_confirmado'].includes(quote.normalizedStatus) ? 'Lista para enviar' : 'Pendiente' },
+    { label: 'Abono 50%', done: ['aceptada_cliente', 'instalada', 'abono_100_confirmado'].includes(quote.normalizedStatus), current: quote.normalizedStatus === 'aceptada_cliente', hint: ['aceptada_cliente', 'instalada', 'abono_100_confirmado'].includes(quote.normalizedStatus) ? 'Confirmado' : 'Pendiente' },
+    { label: 'Instalación', done: Boolean(quote.scheduledInstallationAt || quote.hasGeneratedConformity || ['instalada', 'abono_100_confirmado'].includes(quote.normalizedStatus)), current: Boolean(quote.scheduledInstallationAt && !quote.hasGeneratedConformity && !['instalada', 'abono_100_confirmado'].includes(quote.normalizedStatus)), hint: quote.scheduledInstallationAt ? formatDate(quote.scheduledInstallationAt) : 'Pendiente' },
+    { label: 'Conformidad', done: Boolean(quote.hasGeneratedConformity), current: Boolean(!quote.hasGeneratedConformity && quote.installationOrderId), hint: quote.hasGeneratedConformity ? 'Generada' : (quote.installationOrderId ? 'Pendiente' : 'Aún sin orden') },
+    { label: 'Abono 100%', done: quote.normalizedStatus === 'abono_100_confirmado', current: quote.hasGeneratedConformity && quote.normalizedStatus !== 'abono_100_confirmado', hint: quote.normalizedStatus === 'abono_100_confirmado' ? 'Confirmado' : 'Pendiente' },
+  ];
+  return `
+    <div class="quote-steps" aria-label="Flujo de la cotización">
+      ${steps.map((step) => `
+        <div class="quote-step ${step.done ? 'is-done' : ''} ${step.current ? 'is-current' : ''}">
+          <span class="quote-step-dot"></span>
+          <div>
+            <strong>${escapeHtml(step.label)}</strong>
+            <span>${escapeHtml(step.hint)}</span>
+          </div>
+        </div>
+      `).join('')}
+    </div>
+  `;
+}
+
 function renderQuoteCard(rawQuote) {
   const quote = decorateQuote(rawQuote);
   const conformity = findConformityByOrderId(quote.installationOrderId);
@@ -1139,27 +1193,29 @@ function renderQuoteCard(rawQuote) {
       <div class="row"><span>${escapeHtml(quote.profileName || quote.commercialProfile?.name || 'GENERAL')}</span><span>${formatPercent(quote.marginPercent || 0)}</span></div>
       <div class="row"><span>${escapeHtml(quote.installationOrderId || 'Sin orden')}</span><span>${escapeHtml(quote.scheduledInstallationWindow || labelQuoteStatus(quote))}</span></div>
       <div class="row"><span>${escapeHtml(quote.installationType || '')} · ${escapeHtml(quote.cable?.label || '')}</span><span><strong>${money(quote.total, quote.currency || quote.countryCode)}</strong></span></div>
+      ${buildQuoteProgressSteps(quote)}
       ${quote.scheduledInstallationAt ? `<div class="row"><span>Instalación programada</span><span>${escapeHtml(formatDate(quote.scheduledInstallationAt))}</span></div>` : ''}
       <div class="row quote-card-actions">
         <a class="link" href="${quote.pdfPath}" target="_blank" rel="noreferrer">PDF</a>
-        ${quote.canConfirmForSend ? `<button class="secondary compact-btn" type="button" onclick="window.confirmQuote('${quote.id}')">Confirmar</button>` : ''}
-        ${quote.canMarkClientAccepted ? `<button class="secondary compact-btn" type="button" onclick="window.markQuoteAccepted('${quote.id}')">Cliente acepta</button>` : ''}
-        ${quote.canScheduleInstallation ? `<button class="secondary compact-btn" type="button" onclick="window.scheduleInstallation('${quote.id}')">Agendar</button>` : ''}
-        ${quote.canRequestRecotizar ? `<button class="secondary compact-btn" type="button" onclick="window.requestQuoteRecotizar('${quote.id}')">Recotizar</button>` : ''}
-        ${quote.canCancel ? `<button class="secondary compact-btn" type="button" onclick="window.cancelQuote('${quote.id}')">Cancelar</button>` : ''}
+        ${canEditCommercialFlow() && quote.canConfirmForSend ? `<button class="secondary compact-btn" type="button" onclick="window.confirmQuote('${quote.id}')">Confirmar</button>` : ''}
+        ${canEditCommercialFlow() && quote.canMarkClientAccepted ? `<button class="secondary compact-btn" type="button" onclick="window.markQuoteAccepted('${quote.id}')">Abono 50%</button>` : ''}
+        ${canEditCommercialFlow() && quote.canScheduleInstallation ? `<button class="secondary compact-btn" type="button" onclick="window.scheduleInstallation('${quote.id}')">Agendar</button>` : ''}
+        ${canEditCommercialFlow() && quote.canMarkFullPayment ? `<button class="secondary compact-btn" type="button" onclick="window.markQuotePaid100('${quote.id}')">Abono 100%</button>` : ''}
+        ${canEditCommercialFlow() && quote.canRequestRecotizar ? `<button class="secondary compact-btn" type="button" onclick="window.requestQuoteRecotizar('${quote.id}')">Recotizar</button>` : ''}
+        ${canEditCommercialFlow() && quote.canCancel ? `<button class="secondary compact-btn" type="button" onclick="window.cancelQuote('${quote.id}')">Cancelar</button>` : ''}
         ${isAdminUser() && quote.normalizedStatus !== 'aceptada_cliente' && quote.normalizedStatus !== 'instalada' && !quote.hasOrder ? `<button class="secondary compact-btn" type="button" onclick="window.acceptQuote('${quote.id}')">Crear orden</button>` : ''}
-        ${conformity ? `<a class="link" href="/api/conformities/${encodeURIComponent(conformity.id)}/pdf" target="_blank" rel="noreferrer">Conformidad</a>` : ''}
+        ${conformity && canReviewConformityFlow() ? `<a class="link" href="/api/conformities/${encodeURIComponent(conformity.id)}/pdf" target="_blank" rel="noreferrer">Conformidad</a>` : ''}
         ${quote.warrantyPdfUrl || quote.warrantyCode ? `<a class="link" href="${escapeHtml(quote.warrantyPdfUrl || "/api/warranties/" + encodeURIComponent(quote.warrantyId || '') + "/pdf")}" target="_blank" rel="noreferrer">Garantía</a>` : ''}
       </div>
     </article>
   `;
 }
 
-async function updateQuoteStatusAction(id, status, successMessage) {
+async function updateQuoteStatusAction(id, status, successMessage, extraPayload = {}) {
   const res = await fetch(`/api/quotes/${encodeURIComponent(id)}/status`, {
     method: 'PATCH',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ status }),
+    body: JSON.stringify({ status, ...extraPayload }),
   });
   const data = await res.json().catch(() => ({}));
   if (!res.ok) return alert(data.error || 'No se pudo actualizar la cotización.');
@@ -1174,9 +1230,29 @@ async function confirmQuote(id) {
 }
 
 async function markQuoteAccepted(id) {
-  const ok = window.confirm('¿Registrar que el cliente aceptó la cotización?');
+  const ok = window.confirm('¿Registrar que el cliente confirmó el abono inicial del 50%?');
   if (!ok) return;
-  await updateQuoteStatusAction(id, 'aceptada_cliente', 'Cliente aceptado registrado. Ya puedes agendar la instalación.');
+  const quote = (state.quotes || []).find((item) => item.id === id) || {};
+  const amount = window.prompt('Monto del abono 50%', String(Math.round(Number(quote.total || 0) * 0.5))) || '';
+  const observation = window.prompt('Observación del abono 50%', 'Abono 50% confirmado por KAM.') || '';
+  await updateQuoteStatusAction(id, 'aceptada_cliente', 'Abono inicial del 50% registrado. Ya puedes agendar la instalación.', {
+    paymentAmount: Number(amount || 0),
+    paymentObservation: observation,
+    paymentDate: new Date().toISOString(),
+  });
+}
+
+async function markQuotePaid100(id) {
+  const ok = window.confirm('¿Registrar el abono 100% y cerrar el proyecto?');
+  if (!ok) return;
+  const quote = (state.quotes || []).find((item) => item.id === id) || {};
+  const amount = window.prompt('Monto del abono 100%', String(Math.round(Number(quote.total || 0)))) || '';
+  const observation = window.prompt('Observación del abono 100%', 'Abono 100% confirmado por KAM.') || '';
+  await updateQuoteStatusAction(id, 'abono_100_confirmado', 'Abono 100% registrado. El proyecto quedó cerrado.', {
+    paymentAmount: Number(amount || 0),
+    paymentObservation: observation,
+    paymentDate: new Date().toISOString(),
+  });
 }
 
 async function requestQuoteRecotizar(id) {
@@ -1231,9 +1307,11 @@ async function scheduleInstallation(id) {
 
 window.confirmQuote = confirmQuote;
 window.markQuoteAccepted = markQuoteAccepted;
+window.markQuotePaid100 = markQuotePaid100;
 window.requestQuoteRecotizar = requestQuoteRecotizar;
 window.cancelQuote = cancelQuote;
 window.scheduleInstallation = scheduleInstallation;
+window.loadAuditFeed = loadAuditFeed;
 
 function labelQuoteStatus(quote) {
   return decorateQuote(quote).statusLabel;
@@ -1241,6 +1319,7 @@ function labelQuoteStatus(quote) {
 
 async function loadTechVisits() {
   const res = await fetch(withCountryQuery('/api/tech/visits'));
+  if (await handleUnauthorizedResponse(res, 'Tu sesión del cotizador venció. Ingresa otra vez para seguir.')) return;
   if (!res.ok) return;
   const data = await res.json().catch(() => []);
   state.techVisits = Array.isArray(data) ? data : [];
@@ -1250,6 +1329,7 @@ async function loadTechVisits() {
 
 async function loadInstallationOrders() {
   const res = await fetch(withCountryQuery('/api/installation-orders'));
+  if (await handleUnauthorizedResponse(res, 'Tu sesión del cotizador venció. Ingresa otra vez para seguir.')) return;
   if (!res.ok) return;
   const data = await res.json().catch(() => []);
   state.installationOrders = Array.isArray(data) ? data : [];
@@ -1258,11 +1338,22 @@ async function loadInstallationOrders() {
 
 async function loadConformities() {
   const res = await fetch(withCountryQuery('/api/conformities'));
+  if (await handleUnauthorizedResponse(res, 'Tu sesión del cotizador venció. Ingresa otra vez para seguir.')) return;
   if (!res.ok) return;
   const data = await res.json().catch(() => []);
   state.conformities = Array.isArray(data) ? data : [];
   renderConformities();
   renderOperations();
+}
+
+async function loadAuditFeed() {
+  if (!canReadAudit()) return;
+  const res = await fetch(withCountryQuery('/api/audit-feed?limit=120'));
+  if (await handleUnauthorizedResponse(res, 'Tu sesión del cotizador venció. Ingresa otra vez para seguir.')) return;
+  if (!res.ok) return;
+  const data = await res.json().catch(() => ({}));
+  state.auditFeed = Array.isArray(data?.events) ? data.events : [];
+  renderAuditFeed(data?.summary || null);
 }
 
 async function refreshOperationalData() {
@@ -1271,7 +1362,29 @@ async function refreshOperationalData() {
     loadTechVisits(),
     loadInstallationOrders(),
     loadConformities(),
+    canReadAudit() ? loadAuditFeed() : Promise.resolve(),
   ]);
+}
+
+function renderAuditFeed(summary = null) {
+  const wrap = el('auditList');
+  const box = el('auditSummary');
+  if (!wrap) return;
+  const items = Array.isArray(state.auditFeed) ? state.auditFeed : [];
+  if (box) {
+    box.innerHTML = summary
+      ? `<strong>${items.length}</strong> eventos · último movimiento ${escapeHtml(formatDate(summary.lastEventAt || ''))}`
+      : `${items.length} eventos`;
+  }
+  wrap.innerHTML = items.length
+    ? items.map((item) => `
+      <article class="quote-card">
+        <div class="row"><strong>${escapeHtml(item.summary || item.action || 'Evento')}</strong><span>${escapeHtml(formatDate(item.at || ''))}</span></div>
+        <div class="row"><span>${escapeHtml(item.entityType || '-')} · ${escapeHtml(item.entityId || '-')}</span><span>${escapeHtml(item.countryCode || '-')}</span></div>
+        <div class="row"><span>${escapeHtml(item.actor?.name || item.actor?.email || 'Sistema')}</span><span>${escapeHtml(item.status || 'success')}</span></div>
+      </article>
+    `).join('')
+    : '<p class="muted">Todavía no hay eventos de auditoría para este alcance.</p>';
 }
 
 function renderVisits() {
@@ -1279,18 +1392,19 @@ function renderVisits() {
   const list = el('visitsList');
   if (!summary || !list) return;
   const visits = [...(state.techVisits || [])].map(decorateVisit).sort(compareVisits);
-  const today = visits.filter((visit) => visit.isToday && !visit.isClosed);
-  const pending = visits.filter((visit) => !visit.isClosed);
-  const onRoute = visits.filter((visit) => visit.status === 'en_ruta' || visit.status === 'en_visita');
+  const visibleVisits = visits.filter((visit) => !visit.hideFromBoard);
+  const today = visibleVisits.filter((visit) => visit.isToday && !visit.isClosed);
+  const pending = visibleVisits.filter((visit) => !visit.isClosed);
+  const onRoute = visibleVisits.filter((visit) => visit.status === 'en_ruta' || visit.status === 'en_visita');
   summary.innerHTML = `
     <div class="metric"><b>Hoy</b><span>${today.length}</span></div>
     <div class="metric"><b>Abiertas</b><span>${pending.length}</span></div>
     <div class="metric"><b>En movimiento</b><span>${onRoute.length}</span></div>
-    <div class="metric"><b>Cerradas</b><span>${visits.filter((visit) => visit.isClosed).length}</span></div>
+    <div class="metric"><b>Cerradas</b><span>${visibleVisits.filter((visit) => visit.isClosed).length}</span></div>
   `;
-  list.innerHTML = visits.length
-    ? visits.map(renderVisitCard).join('')
-    : '<p class="muted">No hay visitas registradas todavía.</p>';
+  list.innerHTML = visibleVisits.length
+    ? visibleVisits.map(renderVisitCard).join('')
+    : '<p class="muted">No hay visitas activas o pendientes en este momento.</p>';
 }
 
 function renderVisitCard(rawVisit, { compact = false } = {}) {
@@ -1309,8 +1423,11 @@ function renderVisitCard(rawVisit, { compact = false } = {}) {
   if ((visit.status === 'visitada' || visit.status === 'pendiente_cierre') && !visit.isClosed) {
     actions.push(`<button class="secondary compact-btn" type="button" onclick="window.closeVisit('${visit.id}')">Cerrar</button>`);
   }
-  if (visit.needsQuote && canEditCommercialFlow()) {
+  if (visit.needsQuote && canCreateQuote()) {
     actions.push(`<button class="secondary compact-btn" type="button" onclick="window.prefillQuoteFromVisit('${visit.id}')">Cotizar</button>`);
+  }
+  if (isAdminUser() && !visit.quoteId && !visit.installationOrderId) {
+    actions.push(`<button class="secondary compact-btn" type="button" onclick="window.deleteVisitGlobally('${visit.id}')">Eliminar global</button>`);
   }
   if (visit.installationOrderId) {
     const conformity = findConformityByOrderId(visit.installationOrderId);
@@ -1339,12 +1456,13 @@ function renderOperations() {
   const board = el('opsBoard');
   if (!board) return;
   const visits = [...(state.techVisits || [])].map(decorateVisit).sort(compareVisits);
+  const visibleVisits = visits.filter((visit) => !visit.hideFromBoard);
   const quotes = [...(state.quotes || [])].map(decorateQuote);
   const orders = [...(state.installationOrders || [])];
   const conformities = [...(state.conformities || [])];
-  const todayOpen = visits.filter((visit) => visit.isToday && !visit.isClosed);
-  const quotePending = visits.filter((visit) => visit.needsQuote && !visit.isClosed);
-  const closePending = visits.filter((visit) => (visit.isPendingClose || visit.status === 'visitada') && !visit.isClosed);
+  const todayOpen = visibleVisits.filter((visit) => visit.isToday && !visit.isClosed);
+  const quotePending = visibleVisits.filter((visit) => visit.needsQuote && !visit.isClosed);
+  const closePending = visibleVisits.filter((visit) => (visit.isPendingClose || visit.status === 'visitada') && !visit.isClosed);
   const conformityPending = orders.filter((order) => isOrderReadyForConformity(order) && String(order.conformityStatus || 'not_started').toLowerCase() !== 'pdf_generated');
   const recentConformities = conformities.slice(0, 5);
   const quoteFlowPending = quotes.filter((quote) => quote.canConfirmForSend || quote.canMarkClientAccepted || quote.canScheduleInstallation).slice(0, 6);
@@ -1490,6 +1608,21 @@ async function closeVisit(id) {
   const resolution = window.prompt('Resultado / cierre de la visita', 'Visita cerrada desde navegador.');
   if (resolution === null) return;
   await updateVisitStatus(id, 'cerrada', { resolution });
+}
+
+async function deleteVisitGlobally(id) {
+  const visit = (state.techVisits || []).find((item) => item.id === id);
+  if (!visit) return alert('No encontré la visita.');
+  const label = visit.clientName || visit.reference || visit.id;
+  const ok = window.confirm(`Vas a eliminar globalmente la visita "${label}". Esto intentará quitarla del cotizador, del origen operativo y del calendario/ClickUp. ¿Deseas continuar?`);
+  if (!ok) return;
+  const res = await fetch(`/api/tech/visits/${encodeURIComponent(id)}/global`, {
+    method: 'DELETE',
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) return alert(data.error || 'No pude eliminar la visita globalmente.');
+  await refreshOperationalData();
+  alert('Visita eliminada globalmente.');
 }
 
 function openVisitMaps(id) {
@@ -1957,8 +2090,8 @@ function prefillQuoteFromVisit(id) {
   const visit = (state.techVisits || []).find((item) => item.id === id);
   const form = el('quoteForm');
   if (!visit || !form) return;
-  if (!canEditCommercialFlow()) {
-    alert('Este usuario no tiene acceso al flujo comercial desde web.');
+  if (!canCreateQuote()) {
+    alert('Este usuario no puede generar cotizaciones desde web.');
     return;
   }
   form.clientName.value = visit.clientName || '';
@@ -1985,6 +2118,7 @@ function clearQuotePrefill() {
 
 window.updateVisitStatus = updateVisitStatus;
 window.closeVisit = closeVisit;
+window.deleteVisitGlobally = deleteVisitGlobally;
 window.openVisitMaps = openVisitMaps;
 window.prefillQuoteFromVisit = prefillQuoteFromVisit;
 window.openConformityModal = openConformityModal;
@@ -2190,6 +2324,18 @@ function canEditCommercialFlow() {
   return roleHasPermission('quotes.write') || isLuisSupervisor();
 }
 
+function canCreateQuote() {
+  return roleHasPermission('quotes.create') || canEditCommercialFlow();
+}
+
+function canReviewConformityFlow() {
+  return canGenerateConformity() || roleHasPermission('conformities.review') || canEditCommercialFlow();
+}
+
+function canReadAudit() {
+  return roleHasPermission('audit.read') || isAdminUser() || isLuisSupervisor();
+}
+
 function canSeeOperations() {
   return canAccessTab('visits') || canAccessTab('ops') || canAccessTab('conformities');
 }
@@ -2226,16 +2372,37 @@ function decorateQuote(quote = {}) {
     canRequestRecotizar: normalizedStatus === 'lista_envio',
     canCancel: ['cotizada', 'lista_envio', 'recotizar'].includes(normalizedStatus),
     canScheduleInstallation: normalizedStatus === 'aceptada_cliente' && !hasGeneratedConformity && !hasScheduledInstallation,
+    canMarkFullPayment: hasGeneratedConformity && normalizedStatus !== 'abono_100_confirmado',
     statusLabel: (() => {
+      if (normalizedStatus === 'abono_100_confirmado') return 'Proyecto cerrado';
       if (hasGeneratedConformity) return 'Conformidad generada';
       if (normalizedStatus === 'instalada') return 'Instalada';
-      if (normalizedStatus === 'aceptada_cliente') return 'Aceptada por cliente';
+      if (normalizedStatus === 'aceptada_cliente') return 'Abono 50% confirmado';
       if (normalizedStatus === 'lista_envio') return 'Lista para enviar';
       if (normalizedStatus === 'recotizar') return 'Recotizar';
       if (normalizedStatus === 'cancelada') return 'Cancelada';
-      return 'Cotizada';
+      return 'Pendiente comercial';
     })(),
   };
+}
+
+function isSameCalendarDay(date, baseDate = new Date()) {
+  return Boolean(date)
+    && date.getFullYear() === baseDate.getFullYear()
+    && date.getMonth() === baseDate.getMonth()
+    && date.getDate() === baseDate.getDate();
+}
+
+function isPastCalendarDay(date, baseDate = new Date()) {
+  if (!(date instanceof Date) || Number.isNaN(date.getTime())) return false;
+  const compareDate = new Date(date.getFullYear(), date.getMonth(), date.getDate()).getTime();
+  const compareBase = new Date(baseDate.getFullYear(), baseDate.getMonth(), baseDate.getDate()).getTime();
+  return compareDate < compareBase;
+}
+
+function isExpiredUnattendedVisit(status, scheduledDate, baseDate = new Date()) {
+  if (!isPastCalendarDay(scheduledDate, baseDate)) return false;
+  return ['pendiente', 'agendada', 'en_ruta', 'en_visita'].includes(String(status || '').trim().toLowerCase());
 }
 
 function decorateVisit(visit = {}) {
@@ -2247,7 +2414,8 @@ function decorateVisit(visit = {}) {
   const isClosed = status === 'cerrada';
   const isPendingClose = status === 'pendiente_cierre';
   const now = new Date();
-  const isToday = scheduledDate && scheduledDate.getFullYear() === now.getFullYear() && scheduledDate.getMonth() === now.getMonth() && scheduledDate.getDate() === now.getDate();
+  const isToday = isSameCalendarDay(scheduledDate, now);
+  const hideFromBoard = isExpiredUnattendedVisit(status, scheduledDate, now);
   const needsQuote = status === 'recotizar' || (!hasQuote && ['agendada', 'en_ruta', 'en_visita', 'visitada', 'pendiente_cotizacion', 'reprogramada', 'pendiente'].includes(status));
   return {
     ...visit,
@@ -2259,6 +2427,7 @@ function decorateVisit(visit = {}) {
     isClosed,
     isPendingClose,
     isToday: Boolean(isToday),
+    hideFromBoard,
     needsQuote,
     statusLabel: (() => {
       switch (status) {
@@ -2269,7 +2438,7 @@ function decorateVisit(visit = {}) {
         case 'cotizada': return 'Cotizada';
         case 'pendiente_cotizacion': return 'Pendiente de cotización';
         case 'lista_envio': return 'Lista para enviar';
-        case 'aceptada_cliente': return 'Cliente acepta';
+        case 'aceptada_cliente': return 'Abono 50% confirmado';
         case 'cancelada': return 'Cotización cancelada';
         case 'recotizar': return 'Recotizar';
         case 'pendiente_conformidad': return 'Pendiente de conformidad';
