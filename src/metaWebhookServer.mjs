@@ -1656,6 +1656,27 @@ function summarizeInboundMessage(message = {}) {
   };
 }
 
+function trackAdvisorConversationVisibility(conversation, {
+  customerName = '',
+  phone = '',
+  handoffActive = false,
+} = {}) {
+  if (!conversation?.id_conversacion) return null;
+  return patchAdvisorConversation(conversation.id_conversacion, (current) => ({
+    ...current,
+    internalStatus: current.internalStatus === 'resolved' ? 'open' : (current.internalStatus || 'new'),
+    supportStatus: handoffActive
+      ? (current.assignedTo ? 'tomado' : (current.supportStatus || 'esperando_asesor'))
+      : (current.supportStatus || 'bot'),
+    handoffActive: Boolean(handoffActive),
+    unreadCount: Number(current.unreadCount || 0) + 1,
+    lastIncomingAt: new Date().toISOString(),
+    lastCustomerMessageAt: new Date().toISOString(),
+    customerName: String(customerName || current.customerName || '').trim(),
+    phone: String(phone || current.phone || '').trim(),
+  }));
+}
+
 const server = http.createServer(async (req, res) => {
   try {
     const url = new URL(req.url, `http://${req.headers.host}`);
@@ -1814,14 +1835,14 @@ const server = http.createServer(async (req, res) => {
               },
             },
           );
+          trackAdvisorConversationVisibility(latestConversation, {
+            customerName: message.profileName || user?.nombre_visible || user?.nombre_usuario || '',
+            phone: message.from,
+            handoffActive: true,
+          });
           patchAdvisorConversation(latestConversation.id_conversacion, (current) => ({
             ...current,
-            internalStatus: current.internalStatus === 'resolved' ? 'open' : (current.internalStatus || 'open'),
-            handoffActive: true,
             supportStatus: current.assignedTo ? 'tomado' : 'esperando_asesor',
-            unreadCount: Number(current.unreadCount || 0) + 1,
-            lastIncomingAt: new Date().toISOString(),
-            lastCustomerMessageAt: new Date().toISOString(),
           }));
           await upsertSupportTicket({
             conversation: latestConversation,
@@ -1932,6 +1953,11 @@ const server = http.createServer(async (req, res) => {
 
         const latestAfterReply = await engine.getLatestConversation(user);
         if (latestAfterReply) {
+          trackAdvisorConversationVisibility(latestAfterReply, {
+            customerName: message.profileName || user?.nombre_visible || user?.nombre_usuario || '',
+            phone: message.from,
+            handoffActive: latestAfterReply.estado_conversacion === 'handoff' || latestAfterReply.requiere_handoff === true,
+          });
           await persistInboundClientArtifact({
             message,
             conversation: latestAfterReply,

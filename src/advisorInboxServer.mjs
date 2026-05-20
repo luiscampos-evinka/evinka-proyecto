@@ -887,9 +887,16 @@ async function listInboxConversations({ mode = 'active' } = {}) {
   const state = loadAdvisorState();
   const normalizedMode = String(mode || 'active').toLowerCase();
   const includeFullWhatsappHistory = normalizedMode === 'bot' || normalizedMode === 'all' || normalizedMode === 'resolved';
+  const isVisibleForActiveInbox = (item) => {
+    if (item.canal !== 'whatsapp' || item.paso_actual === 'lead_captado') return false;
+    if (item.estado_conversacion === 'closed') return false;
+    if (item.estado_conversacion === 'handoff' || item.requiere_handoff) return true;
+    if (state.conversations?.[item.id_conversacion]) return true;
+    return true;
+  };
   const relevant = includeFullWhatsappHistory
     ? conversations.filter((item) => item.canal === 'whatsapp' && item.paso_actual !== 'lead_captado')
-    : conversations.filter((item) => item.canal === 'whatsapp' && item.paso_actual !== 'lead_captado' && (item.estado_conversacion === 'handoff' || item.requiere_handoff || state.conversations?.[item.id_conversacion]));
+    : conversations.filter(isVisibleForActiveInbox);
   if (!relevant.length) return [];
 
   const userIds = [...new Set(relevant.map((item) => item.id_usuario).filter(Boolean))];
