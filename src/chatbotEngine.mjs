@@ -474,7 +474,7 @@ function shouldResetFlowOnGreeting(step = '', text = '') {
 }
 
 const STEP_INTERACTIVE_CODE_MAP = {
-  menu_principal: { menu_install: 'A', menu_reschedule: 'B', menu_cancel: 'C', menu_human: 'D' },
+  menu_principal: { menu_install: 'A', menu_reschedule: 'B', menu_cancel: 'C', menu_support: 'D', menu_human: 'E' },
   seleccion_pais: { country_pe: 'A', country_co: 'B' },
   compra_menu: { buy_schedule: 'A', buy_menu: 'B' },
   localidad_co_no_disponible: { co_retry_locality: 'A', menu_main: 'B' },
@@ -576,6 +576,7 @@ function pickLetter(text, payloadCrudo = null, step = '') {
     const interactiveId = normalize(interactive.id || '');
     const mapped = STEP_INTERACTIVE_CODE_MAP[step]?.[interactiveId];
     if (mapped) return mapped;
+    if (/^[a-j]$/.test(interactiveId)) return interactiveId.toUpperCase();
     const prefix = DYNAMIC_STEP_ID_PREFIX[step] || '';
     if (prefix && interactiveId.startsWith(prefix)) {
       const code = interactiveId.slice(prefix.length).trim().toUpperCase();
