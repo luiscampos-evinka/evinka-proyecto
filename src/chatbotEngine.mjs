@@ -475,6 +475,10 @@ function shouldResetFlowOnGreeting(step = '', text = '') {
 
 const STEP_INTERACTIVE_CODE_MAP = {
   menu_principal: { menu_install: 'A', menu_reschedule: 'B', menu_cancel: 'C', menu_support: 'D', menu_human: 'E' },
+  soporte_tipo: { support_technical: 'A', support_emergency: 'B', support_advisor: 'C' },
+  soporte_equipo: { support_equipment_evinka: 'A', support_equipment_chargepoint: 'B', support_equipment_station: 'C', support_equipment_other: 'D' },
+  soporte_evidencia_opcion: { support_evidence_yes: 'A', support_evidence_skip: 'B' },
+  soporte_confirmacion: { support_submit: 'A', support_restart: 'B', support_human: 'C' },
   seleccion_pais: { country_pe: 'A', country_co: 'B' },
   compra_menu: { buy_schedule: 'A', buy_menu: 'B' },
   localidad_co_no_disponible: { co_retry_locality: 'A', menu_main: 'B' },
