@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { loadEnv, requiredEnv } from './config.mjs';
 import { SupabaseRest } from './supabase.mjs';
-import { ChatbotEngine } from './chatbotEngine.mjs';
+import { ChatbotEngine, resolveProfileZone, inferCountryFromZone } from './chatbotEngine.mjs';
 import { WhatsAppMetaClient } from './whatsappMeta.mjs';
 import { extractReceiptDataFromBuffer } from './receiptOcr.mjs';
 import { MicrosoftGraphClient } from './microsoftGraph.mjs';
@@ -22,6 +22,46 @@ const sb = new SupabaseRest({
   url: requiredEnv('SUPABASE_URL'),
   key: requiredEnv('SUPABASE_SERVICE_ROLE_KEY'),
 });
+
+const AGENDA_TIME_ZONE = 'America/Lima';
+
+function agendaDate(value) {
+  if (!value) return '';
+  try {
+    const parts = new Intl.DateTimeFormat('en-CA', {
+      timeZone: AGENDA_TIME_ZONE,
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+    }).formatToParts(new Date(value));
+    const pick = (type) => parts.find((item) => item.type === type)?.value || '';
+    return `${pick('year')}-${pick('month')}-${pick('day')}`;
+  } catch {
+    return '';
+  }
+}
+
+function agendaTime(value) {
+  if (!value) return '';
+  try {
+    const parts = new Intl.DateTimeFormat('en-GB', {
+      timeZone: AGENDA_TIME_ZONE,
+      hour: '2-digit',
+      minute: '2-digit',
+      hourCycle: 'h23',
+    }).formatToParts(new Date(value));
+    const pick = (type) => parts.find((item) => item.type === type)?.value || '';
+    return `${pick('hour')}:${pick('minute')}`;
+  } catch {
+    return '';
+  }
+}
+
+function normalizeAgendaClock(value) {
+  const raw = String(value || '').trim();
+  const match = raw.match(/^(\d{2}:\d{2})(?::\d{2})?$/);
+  return match ? match[1] : raw;
+}
 
 function extractTicketFromCalendarBody(body = '') {
   const text = String(body || '');
@@ -608,7 +648,10 @@ function loadOperationalUsers() {
 
 function isAdvisorAlertRole(user = {}) {
   const role = String(user.role || '').trim().toLowerCase();
-  return role === 'admin' || role === 'supervisor' || role.startsWith('asesor');
+  return role === 'admin'
+    || role === 'supervisor'
+    || role.startsWith('asesor')
+    || role.startsWith('kam');
 }
 
 function advisorNameSignals() {
@@ -881,6 +924,8 @@ async function notifyAdvisorReminder({ conversation, customerPhone, customerName
 
 function detectSenderRole(phone = '') {
   const normalized = String(phone || '').replace(/[^+\d]/g, '');
+  const digits = normalized.replace(/\D/g, '');
+  if (digits === '573028564794') return 'cliente';
   const roleMap = loadWhatsAppRoleMap();
   if (roleMap.technicians.includes(normalized)) return 'tecnico';
   const operationalUser = findOperationalUserByPhone(phone);
@@ -898,9 +943,12 @@ async function resolveInboundRole(phone, userScope = 'default') {
   const user = await engine.ensureUser(phone, userScope);
   const persistedRole = engine.normalizeUserRole(user?.rol_usuario);
   const mappedRole = detectSenderRole(phone);
-  const inferredRole = ['tecnico', 'asesor'].includes(mappedRole)
-    ? mappedRole
-    : (persistedRole || mappedRole);
+  const forcedTestFlowPhone = String(phone || '').replace(/\D/g, '') === '573028564794';
+  const inferredRole = forcedTestFlowPhone
+    ? 'cliente'
+    : (['tecnico', 'asesor'].includes(mappedRole)
+      ? mappedRole
+      : (persistedRole || mappedRole));
   if (inferredRole && persistedRole !== inferredRole) {
     const updated = await engine.syncUserRole(user.id_usuario, inferredRole, roleSourceFor(inferredRole));
     return { user: updated || user, role: inferredRole };
@@ -1386,6 +1434,265 @@ async function publishSupportCase({ conversation, profile = null, caseData = {},
 
 const engine = new ChatbotEngine({ sb, calendar, reminderScheduler: scheduleReminder, visitPublisher: publishTechVisit, supportCasePublisher: publishSupportCase });
 
+function conversationUserScope(conversation = {}) {
+  return String(conversation?.id_usuario || '').startsWith('wco_') ? 'co' : 'default';
+}
+
+function conversationChannel(conversation = {}, countryCode = null) {
+  return whatsappChannels.find((item) => item.key === conversationUserScope(conversation))
+    || advisorChannelForCountry(countryCode)
+    || defaultWhatsAppChannel;
+}
+
+function cleanDoc(value = '') {
+  return String(value || '').replace(/[^\d]/g, '');
+}
+
+function compactScheduleLabel(startTime = '', endTime = '') {
+  const start = String(startTime || '').slice(0, 5);
+  const end = String(endTime || '').slice(0, 5);
+  if (!start) return '';
+  return end ? `${start}-${end}` : start;
+}
+
+function finalConfirmation({ ticket, dateLabel, hourLabel, address, country = null, kind = 'confirmed' }) {
+  if (country === 'CO') {
+    if (kind === 'rescheduled') {
+      return `¡Listo! ✨ Tu visita quedó actualizada.\n\nTicket: ${ticket}\nFecha: ${dateLabel}\nHora: ${hourLabel}\nDirección: ${address}\n\nSi quieres moverla otra vez o cancelarla, escríbenos por aquí.`;
+    }
+    return `✅ Tu visita técnica fue agendada exitosamente.\n\nTicket de reserva: ${ticket}\nFecha: ${dateLabel}\nHora: ${hourLabel}\nDirección: ${address}\n\nSi deseas continuar, puedes volver al menú principal o reprogramar la visita desde aquí.`;
+  }
+  return `Listo ✅\nTu visita técnica quedó confirmada.\n\nTicket: ${ticket}\nFecha: ${dateLabel}\nHora: ${hourLabel}\nDirección: ${address}\n\nSi más adelante necesitas reprogramar o cancelar, escríbenos por este mismo medio.\n\n¡Gracias por elegir EVINKA! ⚡`;
+}
+
+function calendarSyncNote(provider = '') {
+  const normalized = String(provider || '').trim().toLowerCase();
+  if (normalized === 'clickup') return 'Sincronizada con ClickUp.';
+  if (normalized === 'hybrid') return 'Sincronizada con ClickUp y Microsoft Calendar.';
+  return 'Sincronizada con Microsoft Calendar.';
+}
+
+function splitReceiverDocument(value = '') {
+  const clean = cleanDoc(String(value || ''));
+  if (!clean) return { dni: null, ruc: null };
+  return /^\d{11}$/.test(clean)
+    ? { dni: null, ruc: clean }
+    : { dni: clean, ruc: null };
+}
+
+async function finalizeAdvisorManualVisit(payload = {}) {
+  const conversationId = String(payload.conversationId || '').trim();
+  if (!conversationId) throw new Error('Falta conversationId para finalizar la visita manual.');
+
+  const rows = await sb.select('conversaciones', `id_conversacion=eq.${encodeURIComponent(conversationId)}&select=*`);
+  const conversation = rows[0] || null;
+  if (!conversation) throw new Error('No encontré la conversación para finalizar la visita.');
+
+  const date = String(payload.scheduledDate || '').trim() || agendaDate(payload.scheduledAt);
+  const time = normalizeAgendaClock(String(payload.exactTime || '').trim() || agendaTime(payload.scheduledAt));
+  const clientAddress = String(payload.clientAddress || '').trim();
+  const receiptAddress = String(payload.receiptAddress || '').trim();
+  const receiptDistrict = String(payload.receiptDistrict || '').trim();
+  const receiptProvince = String(payload.receiptProvince || '').trim();
+  const receiptPower = String(payload.receiptPower || '').trim();
+  const receiverName = String(payload.receiverName || payload.clientName || '').trim();
+  const receiverPhone = String(payload.receiverPhone || '').trim();
+  const receiverEmail = normalizeEmail(payload.receiverEmail || '');
+  const vehicleBrand = String(payload.vehicleBrand || '').trim();
+  const vehicleModel = String(payload.vehicleModel || '').trim();
+  const vehicleType = String(payload.vehicleType || '').trim();
+  const receiverRole = String(payload.receiverRole || 'self').trim();
+  const countryCode = String(payload.countryCode || '').trim().toUpperCase() || 'PE';
+
+  if (!date || !time || !clientAddress) {
+    throw new Error('Faltan fecha, hora o dirección exacta para confirmar la visita.');
+  }
+  if (!receiptAddress || !receiptDistrict || !receiptProvince || !receiptPower) {
+    throw new Error('Faltan datos manuales del recibo para confirmar la visita.');
+  }
+  if (!receiverName || !receiverPhone || !receiverEmail) {
+    throw new Error('Faltan datos de la persona que recibirá la visita.');
+  }
+  if (!vehicleBrand || !vehicleModel || !vehicleType) {
+    throw new Error('Faltan datos del vehículo para confirmar la visita.');
+  }
+
+  const phone = engine.phoneForUserId(conversation.id_usuario);
+  const profile = await engine.getOrCreateProfile(conversation);
+  const profileLike = {
+    ...profile,
+    pais_cliente: countryCode,
+    direccion_instalacion: clientAddress,
+    distrito_instalacion: receiptDistrict,
+    provincia_instalacion: receiptProvince,
+    zona_cliente: String(payload.clientZone || profile?.zona_cliente || '').trim(),
+  };
+  const zone = String(payload.clientZone || '').trim()
+    || resolveProfileZone(profileLike, { phone, country: countryCode })
+    || null;
+  if (!zone) {
+    throw new Error('No pude identificar la zona para confirmar la visita con la lógica del bot.');
+  }
+
+  const dayOptions = await engine.availableDaysForZone(zone);
+  const day = dayOptions.find((item) => String(item.date || '').trim() === date) || null;
+  if (!day) {
+    throw new Error('Ese día ya no está disponible según la lógica del bot.');
+  }
+  const availableSlots = await engine.availableHoursForDate(date, { clientZone: zone });
+  const chosen = availableSlots.find((slot) => normalizeAgendaClock(slot.time) === time) || null;
+  if (!chosen) {
+    throw new Error('Ese horario ya no está disponible según la lógica del bot.');
+  }
+
+  const { dni, ruc } = splitReceiverDocument(payload.receiverDocument || '');
+  const profilePatch = {
+    direccion_recibo: receiptAddress,
+    distrito_recibo: receiptDistrict,
+    provincia_recibo: receiptProvince,
+    potencia_kw: receiptPower,
+    nombre_receptor: receiverName,
+    dni_receptor: dni,
+    ruc_receptor: ruc,
+    telefono_receptor: receiverPhone,
+    correo_receptor: receiverEmail,
+    direccion_instalacion: clientAddress,
+    distrito_instalacion: receiptDistrict,
+    provincia_instalacion: receiptProvince,
+    zona_cliente: zone,
+    marca_vehiculo: vehicleBrand,
+    modelo_vehiculo: vehicleModel,
+    notas_recibo: `tipo_vehiculo=${vehicleType}`,
+    estado_perfil: 'ready_for_schedule',
+  };
+  await engine.patchProfile(conversation.id_conversacion, profilePatch);
+  try {
+    await sb.update('usuarios', `id_usuario=eq.${encodeURIComponent(conversation.id_usuario)}`, {
+      nombre_visible: receiverName,
+      nombre_usuario: receiverName,
+      correo_electronico: receiverEmail || null,
+      telefono_principal: receiverPhone,
+    });
+  } catch (error) {
+    const message = String(error?.message || '');
+    if (!message.includes('usuarios_correo_key')) throw error;
+    await sb.update('usuarios', `id_usuario=eq.${encodeURIComponent(conversation.id_usuario)}`, {
+      nombre_visible: receiverName,
+      nombre_usuario: receiverName,
+      telefono_principal: receiverPhone,
+    });
+  }
+
+  const currentProfile = { ...profile, ...profilePatch, id_perfil: profile.id_perfil };
+  const appointment = await engine.createOrUpdateAppointment(conversation, currentProfile, {
+    codigo_cita: engine.ticketFor(date, conversation.id_conversacion),
+    fecha_cita: date,
+    hora_inicio: chosen.time,
+    hora_fin: chosen.endTime,
+    fecha_hora_inicio: `${date}T${chosen.time}-05:00`,
+    fecha_hora_fin: `${date}T${chosen.endTime}-05:00`,
+    nombre_cliente: receiverName,
+    telefono_cliente: receiverPhone,
+    dni_cliente: dni || ruc,
+    correo_cliente: receiverEmail,
+    direccion_cita: clientAddress,
+    distrito_cita: receiptDistrict,
+    provincia_cita: receiptProvince,
+    zona_cliente: zone,
+    zona_dia: zone,
+    control_zona: zone,
+    etiqueta_horario: compactScheduleLabel(chosen.time, chosen.endTime),
+    marca_vehiculo: vehicleBrand,
+    modelo_vehiculo: vehicleModel,
+    potencia_kw: receiptPower,
+    fase_electrica: currentProfile.fase_electrica || 'no_definido',
+    validacion_recibo: true,
+    estado_cita: 'confirmada',
+    aprobacion: 'aprobada',
+    confirmada_por_cliente: true,
+    confirmada_en: new Date().toISOString(),
+  });
+
+  try {
+    const microsoftEventId = await engine.ensureCalendarEvent({
+      appointment,
+      profile: currentProfile,
+      dateLabel: day.label,
+      hourLabel: chosen.label,
+      ticket: appointment.codigo_cita,
+    });
+    if (microsoftEventId) {
+      appointment.microsoft_event_id = microsoftEventId;
+      await sb.update('citas', `id_cita=eq.${appointment.id_cita}`, {
+        microsoft_event_id: microsoftEventId,
+        observaciones: calendarSyncNote(calendar?.provider),
+      });
+    }
+  } catch (error) {
+    console.error('advisor manual ensureCalendarEvent failed:', error);
+  }
+
+  const finalAddress = `${clientAddress} ${receiptDistrict} ${receiptProvince}`.trim();
+  try {
+    await engine.scheduleBookingReminder({
+      userId: conversation.id_usuario,
+      ticket: appointment.codigo_cita,
+      dateLabel: day.label,
+      hourLabel: chosen.label,
+      address: finalAddress,
+    });
+  } catch (error) {
+    console.error('advisor manual scheduleBookingReminder failed:', error);
+  }
+
+  let visitPublishResult = null;
+  try {
+    visitPublishResult = await engine.publishTechVisit({
+      conversation,
+      profile: currentProfile,
+      appointment,
+      dateLabel: day.label,
+      hourLabel: chosen.label,
+    });
+  } catch (error) {
+    console.error('advisor manual publishTechVisit failed:', error);
+  }
+
+  await engine.patchProfile(conversation.id_conversacion, { estado_perfil: 'scheduled' });
+  const reply = await engine.reply(
+    conversation,
+    finalConfirmation({ ticket: appointment.codigo_cita, dateLabel: day.label, hourLabel: chosen.label, address: finalAddress, country: countryCode, kind: 'confirmed' }),
+    {
+      paso_actual: 'cita_confirmada',
+      subestado_flujo: 'agenda_confirmada',
+      estado_conversacion: 'closed',
+      accion_ticket_actual: 'confirm',
+      codigo_ticket_solicitado: appointment.codigo_cita,
+      cerrada_en: new Date().toISOString(),
+    },
+  );
+
+  if (phone) {
+    const channel = conversationChannel(conversation, countryCode);
+    await sendReply(phone, reply, channel.phoneNumberId);
+  }
+
+  return {
+    ok: true,
+    created: Boolean(visitPublishResult?.created),
+    visit: visitPublishResult?.visit || null,
+    clickupSync: visitPublishResult?.clickupSync || null,
+    appointment: {
+      ticket: appointment.codigo_cita,
+      dateLabel: day.label,
+      hourLabel: chosen.label,
+      address: finalAddress,
+    },
+    reply,
+    receiverRole,
+  };
+}
+
 function buildWhatsAppChannels() {
   const channels = [];
   channels.push({
@@ -1716,6 +2023,197 @@ const server = http.createServer(async (req, res) => {
       }
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ ok: true, ticket, eventId, reminderCleared, calendarDeleted }));
+      return;
+    }
+
+    if (req.method === 'POST' && url.pathname === '/api/internal/visit-options') {
+      const apiKey = process.env.EVINKA_BOT_VISITS_API_KEY || 'EvinkaBotVisits#2026';
+      const provided = String(req.headers['x-evinka-bot-key'] || '').trim();
+      if (!provided || provided !== apiKey) {
+        res.writeHead(401, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'Bot no autorizado' }));
+        return;
+      }
+
+      const raw = await readRawBody(req);
+      const payload = JSON.parse(raw.toString('utf8') || '{}');
+      const profileLike = {
+        pais_cliente: String(payload.countryCode || '').trim().toUpperCase(),
+        zona_cliente: String(payload.clientZone || '').trim(),
+        direccion_instalacion: String(payload.clientAddress || '').trim(),
+        distrito_instalacion: String(payload.district || '').trim(),
+        provincia_instalacion: String(payload.province || '').trim(),
+      };
+      const phone = String(payload.clientPhone || '').trim();
+      const zone = String(payload.clientZone || '').trim()
+        || resolveProfileZone(profileLike, { phone, country: profileLike.pais_cliente || null })
+        || null;
+      const countryCode = String(payload.countryCode || '').trim().toUpperCase()
+        || inferCountryFromZone(zone || '')
+        || null;
+      const date = String(payload.scheduledDate || '').trim() || agendaDate(payload.scheduledAt);
+
+      if (!zone) {
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({
+          ok: false,
+          available: false,
+          reason: 'zone_unresolved',
+          message: 'No pude identificar la zona para validar disponibilidad con la lógica del bot.',
+          countryCode,
+          days: [],
+          slots: [],
+        }));
+        return;
+      }
+
+      const days = await engine.availableDaysForZone(zone);
+      const slots = date
+        ? await engine.availableHoursForDate(date, { clientZone: zone })
+        : [];
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({
+        ok: true,
+        available: null,
+        reason: null,
+        message: 'Disponibilidad obtenida según la lógica del bot.',
+        zone,
+        countryCode,
+        date: date || '',
+        days: days.map((day) => ({
+          code: day.code,
+          label: day.label,
+          date: day.date,
+          weekday: day.weekday,
+        })),
+        slots: slots.map((slot) => ({
+          code: slot.code,
+          time: slot.time,
+          endTime: slot.endTime,
+          label: slot.label,
+        })),
+      }));
+      return;
+    }
+
+    if (req.method === 'POST' && url.pathname === '/api/internal/visit-availability') {
+      const apiKey = process.env.EVINKA_BOT_VISITS_API_KEY || 'EvinkaBotVisits#2026';
+      const provided = String(req.headers['x-evinka-bot-key'] || '').trim();
+      if (!provided || provided !== apiKey) {
+        res.writeHead(401, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'Bot no autorizado' }));
+        return;
+      }
+
+      const raw = await readRawBody(req);
+      const payload = JSON.parse(raw.toString('utf8') || '{}');
+      const profileLike = {
+        pais_cliente: String(payload.countryCode || '').trim().toUpperCase(),
+        zona_cliente: String(payload.clientZone || '').trim(),
+        direccion_instalacion: String(payload.clientAddress || '').trim(),
+        distrito_instalacion: String(payload.district || '').trim(),
+        provincia_instalacion: String(payload.province || '').trim(),
+      };
+      const phone = String(payload.clientPhone || '').trim();
+      const zone = String(payload.clientZone || '').trim()
+        || resolveProfileZone(profileLike, { phone, country: profileLike.pais_cliente || null })
+        || null;
+      const countryCode = String(payload.countryCode || '').trim().toUpperCase()
+        || inferCountryFromZone(zone || '')
+        || null;
+      const date = String(payload.scheduledDate || '').trim() || agendaDate(payload.scheduledAt);
+      const time = String(payload.exactTime || '').trim() || agendaTime(payload.scheduledAt);
+
+      if (!zone) {
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({
+          ok: false,
+          available: false,
+          reason: 'zone_unresolved',
+          message: 'No pude identificar la zona para validar disponibilidad con la lógica del bot.',
+          countryCode,
+        }));
+        return;
+      }
+
+      if (!date) {
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({
+          ok: false,
+          available: false,
+          reason: 'missing_schedule',
+          message: 'Falta la fecha para validar disponibilidad.',
+          zone,
+          countryCode,
+        }));
+        return;
+      }
+
+      const slots = await engine.availableHoursForDate(date, { clientZone: zone });
+      const normalizedRequestedTime = normalizeAgendaClock(time);
+      if (!normalizedRequestedTime) {
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({
+          ok: true,
+          available: null,
+          reason: null,
+          message: 'Horarios obtenidos según la lógica del bot.',
+          zone,
+          countryCode,
+          date,
+          time: '',
+          slot: null,
+          slots: slots.map((slot) => ({
+            time: slot.time,
+            endTime: slot.endTime,
+            label: slot.label,
+          })),
+        }));
+        return;
+      }
+      const matched = slots.find((slot) => normalizeAgendaClock(slot.time) === normalizedRequestedTime) || null;
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({
+        ok: Boolean(matched),
+        available: Boolean(matched),
+        reason: matched ? null : 'slot_unavailable',
+        message: matched
+          ? 'Horario disponible según la lógica del bot.'
+          : 'Ese horario no está disponible según la lógica de bloqueos del bot.',
+        zone,
+        countryCode,
+        date,
+        time: normalizedRequestedTime,
+        slot: matched,
+        slots: slots.map((slot) => ({
+          time: slot.time,
+          endTime: slot.endTime,
+          label: slot.label,
+        })),
+      }));
+      return;
+    }
+
+    if (req.method === 'POST' && url.pathname === '/api/internal/advisor-book-visit') {
+      const apiKey = process.env.EVINKA_BOT_VISITS_API_KEY || 'EvinkaBotVisits#2026';
+      const provided = String(req.headers['x-evinka-bot-key'] || '').trim();
+      if (!provided || provided !== apiKey) {
+        res.writeHead(401, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'Bot no autorizado' }));
+        return;
+      }
+
+      const raw = await readRawBody(req);
+      const payload = JSON.parse(raw.toString('utf8') || '{}');
+      try {
+        const result = await finalizeAdvisorManualVisit(payload);
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify(result));
+      } catch (error) {
+        console.error('advisor manual booking failed:', error);
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: error?.message || 'No pude finalizar la visita manual.' }));
+      }
       return;
     }
 

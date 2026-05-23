@@ -50,6 +50,7 @@ function bindUI() {
   el('sitePhotos')?.addEventListener('change', onAddSitePhotos);
   el('commercialProfileSelect')?.addEventListener('change', renderQuoteSelects);
   el('adminForm').addEventListener('submit', onSaveAdmin);
+  el('exportCatalogExcelBtn')?.addEventListener('click', onExportCatalogExcel);
   el('countryScopeSelect')?.addEventListener('change', onChangeCountryScope);
   el('userEditorForm')?.addEventListener('submit', onSubmitUserEditor);
   el('closeUserEditorBtn')?.addEventListener('click', closeUserEditorModal);
@@ -159,7 +160,8 @@ function showDashboard() {
     el('quoteForm').visitDate.value = new Date().toISOString().slice(0, 10);
   }
   const defaultTab = TAB_ORDER.find((tab) => canAccessTab(tab)) || 'quote';
-  setTab(defaultTab);
+  const keepTab = state.selectedTab && canAccessTab(state.selectedTab) ? state.selectedTab : defaultTab;
+  setTab(keepTab);
 }
 
 function setTab(name) {
@@ -620,12 +622,52 @@ function refreshScopePanels() {
   const adminNotice = el('adminScopeNotice');
   const quoteButton = document.querySelector('#quoteForm button[type="submit"]');
   const adminButton = document.querySelector('#adminForm button[type="submit"]');
+  const exportButton = el('exportCatalogExcelBtn');
   const global = isGlobalScope();
   if (quoteNotice) quoteNotice.classList.toggle('hidden', !global);
   if (adminNotice) adminNotice.classList.toggle('hidden', !global);
   if (quoteButton) quoteButton.disabled = global;
   if (adminButton) adminButton.disabled = global;
+  if (exportButton) exportButton.disabled = global;
   refreshQuoteCountryCopy();
+}
+
+async function onExportCatalogExcel() {
+  if (isGlobalScope()) {
+    return alert('Primero selecciona Perú o Colombia para exportar el Excel actual.');
+  }
+  const button = el('exportCatalogExcelBtn');
+  const previousLabel = button?.textContent || 'Exportar Excel actual';
+  if (button) {
+    button.disabled = true;
+    button.textContent = 'Exportando...';
+  }
+  try {
+    const res = await fetch(withCountryQuery('/api/catalog/export.xlsx'));
+    if (await handleUnauthorizedResponse(res, 'Tu sesión venció antes de exportar el Excel. Ingresa otra vez.')) return;
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}));
+      throw new Error(data.error || 'No se pudo exportar el Excel actual.');
+    }
+    const blob = await res.blob();
+    const url = window.URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    const disposition = res.headers.get('content-disposition') || '';
+    const match = disposition.match(/filename="?([^";]+)"?/i);
+    link.href = url;
+    link.download = match?.[1] || `EVINKA-catalogo-${activeCountryCode()}.xlsx`;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    window.URL.revokeObjectURL(url);
+  } catch (error) {
+    alert(error?.message || 'No se pudo exportar el Excel actual.');
+  } finally {
+    if (button) {
+      button.disabled = isGlobalScope();
+      button.textContent = previousLabel;
+    }
+  }
 }
 
 async function updateUserAccess(id, action) {
@@ -2158,6 +2200,7 @@ async function fileToPhotoPayload(photo, index) {
     contentType: 'image/jpeg',
     title: String(photo.title || '').trim(),
     comment: String(photo.comment || '').trim(),
+    frame: normalizePhotoFrame(photo.frame),
     dataUrl,
   };
 }
@@ -2181,6 +2224,7 @@ async function onAddSitePhotos(event) {
     name: file.name || 'archivo',
     title: '',
     comment: '',
+    frame: { zoom: 1, focusX: 0.5, focusY: 0.5 },
   }));
   state.quotePhotos.push(...nextPhotos);
   input.value = '';
@@ -2227,6 +2271,33 @@ function renderSelectedPhotosPreview() {
     <div class="photo-preview-card">
       <div class="photo-preview-name">Ilustración ${index + 1}</div>
       <div class="photo-preview-file">${escapeHtml(photo.name || 'archivo')}</div>
+      <div class="photo-crop-shell">
+        <div class="photo-crop-stage">
+          <img
+            src="${escapeHtml(URL.createObjectURL(photo.file))}"
+            alt="Vista previa ${index + 1}"
+            class="photo-crop-image"
+            data-photo-preview-id="${photo.id}"
+            style="--photo-zoom:${normalizePhotoFrame(photo.frame).zoom};--photo-focus-x:${normalizePhotoFrame(photo.frame).focusX};--photo-focus-y:${normalizePhotoFrame(photo.frame).focusY};"
+          />
+          <div class="photo-crop-safe-area"></div>
+        </div>
+        <div class="photo-crop-caption">Marco visible aproximado en el PDF.</div>
+      </div>
+      <div class="photo-crop-controls">
+        <label class="photo-preview-field">
+          <span>Zoom</span>
+          <input type="range" min="1" max="2.6" step="0.01" value="${normalizePhotoFrame(photo.frame).zoom}" data-photo-frame-id="${photo.id}" data-frame-key="zoom" />
+        </label>
+        <label class="photo-preview-field">
+          <span>Centro horizontal</span>
+          <input type="range" min="0" max="1" step="0.01" value="${normalizePhotoFrame(photo.frame).focusX}" data-photo-frame-id="${photo.id}" data-frame-key="focusX" />
+        </label>
+        <label class="photo-preview-field">
+          <span>Centro vertical</span>
+          <input type="range" min="0" max="1" step="0.01" value="${normalizePhotoFrame(photo.frame).focusY}" data-photo-frame-id="${photo.id}" data-frame-key="focusY" />
+        </label>
+      </div>
       <label class="photo-preview-field">
         <span>Título</span>
         <input type="text" data-photo-title-id="${photo.id}" value="${escapeHtml(photo.title || '')}" placeholder="Ej.: Medidor eléctrico" />
@@ -2253,12 +2324,45 @@ function bindPhotoPreviewInputs() {
   document.querySelectorAll('[data-remove-photo-id]').forEach((button) => {
     button.onclick = () => removeQuotePhoto(button.dataset.removePhotoId);
   });
+  document.querySelectorAll('[data-photo-frame-id]').forEach((input) => {
+    input.oninput = (event) => {
+      const target = event.target;
+      updateQuotePhotoFrame(target.dataset.photoFrameId, target.dataset.frameKey, Number(target.value || 0));
+    };
+  });
+}
+
+function normalizePhotoFrame(frame = {}) {
+  return {
+    zoom: clampFrameValue(frame.zoom, 1, 2.6, 1),
+    focusX: clampFrameValue(frame.focusX, 0, 1, 0.5),
+    focusY: clampFrameValue(frame.focusY, 0, 1, 0.5),
+  };
+}
+
+function clampFrameValue(value, min, max, fallback) {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) return fallback;
+  return Math.min(max, Math.max(min, numeric));
 }
 
 function updateQuotePhotoMeta(photoId, patch) {
   const photo = state.quotePhotos.find((item) => item.id === photoId);
   if (!photo) return;
   Object.assign(photo, patch);
+}
+
+function updateQuotePhotoFrame(photoId, key, value) {
+  const photo = state.quotePhotos.find((item) => item.id === photoId);
+  if (!photo) return;
+  const nextFrame = normalizePhotoFrame({ ...(photo.frame || {}), [key]: value });
+  photo.frame = nextFrame;
+  const preview = document.querySelector(`[data-photo-preview-id="${photoId}"]`);
+  if (preview) {
+    preview.style.setProperty('--photo-zoom', nextFrame.zoom);
+    preview.style.setProperty('--photo-focus-x', nextFrame.focusX);
+    preview.style.setProperty('--photo-focus-y', nextFrame.focusY);
+  }
 }
 
 function removeQuotePhoto(photoId) {

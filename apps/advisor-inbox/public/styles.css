@@ -100,6 +100,11 @@ button.ghost { background: transparent; color: var(--muted); border: 1px solid v
 button:disabled { opacity: 0.55; cursor: not-allowed; transform: none; }
 .full-width { width: 100%; }
 .compact-mini { padding: 7px 10px; min-height: auto; font-size: 12px; }
+.field-help {
+  color: var(--muted);
+  font-size: 11.5px;
+  line-height: 1.35;
+}
 
 .app-shell {
   height: 100vh;
@@ -267,6 +272,135 @@ button:disabled { opacity: 0.55; cursor: not-allowed; transform: none; }
   border: 1px solid rgba(255,255,255,0.05);
   box-shadow: var(--shadow);
   overflow: hidden;
+}
+
+.modal-shell {
+  position: fixed;
+  inset: 0;
+  z-index: 1200;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+}
+
+.modal-backdrop {
+  position: absolute;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.56);
+  backdrop-filter: blur(6px);
+}
+
+.modal-card {
+  position: relative;
+  width: min(560px, calc(100vw - 32px));
+  max-height: calc(100vh - 48px);
+  overflow: auto;
+  border-radius: 24px;
+  border: 1px solid var(--line);
+  background: linear-gradient(180deg, rgba(18,27,33,0.98) 0%, rgba(16,22,27,0.98) 100%);
+  box-shadow: var(--shadow);
+  padding: 24px;
+}
+
+.modal-header {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: flex-start;
+  margin-bottom: 18px;
+}
+
+.modal-header h3 {
+  margin: 0;
+  font-size: 22px;
+}
+
+.modal-subtitle {
+  margin: 8px 0 0;
+  color: var(--muted);
+  line-height: 1.45;
+}
+
+.modal-body {
+  gap: 14px;
+}
+
+.visit-summary-card {
+  border: 1px solid var(--line);
+  border-radius: 18px;
+  padding: 14px;
+  background: rgba(255,255,255,0.03);
+}
+
+.visit-summary-name {
+  font-weight: 700;
+  font-size: 16px;
+}
+
+.visit-summary-meta {
+  color: var(--muted);
+  margin-top: 4px;
+}
+
+.visit-summary-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  margin-top: 12px;
+}
+
+.visit-summary-grid.single {
+  grid-template-columns: 1fr;
+}
+
+.visit-summary-label {
+  display: block;
+  font-size: 11px;
+  color: var(--muted);
+  margin-bottom: 4px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.visit-datetime-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.slot-chips {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-top: -2px;
+}
+
+.slot-chip {
+  padding: 9px 12px;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  background: rgba(255,255,255,0.04);
+  color: var(--text);
+}
+
+.slot-chip.active {
+  background: rgba(199,160,106,0.18);
+  border-color: rgba(199,160,106,0.55);
+  color: #f4e4c8;
+}
+
+.modal-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  margin-top: 6px;
+}
+
+@media (max-width: 720px) {
+  .visit-summary-grid,
+  .visit-datetime-grid {
+    grid-template-columns: 1fr;
+  }
 }
 .empty-state {
   margin: auto 24px;

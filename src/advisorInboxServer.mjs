@@ -29,7 +29,7 @@ const SESSION_MAX_AGE_MS = 1000 * 60 * 60 * 12;
 const PORT = Number(process.env.ADVISOR_INBOX_PORT || 14400);
 const PHONE_DISPLAY_COUNTRY = process.env.ADVISOR_INBOX_PHONE_COUNTRY || '51';
 const MEDIA_MAX_BYTES = 14 * 1024 * 1024;
-const COTIZADOR_INTERNAL_URL = process.env.COTIZADOR_INTERNAL_URL || 'http://127.0.0.1:3008';
+const META_WEBHOOK_INTERNAL_URL = process.env.META_WEBHOOK_INTERNAL_URL || 'http://127.0.0.1:8787';
 const COTIZADOR_WEB_URL = process.env.COTIZADOR_WEB_URL || 'https://cotizador.evinka.net';
 const ADVISOR_FORWARD_JENY_PHONE = normalizePhone(process.env.ADVISOR_FORWARD_JENY_PHONE || '+51 939 882 508');
 const ADVISOR_FORWARD_JENY_LABEL = process.env.ADVISOR_FORWARD_JENY_LABEL || 'Jeny';
@@ -808,29 +808,116 @@ function findRelatedQuote(conversation) {
 }
 
 async function createAdvisorVisit(dbConversation, conversation, req, body = {}) {
-  const clientName = String(body.clientName || conversation.customerName || '').trim();
+  const clientName = String(body.receiverName || body.clientName || conversation.customerName || '').trim();
   const clientAddress = String(body.clientAddress || conversation.installationAddress || conversation.receiptAddress || '').trim();
+  const receiptAddress = String(body.receiptAddress || '').trim();
+  const receiptDistrict = String(body.receiptDistrict || '').trim();
+  const receiptProvince = String(body.receiptProvince || '').trim();
+  const receiptPower = String(body.receiptPower || '').trim();
+  const receiverDocument = String(body.receiverDocument || '').trim();
+  const receiverPhone = String(body.receiverPhone || conversation.phone || '').trim();
+  const receiverEmail = String(body.receiverEmail || conversation.email || '').trim();
+  const vehicleBrand = String(body.vehicleBrand || '').trim();
+  const vehicleModel = String(body.vehicleModel || '').trim();
+  const vehicleType = String(body.vehicleType || '').trim();
   if (!clientName || !clientAddress) {
-    throw new Error('Faltan nombre o dirección para crear la visita.');
+    throw new Error('Faltan nombre o dirección exacta de instalación para crear la visita.');
+  }
+  if (!receiptAddress || !receiptDistrict || !receiptProvince || !receiptPower) {
+    throw new Error('Completa los datos manuales del recibo como lo hace el bot de Perú.');
+  }
+  if (!receiverDocument || !receiverPhone || !receiverEmail) {
+    throw new Error('Completa los datos de la persona que recibirá la visita.');
+  }
+  if (!vehicleBrand || !vehicleModel || !vehicleType) {
+    throw new Error('Completa los datos del vehículo antes de crear la visita.');
+  }
+
+  const availabilityResponse = await fetch(`${META_WEBHOOK_INTERNAL_URL.replace(/\/$/, '')}/api/internal/visit-availability`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'x-evinka-bot-key': BOT_VISITS_API_KEY,
+    },
+    body: JSON.stringify({
+      countryCode: String(conversation.countryCode || 'PE').trim().toUpperCase(),
+      clientPhone: String(conversation.phone || '').trim(),
+      clientAddress,
+      district: receiptDistrict || String(conversation.district || '').trim(),
+      province: receiptProvince || String(conversation.province || '').trim(),
+      scheduledAt: String(body.scheduledAt || '').trim(),
+      scheduledDate: String(body.scheduledDate || '').trim(),
+      exactTime: String(body.exactTime || '').trim(),
+    }),
+  });
+  const availability = await availabilityResponse.json().catch(() => ({}));
+  if (!availabilityResponse.ok) {
+    throw new Error('No pude validar la disponibilidad de agenda con la lógica del bot.');
+  }
+  if (!availability?.available) {
+    throw new Error(availability?.message || 'Ese horario no está disponible según la lógica de bloqueos del bot.');
   }
 
   const payload = {
+    conversationId: String(conversation.id || '').trim(),
+    countryCode: String(conversation.countryCode || 'PE').trim().toUpperCase(),
     source: 'advisor_inbox',
     type: 'visita_tecnica',
-    status: String(body.status || 'pendiente').trim() || 'pendiente',
+    status: 'agendada',
     clientName,
-    clientPhone: String(conversation.phone || '').trim(),
-    clientEmail: String(conversation.email || '').trim(),
+    clientPhone: receiverPhone,
+    clientDocument: receiverDocument,
+    clientEmail: receiverEmail,
     clientAddress,
     scheduledAt: String(body.scheduledAt || '').trim(),
+    scheduledDate: String(body.scheduledDate || '').trim(),
+    exactTime: String(body.exactTime || '').trim(),
     timeWindow: String(body.timeWindow || '').trim(),
-    notes: String(body.notes || conversation.internalNote || conversation.handoffReason || '').trim(),
+    receiptAddress,
+    receiptDistrict,
+    receiptProvince,
+    receiptPower,
+    receiverRole: String(body.receiverRole || '').trim() || 'self',
+    receiverName: clientName,
+    receiverDocument,
+    receiverPhone,
+    receiverEmail,
+    vehicleBrand,
+    vehicleModel,
+    vehicleType,
+    notes: [
+      'Captura manual alineada al flujo del chatbot PE:',
+      '',
+      'Datos del recibo',
+      `- Dirección del suministro: ${receiptAddress}`,
+      `- Distrito: ${receiptDistrict}`,
+      `- Provincia: ${receiptProvince}`,
+      `- Potencia contratada: ${receiptPower}`,
+      '',
+      'Persona que recibirá la visita',
+      `- Modalidad: ${String(body.receiverRole || '').trim() === 'other' ? 'Otra persona' : 'Cliente / titular del chat'}`,
+      `- Nombre completo: ${clientName}`,
+      `- Documento: ${receiverDocument}`,
+      `- Teléfono: ${receiverPhone}`,
+      `- Correo: ${receiverEmail}`,
+      '',
+      'Instalación',
+      `- Dirección exacta: ${clientAddress}`,
+      '',
+      'Vehículo',
+      `- Marca: ${vehicleBrand}`,
+      `- Modelo: ${vehicleModel}`,
+      `- Tipo: ${vehicleType}`,
+      ...(String(body.notes || conversation.internalNote || conversation.handoffReason || '').trim()
+        ? ['', 'Notas adicionales', String(body.notes || conversation.internalNote || conversation.handoffReason || '').trim()]
+        : []),
+    ].join('\n').trim(),
     reference: String(conversation.id || '').trim(),
     assignedTechEmail: String(body.assignedTechEmail || '').trim(),
     assignedTechName: String(body.assignedTechName || '').trim(),
   };
 
-  const response = await fetch(`${COTIZADOR_INTERNAL_URL}/api/internal/tech-visits`, {
+  const response = await fetch(`${META_WEBHOOK_INTERNAL_URL.replace(/\/$/, '')}/api/internal/advisor-book-visit`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
@@ -859,6 +946,56 @@ async function createAdvisorVisit(dbConversation, conversation, req, body = {}) 
   });
 
   return { ...data, state };
+}
+
+async function fetchAdvisorVisitAvailability(conversation, body = {}) {
+  const clientAddress = String(body.clientAddress || conversation.installationAddress || conversation.receiptAddress || '').trim();
+  const response = await fetch(`${META_WEBHOOK_INTERNAL_URL.replace(/\/$/, '')}/api/internal/visit-availability`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'x-evinka-bot-key': BOT_VISITS_API_KEY,
+    },
+    body: JSON.stringify({
+      countryCode: String(conversation.countryCode || 'PE').trim().toUpperCase(),
+      clientPhone: String(conversation.phone || '').trim(),
+      clientAddress,
+      district: String(conversation.district || '').trim(),
+      province: String(conversation.province || '').trim(),
+      scheduledAt: String(body.scheduledAt || '').trim(),
+      scheduledDate: String(body.scheduledDate || '').trim(),
+      exactTime: String(body.exactTime || '').trim(),
+    }),
+  });
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    throw new Error(data?.error || 'No pude consultar la disponibilidad del bot.');
+  }
+  return data;
+}
+
+async function fetchAdvisorVisitOptions(conversation, body = {}) {
+  const clientAddress = String(body.clientAddress || conversation.installationAddress || conversation.receiptAddress || '').trim();
+  const response = await fetch(`${META_WEBHOOK_INTERNAL_URL.replace(/\/$/, '')}/api/internal/visit-options`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'x-evinka-bot-key': BOT_VISITS_API_KEY,
+    },
+    body: JSON.stringify({
+      countryCode: String(conversation.countryCode || 'PE').trim().toUpperCase(),
+      clientPhone: String(conversation.phone || '').trim(),
+      clientAddress,
+      district: String(body.district || conversation.district || '').trim(),
+      province: String(body.province || conversation.province || '').trim(),
+      scheduledDate: String(body.scheduledDate || '').trim(),
+    }),
+  });
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    throw new Error(data?.error || 'No pude consultar los días y horarios del bot.');
+  }
+  return data;
 }
 
 function mediaKindFromMime(mimeType = '') {
@@ -1039,6 +1176,9 @@ async function getConversationDetail(conversationId) {
   const relatedVisit = findRelatedVisit({ id: primaryConversation.id_conversacion, email: profile?.correo_receptor || user?.correo_electronico || '' });
   const relatedQuote = findRelatedQuote({ id: primaryConversation.id_conversacion, email: profile?.correo_receptor || user?.correo_electronico || '' });
   const countryCode = inferConversationCountry({ conversation: primaryConversation, user, profile }) || 'PE';
+  const vehicleType = String(profile?.notas_recibo || '').startsWith('tipo_vehiculo=')
+    ? String(profile.notas_recibo || '').replace(/^tipo_vehiculo=/, '').trim()
+    : '';
   return {
     conversation: {
       id: primaryConversation.id_conversacion,
@@ -1072,6 +1212,20 @@ async function getConversationDetail(conversationId) {
       historyMessageCount: messagesSorted.length,
       createdAt: groupedConversations[0]?.creado_en || primaryConversation.creado_en,
       updatedAt: mergedUpdatedAt(groupedConversations, groupStates) || primaryConversation.actualizado_en,
+    },
+    profile: {
+      receiptAddress: profile?.direccion_recibo || '',
+      receiptDistrict: profile?.distrito_recibo || '',
+      receiptProvince: profile?.provincia_recibo || '',
+      receiptPower: profile?.potencia_kw != null ? String(profile.potencia_kw) : '',
+      installationAddress: profile?.direccion_instalacion || '',
+      receiverName: profile?.nombre_receptor || '',
+      receiverDocument: profile?.ruc_receptor || profile?.dni_receptor || '',
+      receiverPhone: profile?.telefono_receptor || userPhoneFromConversation(primaryConversation) || user?.telefono_principal || '',
+      receiverEmail: profile?.correo_receptor || user?.correo_electronico || '',
+      vehicleBrand: profile?.marca_vehiculo || '',
+      vehicleModel: profile?.modelo_vehiculo || '',
+      vehicleType,
     },
     messages: messagesSorted.map((message) => ({
       ...(interactiveSummaryFromPayload(message.payload_crudo || null)),
@@ -1516,6 +1670,38 @@ app.post('/api/inbox/conversations/:id/actions/create-visit', authRequired, asyn
   } catch (error) {
     console.error(error);
     res.status(error.statusCode || 500).json({ error: error.statusCode === 403 ? 'Sin acceso a este caso.' : (error?.message || 'No pude crear la visita técnica.') });
+  }
+});
+
+app.post('/api/inbox/conversations/:id/visit-availability', authRequired, async (req, res) => {
+  try {
+    const rows = await sb.select('conversaciones', `id_conversacion=eq.${req.params.id}&select=*`);
+    const dbConversation = rows[0];
+    if (!dbConversation) return res.status(404).json({ error: 'Conversación no encontrada.' });
+    const detail = await getConversationDetail(req.params.id);
+    if (!detail) return res.status(404).json({ error: 'No pude cargar el detalle del caso.' });
+    ensureConversationAccess(req.user, detail.conversation);
+    const availability = await fetchAdvisorVisitAvailability(detail.conversation, req.body || {});
+    res.json(availability);
+  } catch (error) {
+    console.error(error);
+    res.status(error.statusCode || 500).json({ error: error.statusCode === 403 ? 'Sin acceso a este caso.' : (error?.message || 'No pude consultar la disponibilidad de la visita.') });
+  }
+});
+
+app.post('/api/inbox/conversations/:id/visit-options', authRequired, async (req, res) => {
+  try {
+    const rows = await sb.select('conversaciones', `id_conversacion=eq.${req.params.id}&select=*`);
+    const dbConversation = rows[0];
+    if (!dbConversation) return res.status(404).json({ error: 'Conversación no encontrada.' });
+    const detail = await getConversationDetail(req.params.id);
+    if (!detail) return res.status(404).json({ error: 'No pude cargar el detalle del caso.' });
+    ensureConversationAccess(req.user, detail.conversation);
+    const options = await fetchAdvisorVisitOptions(detail.conversation, req.body || {});
+    res.json(options);
+  } catch (error) {
+    console.error(error);
+    res.status(error.statusCode || 500).json({ error: error.statusCode === 403 ? 'Sin acceso a este caso.' : (error?.message || 'No pude consultar los días y horarios de la visita.') });
   }
 });
 

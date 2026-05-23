@@ -36,6 +36,8 @@ node_modules/
 !apps/mappe-web/public/data/places-lima.json
 !apps/mappe-web/public/data/summary-lima.json
 **/storage/
+**/backups/
+backups/
 deliverables/
 memory/
 *.apk

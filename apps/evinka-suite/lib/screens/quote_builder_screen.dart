@@ -34,7 +34,8 @@ class _QuoteBuilderScreenState extends State<QuoteBuilderScreen> {
   final _clientCtrl = TextEditingController();
   final _emailCtrl = TextEditingController();
   final _documentCtrl = TextEditingController();
-  final _cityCtrl = TextEditingController(text: EvinkaAppConfig.isColombia ? 'Bogotá' : 'Lima');
+  final _cityCtrl = TextEditingController(
+      text: EvinkaAppConfig.isColombia ? 'Bogotá' : 'Lima');
   final _distanceCtrl = TextEditingController(text: '0');
   final _voltageCtrl = TextEditingController(text: '220');
   final _currentCtrl = TextEditingController(text: '32');
@@ -302,11 +303,22 @@ class _QuoteBuilderScreenState extends State<QuoteBuilderScreen> {
   }
 
   Future<void> _markClientAccepted() async {
+    final quote = _lastQuote;
+    if (quote == null) return;
+    final payment = await _promptPaymentCapture(
+      title: 'Registrar abono 50%',
+      clientName: quote.clientName,
+      suggestedAmount: quote.total * 0.5,
+      suggestedObservation: 'Abono 50% confirmado por KAM desde EVINKA Suite.',
+    );
+    if (payment == null) return;
     await _setQuoteStatus(
       'aceptada_cliente',
       successMessage:
           'Cliente aceptó la cotización. Ahora toca agendar la instalación.',
       visitStatus: 'aceptada_cliente',
+      paymentAmount: payment.amount,
+      paymentObservation: payment.observation,
     );
   }
 
@@ -340,6 +352,8 @@ class _QuoteBuilderScreenState extends State<QuoteBuilderScreen> {
     String status, {
     required String successMessage,
     String? visitStatus,
+    double? paymentAmount,
+    String? paymentObservation,
   }) async {
     final quote = _lastQuote;
     if (quote == null) return;
@@ -350,6 +364,10 @@ class _QuoteBuilderScreenState extends State<QuoteBuilderScreen> {
         status: status,
         visitId: widget.initialVisit?.id,
         reference: widget.initialVisit?.reference,
+        paymentAmount: paymentAmount,
+        paymentObservation: paymentObservation,
+        paymentDate:
+            paymentAmount != null ? DateTime.now().toIso8601String() : null,
       );
       if (widget.initialVisit != null && visitStatus != null) {
         await _api.updateTechVisit(
@@ -376,6 +394,99 @@ class _QuoteBuilderScreenState extends State<QuoteBuilderScreen> {
     } finally {
       if (mounted) setState(() => _saving = false);
     }
+  }
+
+  double? _parsePaymentAmount(String raw) {
+    final normalized = raw.trim().replaceAll(',', '.');
+    return double.tryParse(normalized);
+  }
+
+  Future<_PaymentCapture?> _promptPaymentCapture({
+    required String title,
+    required String clientName,
+    required double suggestedAmount,
+    required String suggestedObservation,
+  }) async {
+    final amountCtrl = TextEditingController(
+      text: suggestedAmount.toStringAsFixed(2),
+    );
+    final observationCtrl = TextEditingController(text: suggestedObservation);
+    String? errorText;
+    final result = await showDialog<_PaymentCapture>(
+      context: context,
+      builder: (dialogContext) {
+        return StatefulBuilder(
+          builder: (context, setStateDialog) => AlertDialog(
+            title: Text(title),
+            content: SizedBox(
+              width: 420,
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text('Cliente: $clientName'),
+                  const SizedBox(height: 12),
+                  TextField(
+                    controller: amountCtrl,
+                    keyboardType:
+                        const TextInputType.numberWithOptions(decimal: true),
+                    decoration: const InputDecoration(
+                      labelText: 'Monto recibido',
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  TextField(
+                    controller: observationCtrl,
+                    minLines: 2,
+                    maxLines: 4,
+                    decoration: const InputDecoration(
+                      labelText: 'Observación',
+                    ),
+                  ),
+                  if (errorText != null) ...[
+                    const SizedBox(height: 10),
+                    Text(
+                      errorText!,
+                      style: const TextStyle(color: Colors.redAccent),
+                    ),
+                  ],
+                ],
+              ),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(dialogContext),
+                child: const Text('Cancelar'),
+              ),
+              FilledButton(
+                onPressed: () {
+                  final amount = _parsePaymentAmount(amountCtrl.text);
+                  final observation = observationCtrl.text.trim();
+                  if (amount == null || amount < 0) {
+                    setStateDialog(
+                        () => errorText = 'Ingresa un monto válido.');
+                    return;
+                  }
+                  if (observation.isEmpty) {
+                    setStateDialog(
+                        () => errorText = 'Escribe una observación.');
+                    return;
+                  }
+                  Navigator.pop(
+                    dialogContext,
+                    _PaymentCapture(amount: amount, observation: observation),
+                  );
+                },
+                child: const Text('Guardar'),
+              ),
+            ],
+          ),
+        );
+      },
+    );
+    amountCtrl.dispose();
+    observationCtrl.dispose();
+    return result;
   }
 
   Future<void> _openPdf() async {
@@ -512,7 +623,8 @@ class _QuoteBuilderScreenState extends State<QuoteBuilderScreen> {
                                                 required: true,
                                                 keyboardType:
                                                     TextInputType.emailAddress),
-                                            _field(_documentCtrl, EvinkaAppConfig.documentLabel),
+                                            _field(_documentCtrl,
+                                                EvinkaAppConfig.documentLabel),
                                             _field(_cityCtrl, 'Ciudad'),
                                             _dateField(context),
                                             _dropdown(
@@ -1017,6 +1129,14 @@ class _QuoteBuilderScreenState extends State<QuoteBuilderScreen> {
                         ? visit.timeWindow
                         : _formatVisitDateTime(visit.scheduledAt,
                             fallback: visit.timeWindow)),
+                _metric('Cliente',
+                    visit.clientName.isEmpty ? '-' : visit.clientName),
+                _metric('Teléfono',
+                    visit.clientPhone.isEmpty ? '-' : visit.clientPhone),
+                _metric('Correo',
+                    visit.clientEmail.isEmpty ? '-' : visit.clientEmail),
+                _metric(EvinkaAppConfig.documentLabel,
+                    visit.clientDocument.isEmpty ? '-' : visit.clientDocument),
                 _metric('Dirección',
                     visit.clientAddress.isEmpty ? '-' : visit.clientAddress),
                 _metric('Estado', visit.statusLabel),
@@ -1088,19 +1208,22 @@ class _QuoteBuilderScreenState extends State<QuoteBuilderScreen> {
                       onPressed: _openPdf,
                       icon: const Icon(Icons.picture_as_pdf_outlined),
                       label: const Text('Abrir PDF')),
-                if (widget.user.canEditCommercialFlow && quote.canConfirmForSend)
+                if (widget.user.canEditCommercialFlow &&
+                    quote.canConfirmForSend)
                   FilledButton.tonalIcon(
                     onPressed: _saving ? null : _confirmQuoteOnly,
                     icon: const Icon(Icons.verified_outlined),
                     label: const Text('Confirmar cotización'),
                   ),
-                if (widget.user.canEditCommercialFlow && quote.canMarkClientAccepted)
+                if (widget.user.canEditCommercialFlow &&
+                    quote.canMarkClientAccepted)
                   FilledButton.icon(
                     onPressed: _saving ? null : _markClientAccepted,
                     icon: const Icon(Icons.thumb_up_alt_outlined),
                     label: const Text('Abono 50%'),
                   ),
-                if (widget.user.canEditCommercialFlow && quote.canRequestRecotizar)
+                if (widget.user.canEditCommercialFlow &&
+                    quote.canRequestRecotizar)
                   OutlinedButton.icon(
                     onPressed: _saving ? null : _requestRecotizar,
                     icon: const Icon(Icons.refresh_outlined),
@@ -1120,7 +1243,8 @@ class _QuoteBuilderScreenState extends State<QuoteBuilderScreen> {
                     label: Text(
                         'Orden: ${quote.installationOrderId.isNotEmpty ? quote.installationOrderId : _acceptedOrderId}'),
                   ),
-                if (widget.user.canEditCommercialFlow && quote.canScheduleInstallation)
+                if (widget.user.canEditCommercialFlow &&
+                    quote.canScheduleInstallation)
                   Text(
                     'Abono inicial del 50% confirmado. Agenda la cita desde el detalle de visita.',
                     style: TextStyle(color: _mutedText),
@@ -1292,4 +1416,11 @@ class _QuoteBuilderScreenState extends State<QuoteBuilderScreen> {
       return quote.pdfFilename.replaceAll('.pdf', '');
     return quote.id;
   }
+}
+
+class _PaymentCapture {
+  const _PaymentCapture({required this.amount, required this.observation});
+
+  final double amount;
+  final String observation;
 }

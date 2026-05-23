@@ -168,7 +168,8 @@ class _AdvisorInboxScreenState extends State<AdvisorInboxScreen> {
                   color: panelColor,
                   borderRadius: BorderRadius.circular(24),
                   border: Border.all(
-                    color: Theme.of(context).dividerColor.withValues(alpha: 0.8),
+                    color:
+                        Theme.of(context).dividerColor.withValues(alpha: 0.8),
                   ),
                   boxShadow: const [
                     BoxShadow(
@@ -256,7 +257,8 @@ class _AdvisorInboxScreenState extends State<AdvisorInboxScreen> {
               ),
             ),
             if (_loading) const LinearProgressIndicator(minHeight: 2),
-            if (_refreshing && !_loading) const LinearProgressIndicator(minHeight: 2),
+            if (_refreshing && !_loading)
+              const LinearProgressIndicator(minHeight: 2),
             if (_error != null)
               Padding(
                 padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
@@ -267,7 +269,8 @@ class _AdvisorInboxScreenState extends State<AdvisorInboxScreen> {
                     padding: const EdgeInsets.all(12),
                     child: Row(
                       children: [
-                        const Icon(Icons.error_outline_rounded, color: Colors.red),
+                        const Icon(Icons.error_outline_rounded,
+                            color: Colors.red),
                         const SizedBox(width: 10),
                         Expanded(child: Text(_error!)),
                       ],
@@ -287,7 +290,8 @@ class _AdvisorInboxScreenState extends State<AdvisorInboxScreen> {
                                 SizedBox(height: 120),
                                 Center(
                                   child: Padding(
-                                    padding: EdgeInsets.symmetric(horizontal: 28),
+                                    padding:
+                                        EdgeInsets.symmetric(horizontal: 28),
                                     child: Text(
                                       'No hay conversaciones para este filtro.',
                                       textAlign: TextAlign.center,
@@ -298,13 +302,16 @@ class _AdvisorInboxScreenState extends State<AdvisorInboxScreen> {
                             )
                           : ListView.separated(
                               physics: const AlwaysScrollableScrollPhysics(),
-                              padding: const EdgeInsets.fromLTRB(16, 12, 16, 24),
+                              padding:
+                                  const EdgeInsets.fromLTRB(16, 12, 16, 24),
                               itemCount: filtered.length,
-                              separatorBuilder: (_, __) => const SizedBox(height: 10),
+                              separatorBuilder: (_, __) =>
+                                  const SizedBox(height: 10),
                               itemBuilder: (context, index) {
                                 final item = filtered[index];
                                 final priority = _priorityOf(item);
-                                final wait = _waitLabel(item.lastIncomingAt ?? item.lastMessageAt);
+                                final wait = _waitLabel(
+                                    item.lastIncomingAt ?? item.lastMessageAt);
                                 final subtitle = item.internalNote.isNotEmpty
                                     ? item.internalNote
                                     : item.lastMessageText.isNotEmpty
@@ -325,11 +332,13 @@ class _AdvisorInboxScreenState extends State<AdvisorInboxScreen> {
                                       ),
                                     ),
                                     child: Column(
-                                      crossAxisAlignment: CrossAxisAlignment.start,
+                                      crossAxisAlignment:
+                                          CrossAxisAlignment.start,
                                       children: [
                                         Row(
                                           children: [
-                                            _AvatarBadge(label: item.customerName),
+                                            _AvatarBadge(
+                                                label: item.customerName),
                                             const SizedBox(width: 12),
                                             Expanded(
                                               child: Column(
@@ -339,7 +348,8 @@ class _AdvisorInboxScreenState extends State<AdvisorInboxScreen> {
                                                   Text(
                                                     item.customerName,
                                                     maxLines: 1,
-                                                    overflow: TextOverflow.ellipsis,
+                                                    overflow:
+                                                        TextOverflow.ellipsis,
                                                     style: Theme.of(context)
                                                         .textTheme
                                                         .titleSmall
@@ -366,10 +376,11 @@ class _AdvisorInboxScreenState extends State<AdvisorInboxScreen> {
                                               children: [
                                                 _Pill(
                                                   text: wait,
-                                                  background: _waitToneColor(context, item)
+                                                  background: _waitToneColor(
+                                                          context, item)
                                                       .withValues(alpha: 0.12),
-                                                  foreground:
-                                                      _waitToneColor(context, item),
+                                                  foreground: _waitToneColor(
+                                                      context, item),
                                                 ),
                                                 if (item.unreadCount > 0) ...[
                                                   const SizedBox(height: 6),
@@ -380,7 +391,8 @@ class _AdvisorInboxScreenState extends State<AdvisorInboxScreen> {
                                                             .colorScheme
                                                             .primary,
                                                     child: Text(
-                                                      item.unreadCount.toString(),
+                                                      item.unreadCount
+                                                          .toString(),
                                                       style: TextStyle(
                                                         fontSize: 11,
                                                         fontWeight:
@@ -403,19 +415,22 @@ class _AdvisorInboxScreenState extends State<AdvisorInboxScreen> {
                                           children: [
                                             _Pill(
                                               text: _statusLabel(item.status),
-                                              background: _statusColor(context, item.status)
+                                              background: _statusColor(
+                                                      context, item.status)
                                                   .withValues(alpha: 0.12),
-                                              foreground:
-                                                  _statusColor(context, item.status),
+                                              foreground: _statusColor(
+                                                  context, item.status),
                                             ),
                                             _Pill(
                                               text: _priorityLabel(priority),
-                                              background: _priorityColor(context, priority)
+                                              background: _priorityColor(
+                                                      context, priority)
                                                   .withValues(alpha: 0.12),
                                               foreground: _priorityColor(
                                                   context, priority),
                                             ),
-                                            if ((item.assignedToLabel ?? '').isNotEmpty)
+                                            if ((item.assignedToLabel ?? '')
+                                                .isNotEmpty)
                                               _Pill(
                                                 text: item.assignedToLabel!,
                                                 background: Theme.of(context)
@@ -440,7 +455,8 @@ class _AdvisorInboxScreenState extends State<AdvisorInboxScreen> {
                                                 .bodyMedium,
                                           ),
                                         ],
-                                        if (item.nextAction.isNotEmpty || item.handoffReason.isNotEmpty) ...[
+                                        if (item.nextAction.isNotEmpty ||
+                                            item.handoffReason.isNotEmpty) ...[
                                           const SizedBox(height: 10),
                                           Text(
                                             item.nextAction.isNotEmpty
@@ -478,7 +494,8 @@ class _AdvisorConversationScreen extends StatefulWidget {
       _AdvisorConversationScreenState();
 }
 
-class _AdvisorConversationScreenState extends State<_AdvisorConversationScreen> {
+class _AdvisorConversationScreenState
+    extends State<_AdvisorConversationScreen> {
   final _service = AdvisorInboxService.instance;
   final _messageController = TextEditingController();
   final _noteController = TextEditingController();
@@ -547,14 +564,16 @@ class _AdvisorConversationScreenState extends State<_AdvisorConversationScreen> 
     });
   }
 
-  Future<void> _loadDetail({bool silent = false, bool forceBottom = false}) async {
+  Future<void> _loadDetail(
+      {bool silent = false, bool forceBottom = false}) async {
     if (!silent && mounted) {
       setState(() {
         _loading = true;
         _error = null;
       });
     }
-    final stickToBottom = forceBottom || _detail == null || _shouldStickToBottom();
+    final stickToBottom =
+        forceBottom || _detail == null || _shouldStickToBottom();
     try {
       final detail = await _service.getConversationDetail(widget.summary.id);
       if (!mounted) return;
@@ -590,7 +609,8 @@ class _AdvisorConversationScreenState extends State<_AdvisorConversationScreen> 
     } catch (error) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(error.toString().replaceFirst('Exception: ', ''))),
+        SnackBar(
+            content: Text(error.toString().replaceFirst('Exception: ', ''))),
       );
     } finally {
       if (mounted) setState(() => _sending = false);
@@ -618,7 +638,8 @@ class _AdvisorConversationScreenState extends State<_AdvisorConversationScreen> 
     } catch (error) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(error.toString().replaceFirst('Exception: ', ''))),
+        SnackBar(
+            content: Text(error.toString().replaceFirst('Exception: ', ''))),
       );
     } finally {
       if (mounted) setState(() => _sending = false);
@@ -657,7 +678,8 @@ class _AdvisorConversationScreenState extends State<_AdvisorConversationScreen> 
     } catch (error) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(error.toString().replaceFirst('Exception: ', ''))),
+        SnackBar(
+            content: Text(error.toString().replaceFirst('Exception: ', ''))),
       );
     }
   }
@@ -681,7 +703,8 @@ class _AdvisorConversationScreenState extends State<_AdvisorConversationScreen> 
     } catch (error) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(error.toString().replaceFirst('Exception: ', ''))),
+        SnackBar(
+            content: Text(error.toString().replaceFirst('Exception: ', ''))),
       );
     } finally {
       if (mounted) setState(() => _savingMeta = false);
@@ -701,7 +724,8 @@ class _AdvisorConversationScreenState extends State<_AdvisorConversationScreen> 
     } catch (error) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(error.toString().replaceFirst('Exception: ', ''))),
+        SnackBar(
+            content: Text(error.toString().replaceFirst('Exception: ', ''))),
       );
     }
   }
@@ -709,75 +733,21 @@ class _AdvisorConversationScreenState extends State<_AdvisorConversationScreen> 
   Future<void> _createVisit() async {
     final detail = _detail;
     if (detail == null) return;
-    final addressController = TextEditingController(
-      text: detail.conversation.installationAddress.isNotEmpty
-          ? detail.conversation.installationAddress
-          : detail.conversation.receiptAddress,
-    );
-    final timeWindowController = TextEditingController();
     final result = await showDialog<bool>(
           context: context,
-          builder: (context) => AlertDialog(
-            title: const Text('Crear visita'),
-            content: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                TextField(
-                  controller: addressController,
-                  decoration: const InputDecoration(labelText: 'Dirección'),
-                  maxLines: 2,
-                ),
-                const SizedBox(height: 12),
-                TextField(
-                  controller: timeWindowController,
-                  decoration: const InputDecoration(
-                    labelText: 'Rango horario (opcional)',
-                  ),
-                ),
-              ],
-            ),
-            actions: [
-              TextButton(
-                onPressed: () => Navigator.pop(context, false),
-                child: const Text('Cancelar'),
-              ),
-              FilledButton(
-                onPressed: () => Navigator.pop(context, true),
-                child: const Text('Crear'),
-              ),
-            ],
+          builder: (context) => _CreateAdvisorVisitDialog(
+            service: _service,
+            detail: detail,
+            advisorNote: _noteController.text.trim(),
           ),
         ) ??
         false;
     if (!result) return;
-    if (addressController.text.trim().isEmpty) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Necesito una dirección para crear la visita.')),
-      );
-      return;
-    }
-    try {
-      await _service.createVisit(
-        detail.conversation.id,
-        clientAddress: addressController.text.trim(),
-        timeWindow: timeWindowController.text.trim(),
-        notes: [
-          detail.conversation.handoffReason,
-          _noteController.text.trim(),
-        ].where((item) => item.isNotEmpty).join(' | '),
-      );
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Visita creada o actualizada.')),
-      );
-      await _loadDetail();
-    } catch (error) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(error.toString().replaceFirst('Exception: ', ''))),
-      );
-    }
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('Visita creada o actualizada.')),
+    );
+    await _loadDetail();
   }
 
   Future<void> _forwardToJeny(AdvisorInboxMessage message) async {
@@ -793,7 +763,8 @@ class _AdvisorConversationScreenState extends State<_AdvisorConversationScreen> 
     } catch (error) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(error.toString().replaceFirst('Exception: ', ''))),
+        SnackBar(
+            content: Text(error.toString().replaceFirst('Exception: ', ''))),
       );
     }
   }
@@ -922,16 +893,18 @@ class _AdvisorConversationScreenState extends State<_AdvisorConversationScreen> 
                 children: [
                   _Pill(
                     text: _statusLabel(conversation.status),
-                    background:
-                        _statusColor(context, conversation.status).withValues(alpha: 0.12),
+                    background: _statusColor(context, conversation.status)
+                        .withValues(alpha: 0.12),
                     foreground: _statusColor(context, conversation.status),
                   ),
                   if (conversation.assignedToLabel?.isNotEmpty == true)
                     _Pill(
                       text: conversation.assignedToLabel!,
-                      background: Theme.of(context).dividerColor.withValues(alpha: 0.2),
+                      background:
+                          Theme.of(context).dividerColor.withValues(alpha: 0.2),
                       foreground:
-                          Theme.of(context).textTheme.bodyMedium?.color ?? Colors.white,
+                          Theme.of(context).textTheme.bodyMedium?.color ??
+                              Colors.white,
                     ),
                 ],
               ),
@@ -970,7 +943,8 @@ class _AdvisorConversationScreenState extends State<_AdvisorConversationScreen> 
                 maxLines: 4,
                 decoration: const InputDecoration(
                   labelText: 'Nota interna',
-                  hintText: 'Qué pasó, qué falta y qué no debemos perder de vista',
+                  hintText:
+                      'Qué pasó, qué falta y qué no debemos perder de vista',
                 ),
               ),
               const SizedBox(height: 12),
@@ -978,11 +952,18 @@ class _AdvisorConversationScreenState extends State<_AdvisorConversationScreen> 
                 initialValue: _nextAction.isEmpty ? null : _nextAction,
                 decoration: const InputDecoration(labelText: 'Próximo paso'),
                 items: const [
-                  DropdownMenuItem(value: 'contactar_cliente', child: Text('Contactar cliente')),
-                  DropdownMenuItem(value: 'pedir_datos', child: Text('Pedir datos')),
-                  DropdownMenuItem(value: 'agendar_visita', child: Text('Agendar visita')),
-                  DropdownMenuItem(value: 'enviar_cotizacion', child: Text('Enviar cotización')),
-                  DropdownMenuItem(value: 'seguimiento', child: Text('Seguimiento')),
+                  DropdownMenuItem(
+                      value: 'contactar_cliente',
+                      child: Text('Contactar cliente')),
+                  DropdownMenuItem(
+                      value: 'pedir_datos', child: Text('Pedir datos')),
+                  DropdownMenuItem(
+                      value: 'agendar_visita', child: Text('Agendar visita')),
+                  DropdownMenuItem(
+                      value: 'enviar_cotizacion',
+                      child: Text('Enviar cotización')),
+                  DropdownMenuItem(
+                      value: 'seguimiento', child: Text('Seguimiento')),
                   DropdownMenuItem(value: 'cerrar', child: Text('Cerrar')),
                 ],
                 onChanged: (value) => setState(() => _nextAction = value ?? ''),
@@ -1018,7 +999,8 @@ class _AdvisorConversationScreenState extends State<_AdvisorConversationScreen> 
                   (file) => ListTile(
                     contentPadding: EdgeInsets.zero,
                     leading: const Icon(Icons.insert_drive_file_outlined),
-                    title: Text(file.fileName.isNotEmpty ? file.fileName : 'Archivo'),
+                    title: Text(
+                        file.fileName.isNotEmpty ? file.fileName : 'Archivo'),
                     subtitle: Text(_formatDate(file.createdAt)),
                   ),
                 ),
@@ -1037,7 +1019,9 @@ class _AdvisorConversationScreenState extends State<_AdvisorConversationScreen> 
                   (artifact) => ListTile(
                     contentPadding: EdgeInsets.zero,
                     leading: const Icon(Icons.inventory_2_outlined),
-                    title: Text(artifact.title.isNotEmpty ? artifact.title : artifact.artifactType),
+                    title: Text(artifact.title.isNotEmpty
+                        ? artifact.title
+                        : artifact.artifactType),
                     subtitle: Text(artifact.summary.isNotEmpty
                         ? artifact.summary
                         : _formatDate(artifact.createdAt)),
@@ -1185,7 +1169,8 @@ class _AdvisorConversationScreenState extends State<_AdvisorConversationScreen> 
                   padding: const EdgeInsets.all(12),
                   child: Row(
                     children: [
-                      const Icon(Icons.error_outline_rounded, color: Colors.red),
+                      const Icon(Icons.error_outline_rounded,
+                          color: Colors.red),
                       const SizedBox(width: 10),
                       Expanded(child: Text(_error!)),
                     ],
@@ -1202,27 +1187,31 @@ class _AdvisorConversationScreenState extends State<_AdvisorConversationScreen> 
                   children: [
                     _Pill(
                       text: _statusLabel(conversation.status),
-                      background:
-                          _statusColor(context, conversation.status).withValues(alpha: 0.12),
+                      background: _statusColor(context, conversation.status)
+                          .withValues(alpha: 0.12),
                       foreground: _statusColor(context, conversation.status),
                     ),
                     const SizedBox(width: 8),
                     _Pill(
-                      text: _priorityLabel(_priorityOfConversation(conversation)),
+                      text:
+                          _priorityLabel(_priorityOfConversation(conversation)),
                       background: _priorityColor(
                         context,
                         _priorityOfConversation(conversation),
                       ).withValues(alpha: 0.12),
-                      foreground:
-                          _priorityColor(context, _priorityOfConversation(conversation)),
+                      foreground: _priorityColor(
+                          context, _priorityOfConversation(conversation)),
                     ),
                     if (conversation.handoffReason.isNotEmpty) ...[
                       const SizedBox(width: 8),
                       _Pill(
                         text: conversation.handoffReason,
-                        background: Theme.of(context).dividerColor.withValues(alpha: 0.18),
+                        background: Theme.of(context)
+                            .dividerColor
+                            .withValues(alpha: 0.18),
                         foreground:
-                            Theme.of(context).textTheme.bodyMedium?.color ?? Colors.white,
+                            Theme.of(context).textTheme.bodyMedium?.color ??
+                                Colors.white,
                       ),
                     ],
                   ],
@@ -1282,7 +1271,8 @@ class _AdvisorConversationScreenState extends State<_AdvisorConversationScreen> 
               children: [
                 IconButton(
                   tooltip: 'Enviar imagen',
-                  onPressed: detail == null || _sending ? null : _showAttachmentMenu,
+                  onPressed:
+                      detail == null || _sending ? null : _showAttachmentMenu,
                   icon: const Icon(Icons.add_photo_alternate_outlined),
                 ),
                 Expanded(
@@ -1370,7 +1360,8 @@ class _MessageBubble extends StatelessWidget {
                 : 'Contacto compartido',
             style: const TextStyle(fontWeight: FontWeight.w700),
           ),
-          if (message.contactPhone?.isNotEmpty == true) Text(message.contactPhone!),
+          if (message.contactPhone?.isNotEmpty == true)
+            Text(message.contactPhone!),
         ],
       );
     } else if (message.hasMedia && message.isImage) {
@@ -1429,7 +1420,8 @@ class _MessageBubble extends StatelessWidget {
       final text = [
         if (message.source == 'advisor_forward_jeny')
           'Reenviado a ${message.forwardedToLabel ?? 'Jeny'}',
-        if (message.interactiveTitle?.isNotEmpty == true) message.interactiveTitle!,
+        if (message.interactiveTitle?.isNotEmpty == true)
+          message.interactiveTitle!,
         if (message.text.trim().isNotEmpty) message.text.trim(),
       ].join('\n');
       content = Text(text.isEmpty ? 'Mensaje sin texto' : text);
@@ -1512,7 +1504,8 @@ class _AvatarBadge extends StatelessWidget {
   Widget build(BuildContext context) {
     return CircleAvatar(
       radius: radius,
-      backgroundColor: Theme.of(context).colorScheme.primary.withValues(alpha: 0.16),
+      backgroundColor:
+          Theme.of(context).colorScheme.primary.withValues(alpha: 0.16),
       child: Text(
         _initials(label),
         style: TextStyle(
@@ -1573,7 +1566,8 @@ class _MiniStatCard extends StatelessWidget {
       decoration: BoxDecoration(
         color: Theme.of(context).cardColor,
         borderRadius: BorderRadius.circular(18),
-        border: Border.all(color: Theme.of(context).dividerColor.withValues(alpha: 0.8)),
+        border: Border.all(
+            color: Theme.of(context).dividerColor.withValues(alpha: 0.8)),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -1624,7 +1618,11 @@ class _InfoTile extends StatelessWidget {
 }
 
 String _initials(String text) {
-  final parts = text.trim().split(RegExp(r'\s+')).where((item) => item.isNotEmpty).toList();
+  final parts = text
+      .trim()
+      .split(RegExp(r'\s+'))
+      .where((item) => item.isNotEmpty)
+      .toList();
   if (parts.isEmpty) return 'EV';
   return parts.take(2).map((item) => item[0]).join().toUpperCase();
 }
@@ -1716,8 +1714,16 @@ String _priorityOf(AdvisorInboxSummary item) {
   }
   final text = '${item.handoffReason} ${item.lastMessageText}'.toLowerCase();
   final mins = _minutesSince(item.lastIncomingAt ?? item.lastMessageAt);
-  const urgentSignals = ['urgente', 'hoy', 'ahora', 'llamar', 'caído', 'problema'];
-  if (item.status == 'new' && (mins >= 20 || item.unreadCount >= 3)) return 'urgent';
+  const urgentSignals = [
+    'urgente',
+    'hoy',
+    'ahora',
+    'llamar',
+    'caído',
+    'problema'
+  ];
+  if (item.status == 'new' && (mins >= 20 || item.unreadCount >= 3))
+    return 'urgent';
   if (urgentSignals.any(text.contains)) return 'urgent';
   if (item.status == 'new' || mins >= 8 || item.unreadCount > 0) return 'high';
   return 'normal';
@@ -1763,4 +1769,656 @@ Color _waitToneColor(BuildContext context, AdvisorInboxSummary item) {
   if (mins >= threshold * 2) return Colors.red;
   if (mins >= threshold) return Colors.orange;
   return Theme.of(context).colorScheme.primary;
+}
+
+class _CreateAdvisorVisitDialog extends StatefulWidget {
+  const _CreateAdvisorVisitDialog({
+    required this.service,
+    required this.detail,
+    required this.advisorNote,
+  });
+
+  final AdvisorInboxService service;
+  final AdvisorInboxDetail detail;
+  final String advisorNote;
+
+  @override
+  State<_CreateAdvisorVisitDialog> createState() =>
+      _CreateAdvisorVisitDialogState();
+}
+
+class _CreateAdvisorVisitDialogState extends State<_CreateAdvisorVisitDialog> {
+  Timer? _debounce;
+  late final TextEditingController _receiptAddressController;
+  late final TextEditingController _receiptDistrictController;
+  late final TextEditingController _receiptProvinceController;
+  late final TextEditingController _receiptPowerController;
+  late final TextEditingController _receiverNameController;
+  late final TextEditingController _receiverDocumentController;
+  late final TextEditingController _receiverPhoneController;
+  late final TextEditingController _receiverEmailController;
+  late final TextEditingController _addressController;
+  late final TextEditingController _vehicleBrandController;
+  late final TextEditingController _vehicleModelController;
+  late final TextEditingController _notesController;
+
+  String _receiverRole = 'self';
+  String _vehicleType = '';
+  String _zone = '';
+  String _selectedDate = '';
+  String _selectedTime = '';
+  String _selectedWindow = '';
+  bool _loadingDays = false;
+  bool _loadingSlots = false;
+  bool _submitting = false;
+  String _daysHelp =
+      'Completa la dirección exacta para cargar los días disponibles.';
+  String _slotsHelp = 'Primero elige un día disponible del chatbot.';
+  List<AdvisorVisitOptionDay> _days = const [];
+  List<AdvisorVisitOptionSlot> _slots = const [];
+
+  AdvisorInboxConversation get _conversation => widget.detail.conversation;
+  AdvisorInboxProfile get _profile => widget.detail.profile;
+
+  @override
+  void initState() {
+    super.initState();
+    _receiptAddressController = TextEditingController(
+      text: _profile.receiptAddress.isNotEmpty
+          ? _profile.receiptAddress
+          : _conversation.receiptAddress,
+    );
+    _receiptDistrictController = TextEditingController(
+      text: _profile.receiptDistrict.isNotEmpty
+          ? _profile.receiptDistrict
+          : _conversation.district,
+    );
+    _receiptProvinceController = TextEditingController(
+      text: _profile.receiptProvince.isNotEmpty
+          ? _profile.receiptProvince
+          : _conversation.province,
+    );
+    _receiptPowerController =
+        TextEditingController(text: _profile.receiptPower);
+    _receiverNameController = TextEditingController(
+      text: _profile.receiverName.isNotEmpty
+          ? _profile.receiverName
+          : _conversation.customerName,
+    );
+    _receiverDocumentController =
+        TextEditingController(text: _profile.receiverDocument);
+    _receiverPhoneController = TextEditingController(
+      text: _profile.receiverPhone.isNotEmpty
+          ? _profile.receiverPhone
+          : (_conversation.phone.isNotEmpty
+              ? _conversation.phone
+              : _conversation.phonePretty),
+    );
+    _receiverEmailController = TextEditingController(
+      text: _profile.receiverEmail.isNotEmpty
+          ? _profile.receiverEmail
+          : _conversation.email,
+    );
+    _addressController = TextEditingController(
+      text: _profile.installationAddress.isNotEmpty
+          ? _profile.installationAddress
+          : (_conversation.installationAddress.isNotEmpty
+              ? _conversation.installationAddress
+              : _conversation.receiptAddress),
+    );
+    _vehicleBrandController =
+        TextEditingController(text: _profile.vehicleBrand);
+    _vehicleModelController =
+        TextEditingController(text: _profile.vehicleModel);
+    _notesController = TextEditingController(
+      text: [
+        _conversation.handoffReason,
+        widget.advisorNote,
+      ].where((item) => item.trim().isNotEmpty).join(' | '),
+    );
+    _vehicleType = _profile.vehicleType;
+
+    for (final controller in [
+      _addressController,
+      _receiptDistrictController,
+      _receiptProvinceController,
+    ]) {
+      controller.addListener(_scheduleVisitOptionsReload);
+    }
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _loadDays();
+    });
+  }
+
+  @override
+  void dispose() {
+    _debounce?.cancel();
+    _receiptAddressController.dispose();
+    _receiptDistrictController.dispose();
+    _receiptProvinceController.dispose();
+    _receiptPowerController.dispose();
+    _receiverNameController.dispose();
+    _receiverDocumentController.dispose();
+    _receiverPhoneController.dispose();
+    _receiverEmailController.dispose();
+    _addressController.dispose();
+    _vehicleBrandController.dispose();
+    _vehicleModelController.dispose();
+    _notesController.dispose();
+    super.dispose();
+  }
+
+  void _scheduleVisitOptionsReload() {
+    _debounce?.cancel();
+    _debounce = Timer(const Duration(milliseconds: 500), () {
+      if (mounted) _loadDays(preserveDate: true);
+    });
+  }
+
+  void _applyReceiverPreset() {
+    if (_receiverRole != 'self') return;
+    _receiverNameController.text = _profile.receiverName.isNotEmpty
+        ? _profile.receiverName
+        : _conversation.customerName;
+    _receiverDocumentController.text = _profile.receiverDocument;
+    _receiverPhoneController.text = _profile.receiverPhone.isNotEmpty
+        ? _profile.receiverPhone
+        : (_conversation.phone.isNotEmpty
+            ? _conversation.phone
+            : _conversation.phonePretty);
+    _receiverEmailController.text = _profile.receiverEmail.isNotEmpty
+        ? _profile.receiverEmail
+        : _conversation.email;
+  }
+
+  Future<void> _loadDays({bool preserveDate = false}) async {
+    final clientAddress = _addressController.text.trim();
+    if (clientAddress.isEmpty) {
+      if (!mounted) return;
+      setState(() {
+        _days = const [];
+        _slots = const [];
+        _selectedDate = '';
+        _selectedTime = '';
+        _selectedWindow = '';
+        _daysHelp =
+            'Completa la dirección exacta para cargar los días disponibles.';
+        _slotsHelp = 'Primero elige un día disponible del chatbot.';
+      });
+      return;
+    }
+
+    final previousDate = preserveDate ? _selectedDate : '';
+    setState(() => _loadingDays = true);
+    try {
+      final options = await widget.service.getVisitOptions(
+        _conversation.id,
+        clientAddress: clientAddress,
+        district: _receiptDistrictController.text.trim(),
+        province: _receiptProvinceController.text.trim(),
+      );
+      if (!mounted) return;
+      setState(() {
+        _zone = options.zone;
+        _days = options.days;
+        _daysHelp = options.days.isEmpty
+            ? 'No encontré días disponibles con la lógica real del chatbot.'
+            : options.zone.isNotEmpty
+                ? 'Zona detectada: ${options.zone}'
+                : 'Días cargados desde la lógica real del chatbot.';
+      });
+
+      final stillAvailable = previousDate.isNotEmpty &&
+          options.days.any((item) => item.date == previousDate);
+      if (stillAvailable) {
+        _selectedDate = previousDate;
+        await _loadSlots(previousDate, preserveSelection: true);
+      } else {
+        setState(() {
+          _selectedDate = '';
+          _selectedTime = '';
+          _selectedWindow = '';
+          _slots = const [];
+          _slotsHelp = 'Primero elige un día disponible del chatbot.';
+        });
+      }
+    } catch (error) {
+      if (!mounted) return;
+      setState(() {
+        _days = const [];
+        _slots = const [];
+        _selectedDate = '';
+        _selectedTime = '';
+        _selectedWindow = '';
+        _daysHelp = error.toString().replaceFirst('Exception: ', '');
+        _slotsHelp = 'No pude consultar los horarios del chatbot.';
+      });
+    } finally {
+      if (mounted) setState(() => _loadingDays = false);
+    }
+  }
+
+  Future<void> _loadSlots(String date, {bool preserveSelection = false}) async {
+    if (date.trim().isEmpty) return;
+    final selectedWindow = preserveSelection ? _selectedWindow : '';
+    setState(() => _loadingSlots = true);
+    try {
+      final options = await widget.service.getVisitOptions(
+        _conversation.id,
+        clientAddress: _addressController.text.trim(),
+        district: _receiptDistrictController.text.trim(),
+        province: _receiptProvinceController.text.trim(),
+        scheduledDate: date,
+      );
+      if (!mounted) return;
+      final slots = options.slots;
+      final matched = selectedWindow.isNotEmpty
+          ? slots.where((item) => item.label == selectedWindow).toList()
+          : const <AdvisorVisitOptionSlot>[];
+      setState(() {
+        _selectedDate = date;
+        _slots = slots;
+        _slotsHelp = slots.isEmpty
+            ? 'No encontré horarios libres para ese día.'
+            : 'Horarios cargados desde la lógica real del chatbot.';
+        if (matched.isNotEmpty) {
+          _selectedWindow = matched.first.label;
+          _selectedTime = matched.first.time;
+        } else {
+          _selectedWindow = '';
+          _selectedTime = '';
+        }
+      });
+    } catch (error) {
+      if (!mounted) return;
+      setState(() {
+        _slots = const [];
+        _selectedWindow = '';
+        _selectedTime = '';
+        _slotsHelp = error.toString().replaceFirst('Exception: ', '');
+      });
+    } finally {
+      if (mounted) setState(() => _loadingSlots = false);
+    }
+  }
+
+  Future<void> _submit() async {
+    final clientAddress = _addressController.text.trim();
+    if (clientAddress.isEmpty) {
+      _showError('Completa la dirección exacta de instalación.');
+      return;
+    }
+    if (_receiptAddressController.text.trim().isEmpty ||
+        _receiptDistrictController.text.trim().isEmpty ||
+        _receiptProvinceController.text.trim().isEmpty ||
+        _receiptPowerController.text.trim().isEmpty) {
+      _showError(
+          'Completa los datos manuales del recibo como lo hace el bot de Perú.');
+      return;
+    }
+    if (_receiverNameController.text.trim().isEmpty ||
+        _receiverDocumentController.text.trim().isEmpty ||
+        _receiverPhoneController.text.trim().isEmpty ||
+        _receiverEmailController.text.trim().isEmpty) {
+      _showError('Completa los datos de la persona que recibirá la visita.');
+      return;
+    }
+    if (_vehicleBrandController.text.trim().isEmpty ||
+        _vehicleModelController.text.trim().isEmpty ||
+        _vehicleType.trim().isEmpty) {
+      _showError('Completa los datos del vehículo antes de crear la visita.');
+      return;
+    }
+    if (_selectedDate.isEmpty ||
+        _selectedTime.isEmpty ||
+        _selectedWindow.isEmpty) {
+      _showError('Selecciona un día y un horario real del chatbot.');
+      return;
+    }
+
+    setState(() => _submitting = true);
+    try {
+      final parts = _selectedTime.split(':');
+      final hour = int.tryParse(parts.first) ?? 0;
+      final minute = int.tryParse(parts.length > 1 ? parts[1] : '0') ?? 0;
+      final date = DateTime.parse(_selectedDate);
+      final scheduledAt = DateTime(
+        date.year,
+        date.month,
+        date.day,
+        hour,
+        minute,
+      );
+      await widget.service.createVisit(
+        _conversation.id,
+        clientAddress: clientAddress,
+        receiptAddress: _receiptAddressController.text.trim(),
+        receiptDistrict: _receiptDistrictController.text.trim(),
+        receiptProvince: _receiptProvinceController.text.trim(),
+        receiptPower: _receiptPowerController.text.trim(),
+        receiverRole: _receiverRole,
+        receiverName: _receiverNameController.text.trim(),
+        receiverDocument: _receiverDocumentController.text.trim(),
+        receiverPhone: _receiverPhoneController.text.trim(),
+        receiverEmail: _receiverEmailController.text.trim(),
+        vehicleBrand: _vehicleBrandController.text.trim(),
+        vehicleModel: _vehicleModelController.text.trim(),
+        vehicleType: _vehicleType.trim(),
+        scheduledAt: scheduledAt.toUtc().toIso8601String(),
+        scheduledDate: _selectedDate,
+        exactTime: _selectedTime,
+        timeWindow: _selectedWindow,
+        notes: _notesController.text.trim(),
+      );
+      if (!mounted) return;
+      Navigator.of(context).pop(true);
+    } catch (error) {
+      _showError(error.toString().replaceFirst('Exception: ', ''));
+    } finally {
+      if (mounted) setState(() => _submitting = false);
+    }
+  }
+
+  void _showError(String message) {
+    ScaffoldMessenger.of(context)
+        .showSnackBar(SnackBar(content: Text(message)));
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final vehicleTypes = const [
+      '100% eléctrico',
+      'Híbrido enchufable',
+      'No estoy seguro',
+    ];
+    return AlertDialog(
+      titlePadding: const EdgeInsets.fromLTRB(24, 20, 24, 8),
+      contentPadding: const EdgeInsets.fromLTRB(24, 0, 24, 12),
+      title: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text('Coordinar visita técnica'),
+          const SizedBox(height: 6),
+          Text(
+            'Fase actual: alineación móvil del flujo PE. Objetivo: crear la visita exactamente como el bot. Falta: escoger un día y horario reales y completar los mismos campos que pide el chatbot.',
+            style: theme.textTheme.bodySmall,
+          ),
+        ],
+      ),
+      content: SizedBox(
+        width: 720,
+        child: SingleChildScrollView(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Container(
+                width: double.infinity,
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: theme.colorScheme.surfaceContainerHighest
+                      .withValues(alpha: 0.35),
+                  borderRadius: BorderRadius.circular(14),
+                  border: Border.all(
+                    color:
+                        theme.colorScheme.outlineVariant.withValues(alpha: 0.5),
+                  ),
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      _conversation.customerName.isNotEmpty
+                          ? _conversation.customerName
+                          : 'Cliente sin nombre',
+                      style: const TextStyle(fontWeight: FontWeight.w700),
+                    ),
+                    if (_conversation.phonePretty.isNotEmpty) ...[
+                      const SizedBox(height: 4),
+                      Text(_conversation.phonePretty),
+                    ],
+                    if (_conversation.ticketContext.isNotEmpty) ...[
+                      const SizedBox(height: 4),
+                      Text('Ticket: ${_conversation.ticketContext}'),
+                    ],
+                    if (_zone.isNotEmpty) ...[
+                      const SizedBox(height: 4),
+                      Text('Zona detectada: $_zone'),
+                    ],
+                  ],
+                ),
+              ),
+              const SizedBox(height: 16),
+              Text('Datos del recibo', style: theme.textTheme.titleMedium),
+              const SizedBox(height: 10),
+              TextField(
+                controller: _receiptAddressController,
+                maxLines: 2,
+                decoration: const InputDecoration(
+                  labelText: 'Dirección del suministro',
+                ),
+              ),
+              const SizedBox(height: 10),
+              Row(
+                children: [
+                  Expanded(
+                    child: TextField(
+                      controller: _receiptDistrictController,
+                      decoration: const InputDecoration(
+                        labelText: 'Distrito',
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: TextField(
+                      controller: _receiptProvinceController,
+                      decoration: const InputDecoration(
+                        labelText: 'Provincia',
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 10),
+              TextField(
+                controller: _receiptPowerController,
+                decoration: const InputDecoration(
+                  labelText: 'Potencia contratada',
+                ),
+              ),
+              const SizedBox(height: 18),
+              Text('Persona que recibirá la visita',
+                  style: theme.textTheme.titleMedium),
+              const SizedBox(height: 10),
+              DropdownButtonFormField<String>(
+                initialValue: _receiverRole,
+                decoration: const InputDecoration(labelText: 'Quién recibe'),
+                items: const [
+                  DropdownMenuItem(
+                      value: 'self', child: Text('Cliente / titular del chat')),
+                  DropdownMenuItem(value: 'other', child: Text('Otra persona')),
+                ],
+                onChanged: _submitting
+                    ? null
+                    : (value) {
+                        setState(() => _receiverRole = value ?? 'self');
+                        _applyReceiverPreset();
+                      },
+              ),
+              const SizedBox(height: 10),
+              TextField(
+                controller: _receiverNameController,
+                decoration: const InputDecoration(labelText: 'Nombre completo'),
+              ),
+              const SizedBox(height: 10),
+              Row(
+                children: [
+                  Expanded(
+                    child: TextField(
+                      controller: _receiverDocumentController,
+                      decoration: const InputDecoration(labelText: 'Documento'),
+                    ),
+                  ),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: TextField(
+                      controller: _receiverPhoneController,
+                      decoration: const InputDecoration(labelText: 'Teléfono'),
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 10),
+              TextField(
+                controller: _receiverEmailController,
+                decoration: const InputDecoration(labelText: 'Correo'),
+              ),
+              const SizedBox(height: 18),
+              Text('Instalación y agenda', style: theme.textTheme.titleMedium),
+              const SizedBox(height: 10),
+              TextField(
+                controller: _addressController,
+                maxLines: 2,
+                decoration: const InputDecoration(
+                  labelText: 'Dirección exacta de instalación',
+                ),
+              ),
+              const SizedBox(height: 8),
+              Row(
+                children: [
+                  Expanded(
+                    child: Text(
+                      _daysHelp,
+                      style: theme.textTheme.bodySmall,
+                    ),
+                  ),
+                  TextButton.icon(
+                    onPressed: _loadingDays || _submitting ? null : _loadDays,
+                    icon: _loadingDays
+                        ? const SizedBox(
+                            width: 16,
+                            height: 16,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          )
+                        : const Icon(Icons.refresh_outlined),
+                    label: const Text('Consultar'),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 8),
+              Wrap(
+                spacing: 8,
+                runSpacing: 8,
+                children: _days
+                    .map(
+                      (day) => ChoiceChip(
+                        label:
+                            Text(day.label.isNotEmpty ? day.label : day.date),
+                        selected: _selectedDate == day.date,
+                        onSelected: _submitting || _loadingSlots
+                            ? null
+                            : (_) => _loadSlots(day.date),
+                      ),
+                    )
+                    .toList(),
+              ),
+              const SizedBox(height: 10),
+              Text(
+                _slotsHelp,
+                style: theme.textTheme.bodySmall,
+              ),
+              const SizedBox(height: 8),
+              if (_loadingSlots)
+                const Padding(
+                  padding: EdgeInsets.symmetric(vertical: 8),
+                  child: LinearProgressIndicator(),
+                ),
+              Wrap(
+                spacing: 8,
+                runSpacing: 8,
+                children: _slots
+                    .map(
+                      (slot) => ChoiceChip(
+                        label: Text(slot.label),
+                        selected: _selectedWindow == slot.label,
+                        onSelected: _submitting
+                            ? null
+                            : (_) {
+                                setState(() {
+                                  _selectedWindow = slot.label;
+                                  _selectedTime = slot.time;
+                                });
+                              },
+                      ),
+                    )
+                    .toList(),
+              ),
+              const SizedBox(height: 18),
+              Text('Vehículo', style: theme.textTheme.titleMedium),
+              const SizedBox(height: 10),
+              Row(
+                children: [
+                  Expanded(
+                    child: TextField(
+                      controller: _vehicleBrandController,
+                      decoration: const InputDecoration(labelText: 'Marca'),
+                    ),
+                  ),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: TextField(
+                      controller: _vehicleModelController,
+                      decoration: const InputDecoration(labelText: 'Modelo'),
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 10),
+              DropdownButtonFormField<String>(
+                initialValue: _vehicleType.isNotEmpty ? _vehicleType : null,
+                decoration:
+                    const InputDecoration(labelText: 'Tipo de vehículo'),
+                items: vehicleTypes
+                    .map(
+                      (item) =>
+                          DropdownMenuItem(value: item, child: Text(item)),
+                    )
+                    .toList(),
+                onChanged: _submitting
+                    ? null
+                    : (value) => setState(() => _vehicleType = value ?? ''),
+              ),
+              const SizedBox(height: 18),
+              TextField(
+                controller: _notesController,
+                maxLines: 3,
+                decoration: const InputDecoration(
+                  labelText: 'Notas adicionales',
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: _submitting ? null : () => Navigator.pop(context, false),
+          child: const Text('Cancelar'),
+        ),
+        FilledButton.icon(
+          onPressed: _submitting ? null : _submit,
+          icon: _submitting
+              ? const SizedBox(
+                  width: 16,
+                  height: 16,
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                )
+              : const Icon(Icons.event_available_outlined),
+          label: const Text('Crear visita'),
+        ),
+      ],
+    );
+  }
 }

@@ -48,6 +48,7 @@ class _SuiteDashboardScreenState extends State<SuiteDashboardScreen> {
 
   bool get _canSeeVisitsModule =>
       widget.user.hasFullAccess ||
+      widget.user.isCommercial ||
       widget.user.isTechSupervisor ||
       widget.user.isTech;
 
@@ -141,9 +142,13 @@ class _SuiteDashboardScreenState extends State<SuiteDashboardScreen> {
             ? _techSupervisorCards()
             : (widget.user.isAdvisor
                 ? _advisorCards()
-            : (widget.user.canSeeCommercialData
-                ? _commercialCards()
-                : _techCards())));
+                : (widget.user.isCommercial
+                    ? _commercialCards()
+                    : (widget.user.isInstaller
+                        ? _installerCards()
+                        : (widget.user.isVisitTech
+                            ? _visitTechCards()
+                            : _techCards())))));
 
     return Scaffold(
       appBar: AppBar(
@@ -279,6 +284,62 @@ class _SuiteDashboardScreenState extends State<SuiteDashboardScreen> {
     ];
   }
 
+  List<_ModuleCardData> _visitTechCards() {
+    return [
+      _ModuleCardData(
+        title: 'Visitas',
+        subtitle:
+            'Agenda técnica del país, ejecución en campo y seguimiento del caso.',
+        icon: Icons.calendar_month_outlined,
+        builder: (_) => VisitsModuleScreen(user: widget.user),
+      ),
+      _ModuleCardData(
+        title: 'Cotizaciones',
+        subtitle:
+            'Genera o revisa cotizaciones técnicas vinculadas a la visita.',
+        icon: Icons.request_quote_outlined,
+        builder: (_) => QuotesModuleScreen(user: widget.user),
+      ),
+      _ModuleCardData(
+        title: 'Sincronización',
+        subtitle: 'Revisa documentos locales, pendientes y reintentos de sync.',
+        icon: Icons.sync_outlined,
+        builder: (_) => const HistorialScreen(),
+      ),
+    ];
+  }
+
+  List<_ModuleCardData> _installerCards() {
+    return [
+      _ModuleCardData(
+        title: 'Visitas',
+        subtitle:
+            'Visitas operativas e instalaciones programadas dentro del mismo flujo.',
+        icon: Icons.calendar_month_outlined,
+        builder: (_) => VisitsModuleScreen(user: widget.user),
+      ),
+      _ModuleCardData(
+        title: 'Cotizaciones',
+        subtitle:
+            'Confirma cotizaciones y agenda instalaciones sin tocar pagos.',
+        icon: Icons.request_quote_outlined,
+        builder: (_) => QuotesModuleScreen(user: widget.user),
+      ),
+      _ModuleCardData(
+        title: 'Conformidad',
+        subtitle: 'Gestiona cierres y documentos finales de instalación.',
+        icon: Icons.fact_check_outlined,
+        builder: (_) => const ConformidadModuleScreen(),
+      ),
+      _ModuleCardData(
+        title: 'Sincronización',
+        subtitle: 'Revisa documentos locales, pendientes y reintentos de sync.',
+        icon: Icons.sync_outlined,
+        builder: (_) => const HistorialScreen(),
+      ),
+    ];
+  }
+
   List<_ModuleCardData> _supervisorTechCards() {
     return [
       _ModuleCardData(
@@ -388,6 +449,13 @@ class _SuiteDashboardScreenState extends State<SuiteDashboardScreen> {
   List<_ModuleCardData> _commercialCards() {
     return [
       _advisorModuleCard(),
+      _ModuleCardData(
+        title: 'Visitas',
+        subtitle:
+            'Seguimiento comercial y operativo de todas las visitas de tu país.',
+        icon: Icons.calendar_month_outlined,
+        builder: (_) => VisitsModuleScreen(user: widget.user),
+      ),
       _ModuleCardData(
         title: 'Cotizaciones',
         subtitle:

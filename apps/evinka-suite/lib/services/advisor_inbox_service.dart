@@ -171,7 +171,8 @@ class AdvisorInboxService {
     } catch (_) {
       final cotizadorToken = EvinkaApiService.instance.sessionToken;
       if (cotizadorToken == null || cotizadorToken.isEmpty) {
-        throw Exception('No encontré la sesión principal de EVINKA Suite para abrir el inbox.');
+        throw Exception(
+            'No encontré la sesión principal de EVINKA Suite para abrir el inbox.');
       }
       final data = await _jsonRequest(
         '/api/mobile/bootstrap',
@@ -198,7 +199,8 @@ class AdvisorInboxService {
     await _persistCachedUser(null);
   }
 
-  Future<List<AdvisorInboxSummary>> getConversations({String status = 'all'}) async {
+  Future<List<AdvisorInboxSummary>> getConversations(
+      {String status = 'all'}) async {
     final data = await _jsonListRequest(
       '/api/inbox/conversations?status=${Uri.encodeQueryComponent(status)}',
     );
@@ -278,6 +280,21 @@ class AdvisorInboxService {
   Future<void> createVisit(
     String id, {
     required String clientAddress,
+    required String receiptAddress,
+    required String receiptDistrict,
+    required String receiptProvince,
+    required String receiptPower,
+    required String receiverRole,
+    required String receiverName,
+    required String receiverDocument,
+    required String receiverPhone,
+    required String receiverEmail,
+    required String vehicleBrand,
+    required String vehicleModel,
+    required String vehicleType,
+    required String scheduledAt,
+    required String scheduledDate,
+    required String exactTime,
     String timeWindow = '',
     String notes = '',
   }) async {
@@ -286,10 +303,45 @@ class AdvisorInboxService {
       method: 'POST',
       body: {
         'clientAddress': clientAddress,
+        'receiptAddress': receiptAddress,
+        'receiptDistrict': receiptDistrict,
+        'receiptProvince': receiptProvince,
+        'receiptPower': receiptPower,
+        'receiverRole': receiverRole,
+        'receiverName': receiverName,
+        'receiverDocument': receiverDocument,
+        'receiverPhone': receiverPhone,
+        'receiverEmail': receiverEmail,
+        'vehicleBrand': vehicleBrand,
+        'vehicleModel': vehicleModel,
+        'vehicleType': vehicleType,
+        'scheduledAt': scheduledAt,
+        'scheduledDate': scheduledDate,
+        'exactTime': exactTime,
         'timeWindow': timeWindow,
         'notes': notes,
       },
     );
+  }
+
+  Future<AdvisorVisitOptions> getVisitOptions(
+    String id, {
+    required String clientAddress,
+    required String district,
+    required String province,
+    String scheduledDate = '',
+  }) async {
+    final data = await _jsonRequest(
+      '/api/inbox/conversations/${Uri.encodeComponent(id)}/visit-options',
+      method: 'POST',
+      body: {
+        'clientAddress': clientAddress,
+        'district': district,
+        'province': province,
+        'scheduledDate': scheduledDate,
+      },
+    );
+    return AdvisorVisitOptions.fromJson(data);
   }
 
   Future<void> markReadyClose(String id) async {

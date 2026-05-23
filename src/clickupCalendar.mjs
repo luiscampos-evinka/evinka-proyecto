@@ -13,9 +13,20 @@ function parseDateTime(dateTime, timeZone = 'America/Lima') {
   return new Date(raw);
 }
 
-function toIsoLocal(date) {
+function toIsoLocal(date, timeZone = 'America/Lima') {
   if (!(date instanceof Date) || Number.isNaN(date.getTime())) return null;
-  return date.toISOString().replace(/\.\d{3}Z$/, '');
+  const formatter = new Intl.DateTimeFormat('en-CA', {
+    timeZone,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    hourCycle: 'h23',
+  });
+  const parts = Object.fromEntries(formatter.formatToParts(date).map((part) => [part.type, part.value]));
+  return `${parts.year}-${parts.month}-${parts.day}T${parts.hour}:${parts.minute}:${parts.second}`;
 }
 
 function resolvePreferredPendingStatus(value = '') {
@@ -67,7 +78,7 @@ export class ClickUpCalendarClient {
     closedStatus = process.env.CLICKUP_CANCELLED_STATUS || 'Closed',
     defaultTimeZone = process.env.MICROSOFT_TIMEZONE || 'America/Lima',
     defaultAssigneeId = Number(process.env.CLICKUP_B2C_DEFAULT_ASSIGNEE_ID || 0),
-    defaultDurationMinutes = Number(process.env.CLICKUP_DEFAULT_DURATION_MINUTES || 60),
+    defaultDurationMinutes = Number(process.env.CLICKUP_DEFAULT_DURATION_MINUTES || 45),
     baseUrl = clickupBaseUrl(),
   } = {}) {
     this.apiToken = apiToken;
@@ -78,15 +89,18 @@ export class ClickUpCalendarClient {
       'pendiente a visita',
       'pendiente visita técnica',
       'open',
+      'en ejecución',
+      'en ejecucion',
     ].filter(Boolean))];
     this.closedStatus = String(closedStatus || 'Closed').trim();
     this.defaultTimeZone = defaultTimeZone;
     this.defaultAssigneeId = Number.isFinite(defaultAssigneeId) ? defaultAssigneeId : 0;
     this.defaultDurationMinutes = Number.isFinite(defaultDurationMinutes) && defaultDurationMinutes > 0
       ? defaultDurationMinutes
-      : 60;
+      : 45;
     this.baseUrl = baseUrl;
     this.provider = 'clickup';
+    this.tasksCache = null;
   }
 
   async request(path, { method = 'GET', body } = {}) {
@@ -119,6 +133,41 @@ export class ClickUpCalendarClient {
     return map;
   }
 
+  invalidateTasksCache() {
+    this.tasksCache = null;
+  }
+
+  async getAllTasks() {
+    const now = Date.now();
+    if (this.tasksCache && this.tasksCache.expiresAt > now) {
+      if (this.tasksCache.promise) return this.tasksCache.promise;
+      return this.tasksCache.tasks;
+    }
+
+    const promise = (async () => {
+      const tasks = [];
+      let page = 0;
+      while (true) {
+        const data = await this.request(`/list/${encodeURIComponent(this.listId)}/task?archived=false&page=${page}`);
+        const pageTasks = Array.isArray(data?.tasks) ? data.tasks : [];
+        tasks.push(...pageTasks);
+        if (data?.last_page) break;
+        page += 1;
+        if (page > 50) break;
+      }
+      this.tasksCache = { expiresAt: Date.now() + 30000, tasks };
+      return tasks;
+    })();
+
+    this.tasksCache = { expiresAt: now + 30000, promise };
+    try {
+      return await promise;
+    } catch (error) {
+      this.tasksCache = null;
+      throw error;
+    }
+  }
+
   async setCustomFieldByName(taskId, fieldName, value) {
     const cleaned = String(value || '').trim();
     if (!taskId || !fieldName || !cleaned) return { ok: true, skipped: true };
@@ -139,7 +188,11 @@ export class ClickUpCalendarClient {
 
   normalizeTaskAsEvent(task = {}) {
     const start = task.start_date ? new Date(Number(task.start_date)) : null;
-    const end = task.due_date ? new Date(Number(task.due_date)) : null;
+    const end = task.due_date
+      ? new Date(Number(task.due_date))
+      : (start && !Number.isNaN(start.getTime())
+          ? new Date(start.getTime() + this.defaultDurationMinutes * 60 * 1000)
+          : null);
     const district = customFieldValue(task, 'DISTRITO')
       || extractDistrictFromText(task.description || task.text_content || '');
     const content = [
@@ -152,8 +205,8 @@ export class ClickUpCalendarClient {
       isCancelled: false,
       bodyPreview: content,
       body: { content },
-      start: start ? { dateTime: toIsoLocal(start), timeZone: this.defaultTimeZone } : null,
-      end: end ? { dateTime: toIsoLocal(end), timeZone: this.defaultTimeZone } : null,
+      start: start ? { dateTime: toIsoLocal(start, this.defaultTimeZone), timeZone: this.defaultTimeZone } : null,
+      end: end ? { dateTime: toIsoLocal(end, this.defaultTimeZone), timeZone: this.defaultTimeZone } : null,
       location: { displayName: '' },
       attendees: [],
       categories: ['EVINKA'],
@@ -164,22 +217,17 @@ export class ClickUpCalendarClient {
   async listEvents({ top = 100, startDateTime = null, endDateTime = null } = {}) {
     const rangeStart = parseDateTime(startDateTime, this.defaultTimeZone);
     const rangeEnd = parseDateTime(endDateTime, this.defaultTimeZone);
-    const tasks = [];
-    let page = 0;
-    while (true) {
-      const data = await this.request(`/list/${encodeURIComponent(this.listId)}/task?archived=false&page=${page}`);
-      const pageTasks = Array.isArray(data?.tasks) ? data.tasks : [];
-      tasks.push(...pageTasks);
-      if (data?.last_page) break;
-      page += 1;
-      if (page > 50) break;
-    }
+    const tasks = await this.getAllTasks();
 
     return tasks
       .filter((task) => this.pendingStatusKeys.includes(normalizeStatusKey(task?.status?.status || '')))
       .filter((task) => {
         const start = task.start_date ? new Date(Number(task.start_date)) : null;
-        const end = task.due_date ? new Date(Number(task.due_date)) : start;
+        const end = task.due_date
+          ? new Date(Number(task.due_date))
+          : (start && !Number.isNaN(start.getTime())
+              ? new Date(start.getTime() + this.defaultDurationMinutes * 60 * 1000)
+              : null);
         if (!start || Number.isNaN(start.getTime())) return false;
         if (rangeStart && end && end <= rangeStart) return false;
         if (rangeEnd && start >= rangeEnd) return false;
@@ -192,24 +240,15 @@ export class ClickUpCalendarClient {
   async findTaskByTicket(ticket = '') {
     const needle = String(ticket || '').trim().toLowerCase();
     if (!needle) return null;
-    let page = 0;
-    while (true) {
-      const data = await this.request(`/list/${encodeURIComponent(this.listId)}/task?archived=false&page=${page}`);
-      const pageTasks = Array.isArray(data?.tasks) ? data.tasks : [];
-      const match = pageTasks.find((task) => {
-        const haystack = [
-          String(task?.name || ''),
-          String(task?.description || ''),
-          String(task?.text_content || ''),
-        ].join('\n').toLowerCase();
-        return haystack.includes(needle);
-      });
-      if (match) return match;
-      if (data?.last_page) break;
-      page += 1;
-      if (page > 50) break;
-    }
-    return null;
+    const tasks = await this.getAllTasks();
+    return tasks.find((task) => {
+      const haystack = [
+        String(task?.name || ''),
+        String(task?.description || ''),
+        String(task?.text_content || ''),
+      ].join('\n').toLowerCase();
+      return haystack.includes(needle);
+    }) || null;
   }
 
   buildBasePayload({ subject, startDateTime, endDateTime, timeZone = this.defaultTimeZone, body = '' }) {
@@ -240,6 +279,7 @@ export class ClickUpCalendarClient {
       method: 'POST',
       body: payload,
     });
+    this.invalidateTasksCache();
     await this.syncDistrictField(task?.id, body);
     return task;
   }
@@ -270,6 +310,7 @@ export class ClickUpCalendarClient {
     if (patch.body?.content != null) {
       await this.syncDistrictField(eventId, patch.body.content);
     }
+    if (Object.keys(payload).length) this.invalidateTasksCache();
     return task;
   }
 
@@ -281,6 +322,7 @@ export class ClickUpCalendarClient {
         description: String(comment || '').trim() || 'Cancelada desde EVINKABOT.',
       },
     });
+    this.invalidateTasksCache();
     return { ok: true };
   }
 

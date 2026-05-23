@@ -100,6 +100,39 @@ const els = {
   summaryPriorityBadge: document.getElementById('summaryPriorityBadge'),
   quickReplies: document.getElementById('quickReplies'),
   createVisitBtn: document.getElementById('createVisitBtn'),
+  visitModal: document.getElementById('visitModal'),
+  visitModalBackdrop: document.getElementById('visitModalBackdrop'),
+  closeVisitModalBtn: document.getElementById('closeVisitModalBtn'),
+  cancelVisitModalBtn: document.getElementById('cancelVisitModalBtn'),
+  visitForm: document.getElementById('visitForm'),
+  visitCustomerName: document.getElementById('visitCustomerName'),
+  visitCustomerMeta: document.getElementById('visitCustomerMeta'),
+  visitCustomerLocation: document.getElementById('visitCustomerLocation'),
+  visitCustomerEmail: document.getElementById('visitCustomerEmail'),
+  visitCustomerTicket: document.getElementById('visitCustomerTicket'),
+  visitCustomerReason: document.getElementById('visitCustomerReason'),
+  visitReceiptAddressInput: document.getElementById('visitReceiptAddressInput'),
+  visitReceiptDistrictInput: document.getElementById('visitReceiptDistrictInput'),
+  visitReceiptProvinceInput: document.getElementById('visitReceiptProvinceInput'),
+  visitReceiptPowerInput: document.getElementById('visitReceiptPowerInput'),
+  visitReceiverRoleSelect: document.getElementById('visitReceiverRoleSelect'),
+  visitReceiverNameInput: document.getElementById('visitReceiverNameInput'),
+  visitReceiverDocumentInput: document.getElementById('visitReceiverDocumentInput'),
+  visitReceiverPhoneInput: document.getElementById('visitReceiverPhoneInput'),
+  visitReceiverEmailInput: document.getElementById('visitReceiverEmailInput'),
+  visitDateInput: document.getElementById('visitDateInput'),
+  visitExactTimeInput: document.getElementById('visitExactTimeInput'),
+  visitAddressInput: document.getElementById('visitAddressInput'),
+  visitTimeWindowInput: document.getElementById('visitTimeWindowInput'),
+  visitDayChips: document.getElementById('visitDayChips'),
+  visitDaysHelp: document.getElementById('visitDaysHelp'),
+  visitSlotChips: document.getElementById('visitSlotChips'),
+  visitSlotsHelp: document.getElementById('visitSlotsHelp'),
+  visitVehicleBrandInput: document.getElementById('visitVehicleBrandInput'),
+  visitVehicleModelInput: document.getElementById('visitVehicleModelInput'),
+  visitVehicleTypeInput: document.getElementById('visitVehicleTypeInput'),
+  visitNotesInput: document.getElementById('visitNotesInput'),
+  submitVisitBtn: document.getElementById('submitVisitBtn'),
   openQuoteBtn: document.getElementById('openQuoteBtn'),
   openRepositoryBtn: document.getElementById('openRepositoryBtn'),
   markReadyCloseBtn: document.getElementById('markReadyCloseBtn'),
@@ -733,6 +766,223 @@ function toggleActionButtons(detail) {
   }
 }
 
+function syncVisitSlotChips() {
+  const current = String(els.visitTimeWindowInput?.value || '').trim();
+  document.querySelectorAll('#visitSlotChips .slot-chip').forEach((button) => {
+    button.classList.toggle('active', button.dataset.slot === current);
+  });
+}
+
+function syncVisitDayChips() {
+  const current = String(els.visitDateInput?.value || '').trim();
+  document.querySelectorAll('#visitDayChips .slot-chip').forEach((button) => {
+    button.classList.toggle('active', button.dataset.date === current);
+  });
+}
+
+function visitOptionsPayload({ scheduledDate = '' } = {}) {
+  const conversation = state.activeConversation?.conversation || {};
+  return {
+    clientAddress: String(els.visitAddressInput?.value || '').trim(),
+    district: String(els.visitReceiptDistrictInput?.value || conversation.district || '').trim(),
+    province: String(els.visitReceiptProvinceInput?.value || conversation.province || '').trim(),
+    scheduledDate: String(scheduledDate || '').trim(),
+  };
+}
+
+function clearVisitSlotSelection() {
+  if (els.visitTimeWindowInput) els.visitTimeWindowInput.value = '';
+  if (els.visitExactTimeInput) els.visitExactTimeInput.value = '';
+  syncVisitSlotChips();
+}
+
+function renderVisitDayChips(days = [], zone = '') {
+  if (!els.visitDayChips) return;
+  els.visitDayChips.innerHTML = '';
+  const normalized = Array.isArray(days) ? days : [];
+  if (!normalized.length) {
+    if (els.visitDaysHelp) {
+      els.visitDaysHelp.textContent = zone
+        ? `No encontré días disponibles para ${zone}.`
+        : 'No encontré días disponibles con la lógica del bot.';
+    }
+    return;
+  }
+  normalized.forEach((day) => {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'slot-chip';
+    button.dataset.date = String(day.date || '').trim();
+    button.textContent = String(day.label || '').trim() || String(day.date || '').trim();
+    button.addEventListener('click', () => {
+      if (els.visitDateInput) els.visitDateInput.value = String(day.date || '').trim();
+      clearVisitSlotSelection();
+      syncVisitDayChips();
+      loadVisitSlots(day.date);
+    });
+    els.visitDayChips.appendChild(button);
+  });
+  if (els.visitDaysHelp) {
+    els.visitDaysHelp.textContent = zone
+      ? `Días disponibles para ${zone}, tal cual se los mostraría el bot.`
+      : 'Días disponibles cargados desde la lógica real del chatbot.';
+  }
+  syncVisitDayChips();
+}
+
+function renderVisitSlotChips(slots = []) {
+  if (!els.visitSlotChips) return;
+  els.visitSlotChips.innerHTML = '';
+  const normalized = Array.isArray(slots) ? slots : [];
+  if (!normalized.length) {
+    if (els.visitSlotsHelp) {
+      els.visitSlotsHelp.textContent = 'No encontré horarios disponibles del chatbot para ese día.';
+    }
+    return;
+  }
+  normalized.forEach((slot) => {
+    const label = String(slot.label || '').trim() || `${slot.time || ''} - ${slot.endTime || ''}`.trim();
+    const baseTime = String(slot.time || '').trim().slice(0, 5);
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'slot-chip';
+    button.dataset.slot = label;
+    button.dataset.time = baseTime;
+    button.textContent = label;
+    button.addEventListener('click', () => {
+      if (els.visitTimeWindowInput) els.visitTimeWindowInput.value = label;
+      if (els.visitExactTimeInput && baseTime) els.visitExactTimeInput.value = baseTime;
+      syncVisitSlotChips();
+    });
+    els.visitSlotChips.appendChild(button);
+  });
+  if (els.visitSlotsHelp) {
+    els.visitSlotsHelp.textContent = 'Horarios cargados desde la lógica real del chatbot.';
+  }
+  syncVisitSlotChips();
+}
+
+async function loadVisitDays({ preserveDate = false } = {}) {
+  const conversation = state.activeConversation?.conversation;
+  if (!conversation) return;
+  const clientAddress = String(els.visitAddressInput?.value || '').trim();
+  if (!clientAddress) {
+    renderVisitDayChips([]);
+    renderVisitSlotChips([]);
+    if (els.visitDaysHelp) els.visitDaysHelp.textContent = 'Completa la dirección exacta para cargar los días disponibles.';
+    return;
+  }
+  const previousDate = preserveDate ? String(els.visitDateInput?.value || '').trim() : '';
+  if (els.visitDaysHelp) els.visitDaysHelp.textContent = 'Consultando días disponibles del chatbot...';
+  try {
+    const data = await api(`/api/inbox/conversations/${encodeURIComponent(state.activeId)}/visit-options`, {
+      method: 'POST',
+      body: JSON.stringify(visitOptionsPayload()),
+    });
+    const days = Array.isArray(data.days) ? data.days : [];
+    renderVisitDayChips(days, data.zone || '');
+    if (previousDate && days.some((day) => String(day.date || '').trim() === previousDate)) {
+      if (els.visitDateInput) els.visitDateInput.value = previousDate;
+      syncVisitDayChips();
+      await loadVisitSlots(previousDate, { preserveSelection: true });
+      return;
+    }
+    renderVisitSlotChips([]);
+    clearVisitSlotSelection();
+    if (els.visitDateInput) els.visitDateInput.value = '';
+  } catch (error) {
+    renderVisitDayChips([]);
+    renderVisitSlotChips([]);
+    clearVisitSlotSelection();
+    if (els.visitDaysHelp) {
+      els.visitDaysHelp.textContent = error.message || 'No pude consultar los días del chatbot.';
+    }
+  }
+}
+
+async function loadVisitSlots(dateOverride = '', { preserveSelection = false } = {}) {
+  const conversation = state.activeConversation?.conversation;
+  if (!conversation) return;
+  const scheduledDate = String(dateOverride || els.visitDateInput?.value || '').trim();
+  const selectedSlot = preserveSelection ? String(els.visitTimeWindowInput?.value || '').trim() : '';
+  if (!scheduledDate) return;
+  if (els.visitSlotsHelp) els.visitSlotsHelp.textContent = 'Consultando horarios del chatbot...';
+  try {
+    const data = await api(`/api/inbox/conversations/${encodeURIComponent(state.activeId)}/visit-options`, {
+      method: 'POST',
+      body: JSON.stringify(visitOptionsPayload({ scheduledDate })),
+    });
+    if (els.visitDateInput) els.visitDateInput.value = scheduledDate;
+    renderVisitSlotChips(data.slots || []);
+    if (selectedSlot && Array.isArray(data.slots) && data.slots.some((slot) => String(slot.label || '').trim() === selectedSlot)) {
+      if (els.visitTimeWindowInput) els.visitTimeWindowInput.value = selectedSlot;
+      const matched = data.slots.find((slot) => String(slot.label || '').trim() === selectedSlot);
+      if (matched?.time && els.visitExactTimeInput) els.visitExactTimeInput.value = String(matched.time || '').trim().slice(0, 5);
+      syncVisitSlotChips();
+      return;
+    }
+    clearVisitSlotSelection();
+  } catch (error) {
+    renderVisitSlotChips([]);
+    clearVisitSlotSelection();
+    if (els.visitSlotsHelp) {
+      els.visitSlotsHelp.textContent = error.message || 'No pude consultar los horarios del chatbot.';
+    }
+  }
+}
+
+function applyVisitReceiverPreset() {
+  const conversation = state.activeConversation?.conversation || {};
+  const profile = state.activeConversation?.profile || {};
+  const role = String(els.visitReceiverRoleSelect?.value || 'self').trim();
+  if (role !== 'self') return;
+  if (els.visitReceiverNameInput) els.visitReceiverNameInput.value = String(profile.receiverName || conversation.customerName || '').trim();
+  if (els.visitReceiverDocumentInput) els.visitReceiverDocumentInput.value = String(profile.receiverDocument || '').trim();
+  if (els.visitReceiverPhoneInput) els.visitReceiverPhoneInput.value = String(profile.receiverPhone || conversation.phone || '').trim();
+  if (els.visitReceiverEmailInput) els.visitReceiverEmailInput.value = String(profile.receiverEmail || conversation.email || '').trim();
+}
+
+function closeVisitModal() {
+  els.visitModal?.classList.add('hidden');
+  els.visitModal?.setAttribute('aria-hidden', 'true');
+}
+
+function openVisitModal() {
+  const conversation = state.activeConversation?.conversation;
+  const profile = state.activeConversation?.profile || {};
+  if (!conversation) return;
+  const location = [conversation.district, conversation.province].filter(Boolean).join(', ');
+  els.visitCustomerName.textContent = conversation.customerName || 'Cliente EVINKA';
+  els.visitCustomerMeta.textContent = conversation.phonePretty || conversation.phone || 'Sin teléfono registrado';
+  els.visitCustomerLocation.textContent = location || 'Ubicación pendiente';
+  els.visitCustomerEmail.textContent = conversation.email || '-';
+  els.visitCustomerTicket.textContent = conversation.ticketContext || '-';
+  els.visitCustomerReason.textContent = conversation.handoffReason || 'Solicitud de visita técnica';
+  els.visitReceiptAddressInput.value = profile.receiptAddress || conversation.receiptAddress || '';
+  els.visitReceiptDistrictInput.value = profile.receiptDistrict || conversation.district || '';
+  els.visitReceiptProvinceInput.value = profile.receiptProvince || conversation.province || '';
+  els.visitReceiptPowerInput.value = profile.receiptPower || '';
+  els.visitReceiverRoleSelect.value = 'self';
+  els.visitReceiverNameInput.value = profile.receiverName || conversation.customerName || '';
+  els.visitReceiverDocumentInput.value = profile.receiverDocument || '';
+  els.visitReceiverPhoneInput.value = profile.receiverPhone || conversation.phone || '';
+  els.visitReceiverEmailInput.value = profile.receiverEmail || conversation.email || '';
+  els.visitAddressInput.value = profile.installationAddress || conversation.installationAddress || conversation.receiptAddress || '';
+  els.visitVehicleBrandInput.value = profile.vehicleBrand || '';
+  els.visitVehicleModelInput.value = profile.vehicleModel || '';
+  els.visitVehicleTypeInput.value = profile.vehicleType || '';
+  els.visitDateInput.value = '';
+  els.visitExactTimeInput.value = '';
+  els.visitTimeWindowInput.value = '';
+  els.visitNotesInput.value = [conversation.handoffReason, conversation.internalNote].filter(Boolean).join(' | ');
+  renderVisitDayChips([]);
+  renderVisitSlotChips([]);
+  els.visitModal.classList.remove('hidden');
+  els.visitModal.setAttribute('aria-hidden', 'false');
+  loadVisitDays();
+  setTimeout(() => els.visitAddressInput?.focus(), 0);
+}
+
 function pushOptimisticMessage({ text = '', type = 'text', fileName = '', mimeType = '', fileSize = 0 }) {
   if (!state.activeConversation?.messages) return;
   const content = type === 'text' ? text : (text || fileName || 'Archivo');
@@ -1045,29 +1295,86 @@ async function saveCaseMeta() {
 async function createVisitAction() {
   const conversation = state.activeConversation?.conversation;
   if (!conversation) return;
-  const addressSeed = conversation.installationAddress || conversation.receiptAddress || '';
-  const clientAddress = window.prompt('Dirección para la visita técnica', addressSeed);
-  if (clientAddress === null) return;
-  if (!String(clientAddress || '').trim()) {
-    alert('Necesito una dirección para crear la visita.');
+  const visitDate = String(els.visitDateInput?.value || '').trim();
+  const visitExactTime = String(els.visitExactTimeInput?.value || '').trim();
+  const clientAddress = String(els.visitAddressInput?.value || '').trim();
+  const receiptAddress = String(els.visitReceiptAddressInput?.value || '').trim();
+  const receiptDistrict = String(els.visitReceiptDistrictInput?.value || '').trim();
+  const receiptProvince = String(els.visitReceiptProvinceInput?.value || '').trim();
+  const receiptPower = String(els.visitReceiptPowerInput?.value || '').trim();
+  const receiverRole = String(els.visitReceiverRoleSelect?.value || 'self').trim();
+  const receiverName = String(els.visitReceiverNameInput?.value || '').trim();
+  const receiverDocument = String(els.visitReceiverDocumentInput?.value || '').trim();
+  const receiverPhone = String(els.visitReceiverPhoneInput?.value || '').trim();
+  const receiverEmail = String(els.visitReceiverEmailInput?.value || '').trim();
+  const vehicleBrand = String(els.visitVehicleBrandInput?.value || '').trim();
+  const vehicleModel = String(els.visitVehicleModelInput?.value || '').trim();
+  const vehicleType = String(els.visitVehicleTypeInput?.value || '').trim();
+  if (!receiptAddress || !receiptDistrict || !receiptProvince || !receiptPower) {
+    alert('Completa primero los datos manuales del recibo.');
+    els.visitReceiptAddressInput?.focus();
     return;
   }
-  const timeWindow = window.prompt('Rango horario (opcional)', '');
-  const notes = [conversation.handoffReason, conversation.internalNote].filter(Boolean).join(' | ');
+  if (!receiverName || !receiverDocument || !receiverPhone || !receiverEmail) {
+    alert('Completa los datos de la persona que recibirá la visita.');
+    els.visitReceiverNameInput?.focus();
+    return;
+  }
+  if (!clientAddress) {
+    alert('Necesito la dirección exacta del punto de instalación.');
+    els.visitAddressInput?.focus();
+    return;
+  }
+  if (!vehicleBrand || !vehicleModel || !vehicleType) {
+    alert('Completa los datos del vehículo antes de crear la visita.');
+    els.visitVehicleBrandInput?.focus();
+    return;
+  }
+  if (!visitDate) {
+    alert('Selecciona uno de los días disponibles del chatbot.');
+    return;
+  }
+  if (!visitExactTime) {
+    alert('Selecciona uno de los horarios disponibles del chatbot.');
+    return;
+  }
+  const timeWindow = String(els.visitTimeWindowInput?.value || '').trim();
+  const notes = String(els.visitNotesInput?.value || '').trim();
+  const scheduledAt = `${visitDate}T${visitExactTime}:00-05:00`;
+  if (els.submitVisitBtn) els.submitVisitBtn.disabled = true;
   try {
     const data = await api(`/api/inbox/conversations/${encodeURIComponent(state.activeId)}/actions/create-visit`, {
       method: 'POST',
       body: JSON.stringify({
+        clientName: receiverName || conversation.customerName || '',
         clientAddress,
-        timeWindow: timeWindow === null ? '' : timeWindow,
+        scheduledAt,
+        scheduledDate: visitDate,
+        exactTime: visitExactTime,
+        timeWindow,
+        receiptAddress,
+        receiptDistrict,
+        receiptProvince,
+        receiptPower,
+        receiverRole,
+        receiverName,
+        receiverDocument,
+        receiverPhone,
+        receiverEmail,
+        vehicleBrand,
+        vehicleModel,
+        vehicleType,
         notes,
       }),
     });
     const visitId = data.visit?.id ? ` (${data.visit.id})` : '';
+    closeVisitModal();
     alert(`${data.created ? 'Visita creada' : 'Visita actualizada'}${visitId}.`);
     await loadConversations({ refreshActive: true });
   } catch (error) {
     alert(error.message || 'No pude crear la visita.');
+  } finally {
+    if (els.submitVisitBtn) els.submitVisitBtn.disabled = false;
   }
 }
 
@@ -1235,7 +1542,19 @@ els.openRepositoryBtn?.addEventListener('click', openRepositoryDrawer);
 els.profileDrawerBackdrop.addEventListener('click', closeProfileDrawer);
 els.closeProfileDrawerBtn.addEventListener('click', closeProfileDrawer);
 els.saveCaseMetaBtn.addEventListener('click', () => saveCaseMeta());
-els.createVisitBtn.addEventListener('click', () => createVisitAction());
+els.createVisitBtn.addEventListener('click', () => openVisitModal());
+els.visitModalBackdrop?.addEventListener('click', closeVisitModal);
+els.closeVisitModalBtn?.addEventListener('click', closeVisitModal);
+els.cancelVisitModalBtn?.addEventListener('click', closeVisitModal);
+els.visitTimeWindowInput?.addEventListener('input', syncVisitSlotChips);
+els.visitReceiverRoleSelect?.addEventListener('change', applyVisitReceiverPreset);
+els.visitAddressInput?.addEventListener('blur', () => loadVisitDays({ preserveDate: true }));
+els.visitReceiptDistrictInput?.addEventListener('change', () => loadVisitDays({ preserveDate: true }));
+els.visitReceiptProvinceInput?.addEventListener('change', () => loadVisitDays({ preserveDate: true }));
+els.visitForm?.addEventListener('submit', async (event) => {
+  event.preventDefault();
+  await createVisitAction();
+});
 els.openQuoteBtn.addEventListener('click', () => openQuoteAction());
 els.markReadyCloseBtn.addEventListener('click', () => markReadyCloseAction());
 

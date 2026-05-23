@@ -387,12 +387,14 @@ class AdvisorInboxArtifactRecord {
 
 class AdvisorInboxDetail {
   final AdvisorInboxConversation conversation;
+  final AdvisorInboxProfile profile;
   final List<AdvisorInboxMessage> messages;
   final List<AdvisorInboxFileRecord> files;
   final List<AdvisorInboxArtifactRecord> artifacts;
 
   const AdvisorInboxDetail({
     required this.conversation,
+    required this.profile,
     required this.messages,
     required this.files,
     required this.artifacts,
@@ -402,6 +404,9 @@ class AdvisorInboxDetail {
     return AdvisorInboxDetail(
       conversation: AdvisorInboxConversation.fromJson(
         Map<String, dynamic>.from(json['conversation'] as Map? ?? const {}),
+      ),
+      profile: AdvisorInboxProfile.fromJson(
+        Map<String, dynamic>.from(json['profile'] as Map? ?? const {}),
       ),
       messages: (json['messages'] as List<dynamic>? ?? const [])
           .map((item) => AdvisorInboxMessage.fromJson(
@@ -414,6 +419,118 @@ class AdvisorInboxDetail {
       artifacts: (json['artifacts'] as List<dynamic>? ?? const [])
           .map((item) => AdvisorInboxArtifactRecord.fromJson(
               Map<String, dynamic>.from(item as Map)))
+          .toList(),
+    );
+  }
+}
+
+class AdvisorInboxProfile {
+  final String receiptAddress;
+  final String receiptDistrict;
+  final String receiptProvince;
+  final String receiptPower;
+  final String installationAddress;
+  final String receiverName;
+  final String receiverDocument;
+  final String receiverPhone;
+  final String receiverEmail;
+  final String vehicleBrand;
+  final String vehicleModel;
+  final String vehicleType;
+
+  const AdvisorInboxProfile({
+    required this.receiptAddress,
+    required this.receiptDistrict,
+    required this.receiptProvince,
+    required this.receiptPower,
+    required this.installationAddress,
+    required this.receiverName,
+    required this.receiverDocument,
+    required this.receiverPhone,
+    required this.receiverEmail,
+    required this.vehicleBrand,
+    required this.vehicleModel,
+    required this.vehicleType,
+  });
+
+  factory AdvisorInboxProfile.fromJson(Map<String, dynamic> json) {
+    return AdvisorInboxProfile(
+      receiptAddress: json['receiptAddress']?.toString() ?? '',
+      receiptDistrict: json['receiptDistrict']?.toString() ?? '',
+      receiptProvince: json['receiptProvince']?.toString() ?? '',
+      receiptPower: json['receiptPower']?.toString() ?? '',
+      installationAddress: json['installationAddress']?.toString() ?? '',
+      receiverName: json['receiverName']?.toString() ?? '',
+      receiverDocument: json['receiverDocument']?.toString() ?? '',
+      receiverPhone: json['receiverPhone']?.toString() ?? '',
+      receiverEmail: json['receiverEmail']?.toString() ?? '',
+      vehicleBrand: json['vehicleBrand']?.toString() ?? '',
+      vehicleModel: json['vehicleModel']?.toString() ?? '',
+      vehicleType: json['vehicleType']?.toString() ?? '',
+    );
+  }
+}
+
+class AdvisorVisitOptionDay {
+  final String date;
+  final String label;
+
+  const AdvisorVisitOptionDay({
+    required this.date,
+    required this.label,
+  });
+
+  factory AdvisorVisitOptionDay.fromJson(Map<String, dynamic> json) {
+    return AdvisorVisitOptionDay(
+      date: json['date']?.toString() ?? '',
+      label: json['label']?.toString() ?? '',
+    );
+  }
+}
+
+class AdvisorVisitOptionSlot {
+  final String label;
+  final String time;
+  final String endTime;
+
+  const AdvisorVisitOptionSlot({
+    required this.label,
+    required this.time,
+    required this.endTime,
+  });
+
+  factory AdvisorVisitOptionSlot.fromJson(Map<String, dynamic> json) {
+    return AdvisorVisitOptionSlot(
+      label: json['label']?.toString() ?? '',
+      time: json['time']?.toString() ?? '',
+      endTime: json['endTime']?.toString() ?? '',
+    );
+  }
+}
+
+class AdvisorVisitOptions {
+  final String zone;
+  final List<AdvisorVisitOptionDay> days;
+  final List<AdvisorVisitOptionSlot> slots;
+
+  const AdvisorVisitOptions({
+    required this.zone,
+    required this.days,
+    required this.slots,
+  });
+
+  factory AdvisorVisitOptions.fromJson(Map<String, dynamic> json) {
+    return AdvisorVisitOptions(
+      zone: json['zone']?.toString() ?? '',
+      days: (json['days'] as List<dynamic>? ?? const [])
+          .map((item) => AdvisorVisitOptionDay.fromJson(
+                Map<String, dynamic>.from(item as Map),
+              ))
+          .toList(),
+      slots: (json['slots'] as List<dynamic>? ?? const [])
+          .map((item) => AdvisorVisitOptionSlot.fromJson(
+                Map<String, dynamic>.from(item as Map),
+              ))
           .toList(),
     );
   }

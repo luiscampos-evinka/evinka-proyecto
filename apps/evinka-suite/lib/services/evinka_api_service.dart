@@ -414,4 +414,11 @@ class EvinkaApiService {
     );
     return TechVisit.fromJson(data);
   }
+
+  Future<Map<String, dynamic>> deleteVisitGlobally(String id) {
+    return _jsonRequest(
+      '/api/tech/visits/${Uri.encodeComponent(id)}/global',
+      method: 'DELETE',
+    );
+  }
 }

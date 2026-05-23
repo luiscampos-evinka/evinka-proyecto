@@ -9,6 +9,7 @@ import { loadEnv } from '../../src/config.mjs';
 import { appendAccessAuditLog } from '../../src/accessAudit.mjs';
 import { MicrosoftGraphClient } from '../../src/microsoftGraph.mjs';
 import { SupabaseRest } from '../../src/supabase.mjs';
+import { SupabaseStorage } from '../../src/supabaseStorage.mjs';
 import { WhatsAppMetaClient } from '../../src/whatsappMeta.mjs';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -64,6 +65,12 @@ const liveBookingsSb = process.env.SUPABASE_URL && process.env.SUPABASE_SERVICE_
       key: process.env.SUPABASE_SERVICE_ROLE_KEY,
     })
   : null;
+const liveStorageSb = process.env.SUPABASE_URL && process.env.SUPABASE_SERVICE_ROLE_KEY
+  ? new SupabaseStorage({
+      url: process.env.SUPABASE_URL,
+      key: process.env.SUPABASE_SERVICE_ROLE_KEY,
+    })
+  : null;
 const TECH_VISITS_DEFAULT_EMAIL = String(process.env.TECH_VISITS_DEFAULT_EMAIL || 'luis.campos@evinka.tech').trim().toLowerCase();
 const TECH_VISITS_DEFAULT_NAME = String(process.env.TECH_VISITS_DEFAULT_NAME || 'Luis Campos').trim();
 const CLICKUP_API_BASE = 'https://api.clickup.com/api/v2';
@@ -74,7 +81,7 @@ const CLICKUP_B2C_STATUS = String(process.env.CLICKUP_B2C_STATUS || 'Open').trim
   : String(process.env.CLICKUP_B2C_STATUS || 'pendiente visita técnica').trim();
 const CLICKUP_B2C_QUOTE_PENDING_STATUS = String(process.env.CLICKUP_B2C_QUOTE_PENDING_STATUS || 'pendiente enviar cotizació').trim();
 const CLICKUP_B2C_DEFAULT_ASSIGNEE_ID = Number(process.env.CLICKUP_B2C_DEFAULT_ASSIGNEE_ID || 0);
-const CLICKUP_DEFAULT_DURATION_MINUTES = Number(process.env.CLICKUP_DEFAULT_DURATION_MINUTES || 60);
+const CLICKUP_DEFAULT_DURATION_MINUTES = Number(process.env.CLICKUP_DEFAULT_DURATION_MINUTES || 45);
 const META_WEBHOOK_INTERNAL_URL = String(process.env.META_WEBHOOK_INTERNAL_URL || 'http://127.0.0.1:8787').trim().replace(/\/$/, '');
 const AUDIT_LOG_LIMIT = Number(process.env.EVINKA_AUDIT_LOG_LIMIT || 5000);
 const RAUL_DEFAULT_EMAIL = 'raul.flores@evinka.tech';
@@ -568,6 +575,22 @@ app.put('/api/catalog', authRequired, adminOnly, (req, res) => {
   res.json(buildAppConfig(activeCountry));
 });
 
+app.get('/api/catalog/export.xlsx', authRequired, adminOnly, async (req, res) => {
+  const activeCountry = resolveRequestCountryContext(req, req.user);
+  if (!activeCountry || activeCountry === 'ALL') {
+    return res.status(400).json({ error: 'Selecciona Perú o Colombia antes de exportar el catálogo.' });
+  }
+  const config = buildAppConfig(activeCountry);
+  const buffer = await buildCatalogExportWorkbook(config, {
+    countryCode: activeCountry,
+    generatedBy: req.user?.name || req.user?.email || req.user?.employeeCode || 'EVINKA',
+  });
+  const stamp = new Date().toISOString().slice(0, 10);
+  res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+  res.setHeader('Content-Disposition', `attachment; filename="EVINKA-catalogo-${activeCountry}-${stamp}.xlsx"`);
+  res.send(buffer);
+});
+
 app.get('/api/quotes', authRequired, (req, res) => {
   const countryScope = resolveRequestCountryContext(req, req.user);
   const quotes = readJSON(files.quotes, [])
@@ -695,7 +718,7 @@ app.patch('/api/quotes/:id/status', authRequired, async (req, res) => {
     return res.status(403).json({ error: 'No tienes permiso para actualizar esta cotización.' });
   }
   const nextStatus = normalizeQuoteStatus(body.status || currentQuote.status);
-  if (nextStatus !== currentQuote.status && !canUserManageCommercialQuoteFlow(req.user)) {
+  if (nextStatus !== currentQuote.status && !canUserMoveQuoteStatus(req.user, nextStatus, currentQuote.status)) {
     return res.status(403).json({ error: 'Tu usuario no puede mover el flujo comercial de cotizaciones.' });
   }
   if (nextStatus === 'abono_100_confirmado' && !canUserConfirmFullPayment(req.user)) {
@@ -751,6 +774,7 @@ app.patch('/api/quotes/:id/status', authRequired, async (req, res) => {
       pdfPath: nextQuote.pdfFile,
       pdfFilename: nextQuote.pdfFilename,
     });
+    nextQuote.whatsappDelivery = await deliverQuoteWhatsApp({ quote: nextQuote });
   }
   if (order && nextStatus === 'abono_100_confirmado') {
     const orderIndex = installationOrders.findIndex((item) => item.id === order.id);
@@ -1123,6 +1147,7 @@ app.get('/api/tech/visits', authRequired, async (req, res) => {
   const visits = (await syncTechVisitsFromCalendar())
     .filter((visit) => userCanAccessCountry(req.user, visit.countryCode))
     .filter((visit) => matchesCountryScope(visit.countryCode, countryScope))
+    .filter((visit) => canUserAccessVisitSegment(req.user, visit))
     .filter((visit) => canUserSeeVisitsBoard(req.user)
       || normalizeEmail(visit.assignedTechEmail) === normalizeEmail(req.user?.email))
     .sort((a, b) => {
@@ -1138,7 +1163,8 @@ app.delete('/api/tech/visits/:id/global', authRequired, async (req, res) => {
     return res.status(403).json({ error: 'Solo admin puede eliminar una visita globalmente.' });
   }
 
-  const visits = readJSON(files.techVisits, []).map(normalizeTechVisit);
+  const rawVisits = readJSON(files.techVisits, []);
+  const visits = rawVisits.map(normalizeTechVisit);
   const index = visits.findIndex((item) => item.id === req.params.id);
   if (index < 0) return res.status(404).json({ error: 'Visita no encontrada' });
 
@@ -1146,9 +1172,42 @@ app.delete('/api/tech/visits/:id/global', authRequired, async (req, res) => {
   if (!userCanAccessCountry(req.user, current.countryCode)) {
     return res.status(403).json({ error: 'No tienes permiso para eliminar esta visita.' });
   }
-  if (current.quoteId || current.installationOrderId) {
-    return res.status(409).json({ error: 'Esta visita ya tiene cotización u orden vinculada. Primero limpia ese flujo y luego elimina la visita global.' });
-  }
+
+  const rawQuotes = readJSON(files.quotes, []);
+  const quotes = rawQuotes.map(normalizeStoredQuote);
+  const rawOrders = readJSON(files.installationOrders, []);
+  const orders = rawOrders.map(normalizeInstallationOrder);
+  const rawConformities = readJSON(files.conformities, []);
+  const conformities = rawConformities.map(normalizeConformityRecord);
+  const rawWarranties = readJSON(files.warranties, []);
+  const warranties = rawWarranties.map(normalizeWarrantyRecord);
+  const rawClients = readJSON(files.clients, []);
+  const rawAuditLog = readJSON(files.auditLog, []);
+
+  const quote = current.quoteId
+    ? quotes.find((item) => String(item.id || '').trim() === String(current.quoteId || '').trim()) || null
+    : null;
+  const order = current.installationOrderId
+    ? orders.find((item) => String(item.id || '').trim() === String(current.installationOrderId || '').trim()) || null
+    : (quote
+      ? orders.find((item) => String(item.quoteId || '').trim() === String(quote.id || '').trim()) || null
+      : null);
+  const effectiveQuoteId = String(current.quoteId || quote?.id || order?.quoteId || '').trim();
+  const effectiveOrderId = String(current.installationOrderId || order?.id || '').trim();
+  const relatedVisits = visits.filter((item) => (
+    String(item.id || '').trim() === current.id
+    || (effectiveQuoteId && String(item.quoteId || '').trim() === effectiveQuoteId)
+    || (effectiveOrderId && String(item.installationOrderId || '').trim() === effectiveOrderId)
+    || (current.reference && String(item.reference || '').trim() === String(current.reference || '').trim())
+  ));
+  const relatedConformities = conformities.filter((item) => (
+    (effectiveOrderId && String(item.installationOrderId || '').trim() === effectiveOrderId)
+    || (effectiveQuoteId && String(item.quoteId || '').trim() === effectiveQuoteId)
+  ));
+  const relatedWarranties = warranties.filter((item) => (
+    (effectiveOrderId && String(item.installationOrderId || '').trim() === effectiveOrderId)
+    || (effectiveQuoteId && String(item.quoteId || '').trim() === effectiveQuoteId)
+  ));
 
   let booking = null;
   if (liveBookingsSb && current.reference) {
@@ -1172,17 +1231,116 @@ app.delete('/api/tech/visits/:id/global', authRequired, async (req, res) => {
     supabaseDeleted = true;
   }
 
-  saveTechVisits(visits.filter((item) => item.id !== current.id));
+  const backupStamp = `${Date.now()}`;
+  const backupDir = path.join(rootDir, 'backups', `global-delete-${current.id}-${backupStamp}`);
+  ensureDir(backupDir);
+
+  const fileRefs = [
+    String(quote?.pdfFile || '').trim(),
+    resolveStorageFilePath(quote?.pdfPath || ''),
+    ...relatedConformities.flatMap((item) => [item.pdfPath, item.pdfUrl]),
+    ...relatedWarranties.flatMap((item) => [item.pdfPath, item.pdfUrl]),
+  ]
+    .map((item) => resolveStorageFilePath(item))
+    .filter(Boolean);
+
+  writeJSON(path.join(backupDir, 'payload.json'), {
+    deletedAt: new Date().toISOString(),
+    actor: safeUser(req.user),
+    visit: current,
+    relatedVisits,
+    quote,
+    order,
+    conformities: relatedConformities,
+    warranties: relatedWarranties,
+    booking,
+    syncResult,
+    fileRefs,
+  });
+
+  for (const filePath of fileRefs) {
+    archiveDeletedFile(filePath, backupDir);
+  }
+
+  const relatedVisitIds = new Set(relatedVisits.map((item) => String(item.id || '').trim()).filter(Boolean));
+  saveTechVisits(rawVisits.filter((item) => !relatedVisitIds.has(String(item.id || '').trim())));
+  writeJSON(
+    files.quotes,
+    rawQuotes.filter((item) => String(item.id || '').trim() !== effectiveQuoteId),
+  );
+  writeJSON(
+    files.installationOrders,
+    rawOrders.filter((item) => String(item.id || '').trim() !== effectiveOrderId && String(item.quoteId || '').trim() !== effectiveQuoteId),
+  );
+  writeJSON(
+    files.conformities,
+    rawConformities.filter((item) => {
+      const conformityId = String(item.id || '').trim();
+      const orderId = String(item.installationOrderId || '').trim();
+      const quoteId = String(item.quoteId || '').trim();
+      return !relatedConformities.some((record) => String(record.id || '').trim() === conformityId)
+        && (!effectiveOrderId || orderId !== effectiveOrderId)
+        && (!effectiveQuoteId || quoteId !== effectiveQuoteId);
+    }),
+  );
+  writeJSON(
+    files.warranties,
+    rawWarranties.filter((item) => {
+      const warrantyId = String(item.id || '').trim();
+      const orderId = String(item.installationOrderId || '').trim();
+      const quoteId = String(item.quoteId || '').trim();
+      return !relatedWarranties.some((record) => String(record.id || '').trim() === warrantyId)
+        && (!effectiveOrderId || orderId !== effectiveOrderId)
+        && (!effectiveQuoteId || quoteId !== effectiveQuoteId);
+    }),
+  );
+  writeJSON(
+    files.clients,
+    rawClients.map((item) => {
+      const next = { ...item };
+      if (String(next.lastQuoteId || '').trim() === effectiveQuoteId) {
+        next.lastQuoteId = '';
+        next.lastQuoteAt = '';
+      }
+      return next;
+    }),
+  );
+  writeJSON(
+    files.auditLog,
+    rawAuditLog.filter((entry) => !matchesDeletedCaseAuditEntry(entry, {
+      visitId: current.id,
+      relatedVisitIds: [...relatedVisitIds],
+      quoteId: effectiveQuoteId,
+      orderId: effectiveOrderId,
+      reference: current.reference,
+      conformityIds: relatedConformities.map((item) => item.id),
+      warrantyIds: relatedWarranties.map((item) => item.id),
+    })),
+  );
+
+  await resetConversationAfterGlobalDelete({
+    visit: current,
+    booking,
+    quote,
+    order,
+  });
+
   res.json({
     ok: true,
     deleted: {
       visit: true,
+      relatedVisits: relatedVisitIds.size,
+      quote: Boolean(effectiveQuoteId),
+      installationOrder: Boolean(effectiveOrderId),
+      conformities: relatedConformities.length,
+      warranties: relatedWarranties.length,
       external: Boolean(externalEventId),
       supabase: supabaseDeleted,
     },
     syncResult,
     visitId: current.id,
     reference: current.reference,
+    backupDir,
   });
 });
 
@@ -1318,6 +1476,7 @@ app.post('/api/conformities', authRequired, async (req, res) => {
   const pdfBuffer = await createConformityPdfBuffer({ conformity, order, quote });
   conformity.pdfBase64 = pdfBuffer.toString('base64');
   conformity.emailDelivery = await deliverConformityEmail({ conformity, req });
+  conformity.whatsappDelivery = await deliverConformityWhatsApp({ conformity, quote });
 
   const conformities = readJSON(files.conformities, []);
   conformities.push(conformity);
@@ -1356,6 +1515,7 @@ app.post('/api/conformities', authRequired, async (req, res) => {
     const visits = readJSON(files.techVisits, []);
     let visitsChanged = false;
     let syncedInstallationVisit = null;
+    let clickupAttachmentResult = null;
     for (let i = 0; i < visits.length; i += 1) {
       const currentVisit = normalizeTechVisit(visits[i]);
       const isTarget = currentVisit.type === 'instalacion'
@@ -1389,6 +1549,17 @@ app.post('/api/conformities', authRequired, async (req, res) => {
       visitsChanged = true;
     }
     if (visitsChanged) saveTechVisits(visits);
+    const clickupTaskId = String(syncedInstallationVisit?.clickupTaskId || quote?.clickupTaskId || '').trim();
+    if (clickupTaskId) {
+      clickupAttachmentResult = await attachOperationalCaseFilesToClickUpTask(
+        clickupTaskId,
+        {
+          visit: syncedInstallationVisit,
+          quote: normalizeStoredQuote(rawQuotes[quoteIndex] || quote || {}),
+          conformity,
+        },
+      );
+    }
     await notifyConformityMilestone({
       conformity,
       quote: normalizeStoredQuote(rawQuotes[quoteIndex] || quote || {}),
@@ -1405,6 +1576,7 @@ app.post('/api/conformities', authRequired, async (req, res) => {
         quoteId: conformity.quoteId,
         installationOrderId: orderId || '',
         clickupTaskId: syncedInstallationVisit?.clickupTaskId || '',
+        clickupAttachmentError: clickupAttachmentResult?.ok === false ? clickupAttachmentResult.error || '' : '',
       },
     });
   }
@@ -1527,6 +1699,7 @@ app.post('/api/warranties', authRequired, async (req, res) => {
     createdAt: new Date().toISOString(),
     createdBy: normalizeEmail(user?.email || '') || String(user?.employeeCode || user?.id || 'web').trim(),
   });
+  warranty.whatsappDelivery = await deliverWarrantyWhatsApp({ warranty, quote });
 
   const warranties = readJSON(files.warranties, []);
   warranties.push(warranty);
@@ -1572,6 +1745,19 @@ app.post('/api/warranties', authRequired, async (req, res) => {
     }
   }
 
+  const installationVisits = readJSON(files.techVisits, []).map(normalizeTechVisit);
+  const linkedVisit = installationVisits.find((item) => item.type === 'instalacion'
+    && ((orderId && String(item.installationOrderId || '').trim() === orderId)
+      || (quoteId && String(item.quoteId || '').trim() === quoteId))) || null;
+  const warrantyClickUpTaskId = String(linkedVisit?.clickupTaskId || quote?.clickupTaskId || '').trim();
+  if (warrantyClickUpTaskId) {
+    await attachOperationalCaseFilesToClickUpTask(warrantyClickUpTaskId, {
+      visit: linkedVisit,
+      quote,
+      warranty,
+    });
+  }
+
   res.json({ ok: true, warranty });
 });
 
@@ -1597,6 +1783,9 @@ app.patch('/api/tech/visits/:id', authRequired, async (req, res) => {
 
   const current = normalizeTechVisit(visits[index]);
   if (!canUserUpdateVisit(req.user, current)) {
+    return res.status(403).json({ error: 'No tienes permiso para actualizar esta visita' });
+  }
+  if (!canUserAccessVisitSegment(req.user, current)) {
     return res.status(403).json({ error: 'No tienes permiso para actualizar esta visita' });
   }
 
@@ -1685,6 +1874,7 @@ app.post('/api/internal/tech-visits', internalBotAuth, async (req, res) => {
     clientDocument: String(body.clientDocument || body.ruc || '').trim(),
     clientEmail: normalizeEmail(body.clientEmail || ''),
     clientAddress,
+    customerSegment: body.customerSegment || base?.customerSegment || inferCustomerSegment(body),
     scheduledAt: String(body.scheduledAt || '').trim(),
     timeWindow: String(body.timeWindow || '').trim(),
     notes: String(body.notes || '').trim(),
@@ -1809,6 +1999,7 @@ app.post('/api/mobile/conformities', mobileAppAuth, async (req, res) => {
     createdBy: 'mobile_app',
   });
   conformity.emailDelivery = await deliverConformityEmail({ conformity, req });
+  conformity.whatsappDelivery = await deliverConformityWhatsApp({ conformity, quote });
 
   const conformities = readJSON(files.conformities, []);
   const conformityIndex = conformities.findIndex((item) => String(item.id || '').trim() === conformity.id);
@@ -1856,6 +2047,8 @@ app.post('/api/mobile/conformities', mobileAppAuth, async (req, res) => {
   if (orderId || quoteId) {
     const visits = readJSON(files.techVisits, []);
     let visitsChanged = false;
+    let syncedInstallationVisit = null;
+    let clickupSync = null;
     for (let i = 0; i < visits.length; i += 1) {
       const currentVisit = normalizeTechVisit(visits[i]);
       const isTarget = currentVisit.type === 'instalacion'
@@ -1876,9 +2069,39 @@ app.post('/api/mobile/conformities', mobileAppAuth, async (req, res) => {
           quoteId: quoteId || currentVisit.quoteId,
         }),
       });
+      syncedInstallationVisit = visits[i];
+      visitsChanged = true;
+    }
+    const linkedQuote = quoteIndex >= 0 ? normalizeStoredQuote(quotes[quoteIndex]) : null;
+    if (syncedInstallationVisit) {
+      clickupSync = await syncTechVisitToClickUp(syncedInstallationVisit, { quote: linkedQuote });
+      syncedInstallationVisit = normalizeTechVisit({
+        ...syncedInstallationVisit,
+        clickupTaskId: clickupSync.taskId || syncedInstallationVisit.clickupTaskId || linkedQuote?.clickupTaskId || '',
+        clickupTaskUrl: clickupSync.taskUrl || syncedInstallationVisit.clickupTaskUrl || '',
+        clickupSyncedAt: clickupSync.syncedAt || syncedInstallationVisit.clickupSyncedAt || '',
+        clickupSyncError: clickupSync.ok ? '' : String(clickupSync.error || syncedInstallationVisit.clickupSyncError || '').trim(),
+      });
+      if (linkedQuote && clickupSync.taskId && linkedQuote.clickupTaskId !== clickupSync.taskId && quoteIndex >= 0) {
+        quotes[quoteIndex] = normalizeStoredQuote({
+          ...quotes[quoteIndex],
+          clickupTaskId: clickupSync.taskId,
+        });
+        writeJSON(files.quotes, quotes);
+      }
+      const targetIndex = visits.findIndex((item) => String(item.id || '').trim() === syncedInstallationVisit.id);
+      if (targetIndex >= 0) visits[targetIndex] = syncedInstallationVisit;
       visitsChanged = true;
     }
     if (visitsChanged) saveTechVisits(visits);
+    const clickupTaskId = String(syncedInstallationVisit?.clickupTaskId || linkedQuote?.clickupTaskId || '').trim();
+    if (clickupTaskId) {
+      await attachOperationalCaseFilesToClickUpTask(clickupTaskId, {
+        visit: syncedInstallationVisit,
+        quote: linkedQuote,
+        conformity,
+      });
+    }
   }
 
   res.json({ ok: true, conformity, emailDelivery: conformity.emailDelivery });
@@ -1933,6 +2156,7 @@ app.post('/api/mobile/warranties', mobileAppAuth, async (req, res) => {
     createdAt: new Date().toISOString(),
     createdBy: 'mobile_app',
   });
+  warranty.whatsappDelivery = await deliverWarrantyWhatsApp({ warranty, quote });
 
   const warranties = readJSON(files.warranties, []);
   const warrantyIndex = warranties.findIndex((item) => String(item.id || '').trim() === warranty.id);
@@ -1982,6 +2206,43 @@ app.post('/api/mobile/warranties', mobileAppAuth, async (req, res) => {
       warrantyPdfUrl,
     };
     writeJSON(files.quotes, quotes);
+  }
+
+  const installationVisits = readJSON(files.techVisits, []).map(normalizeTechVisit);
+  let linkedVisit = installationVisits.find((item) => item.type === 'instalacion'
+    && ((orderId && String(item.installationOrderId || '').trim() === orderId)
+      || (quoteId && String(item.quoteId || '').trim() === quoteId))) || null;
+  let clickupSync = null;
+  if (linkedVisit) {
+    clickupSync = await syncTechVisitToClickUp(linkedVisit, { quote });
+    linkedVisit = normalizeTechVisit({
+      ...linkedVisit,
+      clickupTaskId: clickupSync.taskId || linkedVisit.clickupTaskId || quote?.clickupTaskId || '',
+      clickupTaskUrl: clickupSync.taskUrl || linkedVisit.clickupTaskUrl || '',
+      clickupSyncedAt: clickupSync.syncedAt || linkedVisit.clickupSyncedAt || '',
+      clickupSyncError: clickupSync.ok ? '' : String(clickupSync.error || linkedVisit.clickupSyncError || '').trim(),
+    });
+    const allVisits = readJSON(files.techVisits, []);
+    const visitIndex = allVisits.findIndex((item) => String(item.id || '').trim() === linkedVisit.id);
+    if (visitIndex >= 0) {
+      allVisits[visitIndex] = linkedVisit;
+      saveTechVisits(allVisits);
+    }
+    if (quoteIndex >= 0 && clickupSync.taskId && quote?.clickupTaskId !== clickupSync.taskId) {
+      quotes[quoteIndex] = {
+        ...quote,
+        clickupTaskId: clickupSync.taskId,
+      };
+      writeJSON(files.quotes, quotes);
+    }
+  }
+  const mobileWarrantyClickUpTaskId = String(linkedVisit?.clickupTaskId || clickupSync?.taskId || quote?.clickupTaskId || '').trim();
+  if (mobileWarrantyClickUpTaskId) {
+    await attachOperationalCaseFilesToClickUpTask(mobileWarrantyClickUpTaskId, {
+      visit: linkedVisit,
+      quote,
+      warranty,
+    });
   }
 
   res.json({ ok: true, warranty });
@@ -2084,6 +2345,11 @@ function safeUser(user) {
       role: user.approvedBy.role,
     } : null,
   };
+}
+
+function safeNumber(value, fallback = 0) {
+  const numeric = Number(value);
+  return Number.isFinite(numeric) ? numeric : fallback;
 }
 
 function splitCsv(value = '') {
@@ -2399,6 +2665,7 @@ function normalizeStoredQuote(quote = {}) {
     ...quote,
     clientDocument: String(quote?.clientDocument || quote?.ruc || '').trim(),
     countryCode: quoteCountryCode(quote),
+    customerSegment: inferCustomerSegment(quote),
     commercialProfileId,
     commercialProfileName,
     commercialProfile: {
@@ -2445,6 +2712,57 @@ function normalizeStoredQuote(quote = {}) {
           confirmedBy: null,
         },
   };
+}
+
+function normalizeCustomerSegment(value = '') {
+  const normalized = String(value || '').trim().toLowerCase().replace(/[\s-]+/g, '_');
+  if (['b2b', 'empresa', 'empresas', 'corporativo', 'corporativa', 'corporate', 'business'].includes(normalized)) return 'b2b';
+  if (['b2c', 'cliente', 'clientes', 'residencial', 'consumer', 'particular'].includes(normalized)) return 'b2c';
+  return '';
+}
+
+function inferCustomerSegment(record = {}) {
+  const explicit = normalizeCustomerSegment(
+    record?.customerSegment
+    || record?.customerType
+    || record?.segment
+    || record?.clientSegment
+    || record?.tipo_cliente
+    || record?.tipoCliente,
+  );
+  if (explicit) return explicit;
+
+  const companyName = String(record?.companyName || record?.nombre_empresa || '').trim();
+  if (companyName) return 'b2b';
+
+  const haystack = [
+    record?.clientType,
+    record?.notes,
+    record?.summary,
+    record?.resumen,
+    record?.motivoHandoff,
+    record?.motivo_handoff,
+    record?.intencion_principal,
+    record?.subestado_flujo,
+  ]
+    .filter(Boolean)
+    .join(' ')
+    .toLowerCase();
+
+  if (/\b(b2b|empresa|empresas|corporativ|corporate|dealer|flota|cuenta corporativa|contacto corporativo)\b/.test(haystack)) {
+    return 'b2b';
+  }
+
+  return 'b2c';
+}
+
+function userRequiresB2BVisitScope(user = {}) {
+  return normalizeManagedUserRole(user?.role || '') === 'kam_b2b';
+}
+
+function canUserAccessVisitSegment(user = {}, visit = {}) {
+  if (!userRequiresB2BVisitScope(user)) return true;
+  return inferCustomerSegment(visit) === 'b2b';
 }
 
 function normalizeTechVisitStatus(value) {
@@ -2576,6 +2894,7 @@ function buildTechVisitFromCalendarBooking(row = {}, existing, defaultTech = {})
     clientDocument: String(row.dni_cliente || current?.clientDocument || '').trim(),
     clientEmail: normalizeEmail(row.correo_cliente || current?.clientEmail || ''),
     clientAddress: address || current?.clientAddress || '',
+    customerSegment: current?.customerSegment || inferCustomerSegment(current || {}),
     scheduledAt,
     timeWindow: String(row.etiqueta_horario || current?.timeWindow || '').trim(),
     notes: current?.notes || generatedNotes,
@@ -2728,6 +3047,7 @@ function normalizeTechVisit(visit = {}) {
     clientDocument: String(visit.clientDocument || visit.ruc || '').trim(),
     clientEmail: normalizeEmail(visit.clientEmail || ''),
     clientAddress: String(visit.clientAddress || '').trim(),
+    customerSegment: inferCustomerSegment(visit),
     scheduledAt: String(visit.scheduledAt || '').trim(),
     timeWindow: String(visit.timeWindow || '').trim(),
     notes: String(visit.notes || '').trim(),
@@ -3011,6 +3331,132 @@ function buildCatalogFromItems(items = [], defaults = {}) {
   };
 }
 
+async function buildCatalogExportWorkbook(config = {}, { countryCode = 'PE', generatedBy = 'EVINKA' } = {}) {
+  const workbook = new ExcelJS.Workbook();
+  const generatedAt = new Date().toISOString();
+  workbook.creator = 'EVINKA Cotizador';
+  workbook.company = 'EVINKA';
+  workbook.created = new Date();
+  workbook.modified = new Date();
+  workbook.subject = `Catálogo actual ${countryCode}`;
+  workbook.title = `EVINKA catálogo ${countryCode}`;
+
+  const items = Array.isArray(config.catalog?.items) ? config.catalog.items : [];
+  const conditionals = items.filter((item) => String(item.code || '').startsWith('007'));
+  const laborRows = items.filter((item) => String(item.section || '').trim().toUpperCase() === 'MANO_OBRA');
+  const materialRows = items.filter((item) => String(item.section || '').trim().toUpperCase() === 'MATERIAL');
+
+  const summarySheet = workbook.addWorksheet('Resumen');
+  addKeyValueSheet(summarySheet, [
+    ['País activo', countryCode === 'CO' ? 'Colombia' : 'Perú'],
+    ['Moneda', config.currency || countryCurrency(countryCode)],
+    ['Empresa', config.company?.name || 'EVINKA Cotizador'],
+    ['Tagline', config.company?.tagline || ''],
+    ['Generado en', generatedAt],
+    ['Generado por', generatedBy],
+    ['Items catálogo', items.length],
+    ['Filas mano de obra', laborRows.length],
+    ['Filas materiales', materialRows.length],
+    ['Filas extras/condicionales', conditionals.length],
+  ]);
+
+  const parametersSheet = workbook.addWorksheet('Parametros');
+  const distanceFactors = Array.isArray(config.defaults?.distanceFactors) ? config.defaults.distanceFactors : [];
+  addKeyValueSheet(parametersSheet, [
+    ['IGV / IVA', Number(config.defaults?.igv || 0)],
+    ['Factor general costos', Number(config.defaults?.factorGeneralCosts || 1)],
+    ['Divisor margen', Number(config.defaults?.divisorMargin || 0.75)],
+    ['Máx cable 6mm', Number(config.defaults?.max6mm || 0)],
+    ['Máx cable 10mm', Number(config.defaults?.max10mm || 0)],
+    ['Metros incluidos Casa', Number(config.defaults?.includedMetersCasa || 0)],
+    ['Mínimo Casa', Number(config.defaults?.minimumCasa || 0)],
+    ['Metros incluidos Edificio', Number(config.defaults?.includedMetersEdificio || 0)],
+    ['Mínimo Edificio', Number(config.defaults?.minimumEdificio || 0)],
+    ['Tipo cambio cargadores', Number(config.defaults?.chargerExchangeRate || 0)],
+    ['Minibox USD', Number(config.defaults?.miniboxPriceUsd || 0)],
+    ['Alien X USD', Number(config.defaults?.alienPriceUsd || 0)],
+  ]);
+  if (distanceFactors.length) {
+    parametersSheet.addRow([]);
+    parametersSheet.addRow(['Tramo distancia', 'Factor']);
+    parametersSheet.getRow(parametersSheet.rowCount).font = { bold: true };
+    distanceFactors.forEach((item) => {
+      parametersSheet.addRow([
+        item?.upto === Infinity || item?.upto === 0 ? '> tramo final' : Number(item?.upto || 0),
+        Number(item?.factor || 0),
+      ]);
+    });
+  }
+  autoFitWorksheet(parametersSheet);
+
+  const profilesSheet = workbook.addWorksheet('Perfiles comerciales');
+  addTableSheet(profilesSheet, ['ID', 'Nombre', 'Margen %', 'Default'], (config.commercialProfiles || []).map((item, index) => ([
+    item.id || `perfil-${index + 1}`,
+    item.name || '',
+    Number(item.marginPercent || 0),
+    index === 0 || item.isDefault ? 'Sí' : 'No',
+  ])));
+
+  const masterHeaders = ['Código', 'Sección', 'Naturaleza', 'Etiqueta', 'Unidad', 'Descripción', 'Costo base', 'Costo ajustado', 'Margen', 'Precio con margen', 'Regla'];
+  addTableSheet(workbook.addWorksheet('Catalogo maestro'), masterHeaders, items.map((item) => catalogRowToArray(item)));
+  addTableSheet(workbook.addWorksheet('Mano de obra'), masterHeaders, laborRows.map((item) => catalogRowToArray(item)));
+  addTableSheet(workbook.addWorksheet('Materiales'), masterHeaders, materialRows.map((item) => catalogRowToArray(item)));
+  addTableSheet(workbook.addWorksheet('Extras'), masterHeaders, conditionals.map((item) => catalogRowToArray(item)));
+
+  return workbook.xlsx.writeBuffer();
+}
+
+function addKeyValueSheet(worksheet, rows = []) {
+  worksheet.columns = [
+    { header: 'Campo', key: 'field', width: 34 },
+    { header: 'Valor', key: 'value', width: 24 },
+  ];
+  worksheet.getRow(1).font = { bold: true };
+  rows.forEach(([field, value]) => worksheet.addRow([field, value]));
+  worksheet.views = [{ state: 'frozen', ySplit: 1 }];
+  autoFitWorksheet(worksheet);
+}
+
+function addTableSheet(worksheet, headers = [], rows = []) {
+  worksheet.columns = headers.map((header, index) => ({ header, key: `col_${index + 1}`, width: Math.max(String(header || '').length + 2, 12) }));
+  worksheet.getRow(1).font = { bold: true };
+  worksheet.views = [{ state: 'frozen', ySplit: 1 }];
+  if (!rows.length) {
+    worksheet.addRow(['Sin datos']);
+    autoFitWorksheet(worksheet);
+    return;
+  }
+  rows.forEach((row) => worksheet.addRow(row));
+  autoFitWorksheet(worksheet);
+}
+
+function autoFitWorksheet(worksheet) {
+  worksheet.columns.forEach((column) => {
+    let maxLength = 12;
+    column.eachCell({ includeEmpty: true }, (cell) => {
+      const raw = cell.value == null ? '' : String(cell.value);
+      maxLength = Math.max(maxLength, Math.min(raw.length + 2, 60));
+    });
+    column.width = maxLength;
+  });
+}
+
+function catalogRowToArray(item = {}) {
+  return [
+    item.code || '',
+    item.section || '',
+    item.nature || '',
+    item.label || '',
+    item.unit || '',
+    item.description || '',
+    Number(item.costBase || 0),
+    Number(item.costAdjusted || 0),
+    Number(item.margin || 0),
+    Number(item.priceWithMargin || 0),
+    item.rule || '',
+  ];
+}
+
 function normalizeCatalogItem(item, defaults = {}) {
   const factorGeneralCosts = Number(defaults.factorGeneralCosts || 1);
   const divisorMargin = Number(defaults.divisorMargin || 0.75);
@@ -3044,8 +3490,22 @@ function sanitizeQuotePhotos(photos = []) {
       dataUrl: String(photo?.dataUrl || '').trim(),
       title: String(photo?.title || '').trim(),
       comment: String(photo?.comment || '').trim(),
+      frame: sanitizePhotoFrame(photo?.frame),
     }))
     .filter((photo) => photo.dataUrl.startsWith('data:image/'));
+}
+
+function sanitizePhotoFrame(frame = {}) {
+  const clamp = (value, min, max, fallback) => {
+    const numeric = Number(value);
+    if (!Number.isFinite(numeric)) return fallback;
+    return Math.min(max, Math.max(min, numeric));
+  };
+  return {
+    zoom: clamp(frame?.zoom, 1, 2.6, 1),
+    focusX: clamp(frame?.focusX, 0, 1, 0.5),
+    focusY: clamp(frame?.focusY, 0, 1, 0.5),
+  };
 }
 
 function saveQuotePhotos(quoteId, photos = []) {
@@ -3066,6 +3526,7 @@ function saveQuotePhotos(quoteId, photos = []) {
         name: photo.name || fileName,
         title: photo.title || '',
         comment: photo.comment || '',
+        frame: sanitizePhotoFrame(photo.frame),
         contentType: parsed.mimeType,
         filePath,
       });
@@ -3256,6 +3717,7 @@ function buildQuote(payload, config, user) {
     visitDate: String(payload.visitDate || '').trim(),
     installationType: String(payload.installationType || '').trim(),
     clientType: String(payload.clientType || '').trim(),
+    customerSegment: inferCustomerSegment(payload),
     commercialProfile,
     commercialProfileId: commercialProfile.id,
     commercialProfileName: commercialProfile.name,
@@ -3322,6 +3784,99 @@ async function deliverQuoteEmail({ quote, config, req, pdfPath, pdfFilename }) {
   } catch (error) {
     return { ok: false, failedAt: new Date().toISOString(), message: error.message };
   }
+}
+
+async function deliverPdfByWhatsApp({
+  phone = '',
+  fileName = 'documento.pdf',
+  mimeType = 'application/pdf',
+  buffer = null,
+  caption = '',
+} = {}) {
+  if (!meta) {
+    return { ok: false, skipped: true, message: 'WhatsApp no está configurado todavía.' };
+  }
+  const normalizedPhone = normalizePhoneForWhatsApp(phone);
+  if (!normalizedPhone) {
+    return { ok: false, skipped: true, message: 'No se indicó teléfono del cliente para WhatsApp.' };
+  }
+  if (!buffer || !Buffer.isBuffer(buffer) || !buffer.length) {
+    return { ok: false, skipped: true, message: 'No encontré el archivo PDF para enviar por WhatsApp.' };
+  }
+  try {
+    const uploaded = await meta.uploadMedia({ buffer, mimeType, fileName });
+    await meta.sendDocument(normalizedPhone, {
+      mediaId: String(uploaded?.id || '').trim(),
+      caption,
+      fileName,
+    });
+    return { ok: true, sentAt: new Date().toISOString(), message: `Documento enviado por WhatsApp a ${normalizedPhone}.` };
+  } catch (error) {
+    return { ok: false, failedAt: new Date().toISOString(), message: error instanceof Error ? error.message : String(error || 'No pude enviar el documento por WhatsApp.') };
+  }
+}
+
+async function deliverQuoteWhatsApp({ quote }) {
+  const pdfPath = String(quote?.pdfFile || '').trim();
+  const fileName = String(quote?.pdfFilename || path.basename(pdfPath || '')).trim() || `Cotizacion_${quote?.id || 'EVINKA'}.pdf`;
+  if (!pdfPath || !fs.existsSync(pdfPath)) {
+    return { ok: false, skipped: true, message: 'Cotización generada sin PDF local disponible para WhatsApp.' };
+  }
+  const client = formatDisplayName(quote?.clientName) || 'cliente';
+  const caption = [
+    `Hola ${client}, aquí tienes tu cotización EVINKA ⚡`,
+    `Cotización: ${quote?.id || '-'}`,
+    `Total: ${money(quote?.total || 0)}`,
+  ].join('\n');
+  return deliverPdfByWhatsApp({
+    phone: String(quote?.phone || '').trim(),
+    fileName,
+    mimeType: 'application/pdf',
+    buffer: await fs.promises.readFile(pdfPath),
+    caption,
+  });
+}
+
+async function deliverConformityWhatsApp({ conformity, quote = null, visit = null }) {
+  const fileName = String(conformity?.pdfFilename || `Conformidad_${conformity?.installationOrderId || conformity?.id || 'EVINKA'}.pdf`).trim();
+  const pdfBase64 = String(conformity?.pdfBase64 || '').trim();
+  if (!pdfBase64) {
+    return { ok: false, skipped: true, message: 'Conformidad sin PDF embebido para enviar por WhatsApp.' };
+  }
+  const client = formatDisplayName(conformity?.clientName || quote?.clientName || visit?.clientName) || 'cliente';
+  const caption = [
+    `Hola ${client}, te compartimos tu conformidad EVINKA ⚡`,
+    `Orden: ${conformity?.installationOrderId || quote?.installationOrderId || '-'}`,
+    `Cotización: ${conformity?.quoteId || quote?.id || '-'}`,
+  ].join('\n');
+  return deliverPdfByWhatsApp({
+    phone: String(visit?.clientPhone || quote?.phone || '').trim(),
+    fileName,
+    mimeType: 'application/pdf',
+    buffer: Buffer.from(pdfBase64, 'base64'),
+    caption,
+  });
+}
+
+async function deliverWarrantyWhatsApp({ warranty, quote = null, visit = null }) {
+  const fileName = String(warranty?.pdfFilename || `Garantia_${warranty?.installationOrderId || warranty?.id || 'EVINKA'}.pdf`).trim();
+  const pdfBase64 = String(warranty?.pdfBase64 || '').trim();
+  if (!pdfBase64) {
+    return { ok: false, skipped: true, message: 'Garantía sin PDF embebido para enviar por WhatsApp.' };
+  }
+  const client = formatDisplayName(warranty?.clientName || quote?.clientName || visit?.clientName) || 'cliente';
+  const caption = [
+    `Hola ${client}, te compartimos tu garantía EVINKA ⚡`,
+    `Orden: ${warranty?.installationOrderId || quote?.installationOrderId || '-'}`,
+    `Código: ${warranty?.warrantyCode || '-'}`,
+  ].join('\n');
+  return deliverPdfByWhatsApp({
+    phone: String(visit?.clientPhone || quote?.phone || '').trim(),
+    fileName,
+    mimeType: 'application/pdf',
+    buffer: Buffer.from(pdfBase64, 'base64'),
+    caption,
+  });
 }
 
 function buildQuoteEmailContent({ quote, config, pdfUrl }) {
@@ -4097,6 +4652,8 @@ async function createPdf(quote, config, filePath) {
     const currencyLabel = pdfCurrencyLabel(quote);
     const motorysaHeaderPath = '/root/.openclaw/workspace/.tmp/motorysa-assets/motorysa-header-strip.png';
     const motorysaCarPath = '/root/.openclaw/workspace/.tmp/motorysa-assets/motorysa-car.jpg';
+    const standardCoHeaderPath = '/root/.openclaw/workspace/.tmp/co-pdf-reference/encabezado.png';
+    const standardCoCarPath = '/root/.openclaw/workspace/.tmp/co-pdf-reference/carro del centro.jpg';
 
     let cursorY = 204;
     if (templateKind === 'motorysa' && quote.countryCode === 'CO') {
@@ -4107,6 +4664,11 @@ async function createPdf(quote, config, filePath) {
       drawMotorysaPaymentsPage(doc, quote);
       doc.addPage();
       drawMotorysaTermsPage(doc, quote);
+    } else if (templateKind === 'standard' && quote.countryCode === 'CO') {
+      drawStandardColombiaCoverPage(doc, quote, { headerPath: standardCoHeaderPath, carImagePath: standardCoCarPath });
+      doc.addPage();
+      drawStandardColombiaPhotoPricingPage(doc, quote, logoPath);
+      renderPhotoReport(doc, quote, logoPath);
     } else {
       drawQuoteHeader(doc, quote, logoPath);
       doc.fontSize(10).font('Helvetica').text(buildGreeting(quote.clientName), 36, 160);
@@ -4370,7 +4932,7 @@ function renderPhotoReport(doc, quote, logoPath) {
     doc.roundedRect(frameX, frameY, frameW, frameH, 18).lineWidth(1).fillAndStroke('#fbfaf8', '#d8c7aa');
     doc.roundedRect(frameX + imageInset, frameY + imageInset, frameW - (imageInset * 2), imageAreaH, 14).lineWidth(0.8).strokeColor('#d8c7aa').stroke();
     try {
-      doc.image(photo.filePath, frameX + imageInset + 8, frameY + imageInset + 8, { fit: [frameW - (imageInset * 2) - 16, imageAreaH - 16], align: 'center', valign: 'center' });
+      drawCoverPhotoInFrame(doc, photo.filePath, frameX + imageInset + 8, frameY + imageInset + 8, frameW - (imageInset * 2) - 16, imageAreaH - 16, photo.frame);
     } catch {
       doc.font('Helvetica').fontSize(10).fillColor('#666').text('No se pudo cargar la imagen.', frameX + 24, frameY + 120, { width: frameW - 48, align: 'center' });
     }
@@ -4442,6 +5004,328 @@ function drawMotorysaCoverPage(doc, quote, { headerStripPath, carImagePath } = {
     y = doc.y + 9;
   });
   return y;
+}
+
+function drawStandardColombiaCoverPage(doc, quote = {}, { headerPath, carImagePath } = {}) {
+  const contentX = 36;
+  const contentW = 520;
+  const brand = '#b7854a';
+  const topY = drawStandardColombiaHeaderAsset(doc, headerPath);
+  let y = drawStandardColombiaCoverInfoBlock(doc, topY + 14, quote, { contentX, contentW });
+
+  const intro = 'Es un placer presentarle la siguiente propuesta, elaborada en respuesta a su solicitud: suministro y/o instalación de cargador para su vehículo eléctrico.';
+  doc.font('Helvetica').fontSize(10.1).fillColor('#111').text(intro, contentX, y, { width: contentW, align: 'left', lineGap: 1 });
+  y = doc.y + 10;
+
+  y = drawStandardColombiaCoverImage(doc, y, carImagePath, { x: 0, width: doc.page.width, maxHeight: 228 }) + 12;
+
+  const sections = buildStandardColombiaCoverSections(quote);
+  sections.forEach((section) => {
+    y = drawStandardColombiaCoverSection(doc, y, section, { contentX, contentW, brand });
+  });
+
+  return y;
+}
+
+function drawStandardColombiaHeaderAsset(doc, headerPath = '') {
+  const defaultBottomY = 102;
+  if (!headerPath || !fs.existsSync(headerPath)) return defaultBottomY;
+  try {
+    const headerImage = doc.openImage(headerPath);
+    const targetWidth = doc.page.width;
+    const scaledHeight = (headerImage.height / headerImage.width) * targetWidth;
+    doc.image(headerPath, 0, 0, { width: targetWidth });
+    return scaledHeight;
+  } catch {
+    doc.image(headerPath, 0, 0, { fit: [doc.page.width, 120], align: 'center' });
+    return 108;
+  }
+}
+
+function drawStandardColombiaCoverInfoBlock(doc, startY, quote = {}, { contentX = 36, contentW = 520 } = {}) {
+  const leftWidth = 250;
+  const rightX = contentX + 304;
+  const rightWidth = Math.max(120, contentW - (rightX - contentX));
+  const brand = '#b7854a';
+  let y = startY;
+
+  doc.font('Helvetica').fontSize(10.1).fillColor(brand).text('Señor (a):', contentX, y, { width: leftWidth, align: 'left' });
+  y = doc.y + 4;
+
+  const lines = [
+    formatDisplayName(quote.clientName) || '-',
+    `Celular:  ${quote.phone || '-'}`,
+    `Dirección:  ${quote.address || '-'}`,
+    `Ciudad:  ${quote.city || '-'}`,
+    `Fecha:  ${formatDateLongCo(quote.visitDate || quote.createdAt)}`,
+  ];
+  doc.font('Helvetica').fontSize(10).fillColor('#111');
+  lines.forEach((line, index) => {
+    doc.text(line, contentX, y, { width: leftWidth, align: 'left' });
+    y = doc.y + (index === 0 ? 4 : 3);
+  });
+
+  doc.font('Helvetica').fontSize(10).fillColor('#111').text(`Cotización:  ${displayQuoteNumber(quote.id)}`, rightX, startY + 30, { width: rightWidth, align: 'left' });
+  return Math.max(y, startY + 80) + 4;
+}
+
+function drawStandardColombiaCoverImage(doc, startY, imagePath = '', { x = 0, width = 595.28, maxHeight = 228 } = {}) {
+  if (!imagePath || !fs.existsSync(imagePath)) return startY;
+  try {
+    const image = doc.openImage(imagePath);
+    const scaledHeight = (image.height / image.width) * width;
+    const renderHeight = Math.min(maxHeight, scaledHeight);
+    doc.image(imagePath, x, startY, { fit: [width, renderHeight], align: 'center', valign: 'center' });
+    return startY + renderHeight;
+  } catch {
+    doc.image(imagePath, x, startY, { width });
+    return doc.y || (startY + maxHeight);
+  }
+}
+
+function drawStandardColombiaCoverSection(doc, startY, section = {}, { contentX = 36, contentW = 520, brand = '#b7854a' } = {}) {
+  const title = `${section.index}. ${section.title}: `;
+  const bodyLines = (Array.isArray(section.body) ? section.body : [section.body]).filter(Boolean);
+  if (!bodyLines.length) return startY;
+  doc.font('Helvetica-Bold').fontSize(9.5).fillColor(brand).text(title, contentX, startY, { width: contentW, continued: true, align: 'left' });
+  doc.font('Helvetica').fontSize(9.5).fillColor('#111').text(bodyLines[0], { width: contentW, align: 'justify', lineGap: 1 });
+  let y = doc.y + 6;
+  for (const line of bodyLines.slice(1)) {
+    doc.font('Helvetica').fontSize(9.5).fillColor('#111').text(line, contentX, y, { width: contentW, align: 'justify', lineGap: 1 });
+    y = doc.y + 5;
+  }
+  return y + 6;
+}
+
+function buildStandardColombiaCoverSections(quote = {}) {
+  const chargerPower = resolveQuoteChargerPowerLabel(quote);
+  const chargerText = chargerPower ? `${chargerPower} kW` : '7 kW';
+  return [
+    {
+      index: 1,
+      title: 'Alcance',
+      body: `Suministro y/o instalación de cargador eléctrico de ${chargerText} para su vehículo, incluyendo mano de obra especializada, materiales de primera calidad, pruebas de funcionamiento y puesta en marcha.`,
+    },
+    {
+      index: 2,
+      title: 'Condiciones de instalación',
+      body: 'Los trabajos se ejecutarán bajo el cumplimiento estricto de la normativa vigente: IEC 61851-1, NTC 2050 (segunda actualización) y el Reglamento Técnico de Instalaciones Eléctricas – RETIE 2024, garantizando seguridad, calidad y confiabilidad en el servicio.',
+    },
+    {
+      index: 3,
+      title: 'Personal a cargo',
+      body: 'La instalación estará a cargo de personal altamente calificado: un técnico electricista con matrícula profesional vigente, acompañado, de ser necesario, por personal de apoyo. Todo el equipo cuenta con elementos de protección personal y el cumplimiento actualizado de sus obligaciones parafiscales.',
+    },
+    {
+      index: 4,
+      title: 'Responsabilidad del cliente',
+      body: 'Será responsabilidad del cliente gestionar los permisos y autorizaciones correspondientes ante la administración, tanto para el ingreso vehicular como para el personal encargado de la instalación.',
+    },
+    {
+      index: 5,
+      title: 'Observaciones de la instalación',
+      body: buildStandardColombiaObservationLines(quote),
+    },
+  ];
+}
+
+function buildStandardColombiaObservationLines(quote = {}) {
+  const lines = [];
+  const distance = Number(quote.distance || 0);
+  if (distance > 0) {
+    lines.push(`La acometida saldrá desde el medidor hasta el punto de instalación del cargador a una distancia aproximada de ${formatNumber(distance)}m, el cableado saldrá por la parte superior del tablero del medidor en tubería ${String(quote.tubeType || 'EMT').toLowerCase()} 3/4 hasta llegar al punto de instalación.`);
+  }
+  if (String(quote.voltage || '').trim()) {
+    lines.push(`El cargador quedará a una tensión de ${String(quote.voltage).trim()}V.`);
+  }
+  const technicianNotes = String(quote.technicianNotes || '').trim();
+  const installationDescription = String(quote.installationDescription || '').trim();
+  const source = technicianNotes || installationDescription;
+  if (source) {
+    source
+      .split(/\r?\n+/)
+      .map((line) => line.trim())
+      .filter(Boolean)
+      .forEach((line) => lines.push(line));
+  }
+  if (!lines.length) {
+    lines.push('La propuesta económica podrá ajustarse luego de la validación final en sitio, recorrido definitivo, canalización disponible, protecciones requeridas y condiciones reales del punto de instalación.');
+  }
+  return lines;
+}
+
+function drawStandardColombiaPhotoPricingPage(doc, quote = {}, logoPath = '') {
+  drawStandardColombiaPhotoReportHeader(doc, quote, logoPath);
+  const photoBottom = drawStandardColombiaPhotoGrid(doc, 24, 90, 547, 210, quote);
+  let y = photoBottom + 18;
+  y = drawStandardColombiaPricingSummaryTable(doc, 24, y, 547, quote);
+  y = drawStandardColombiaPricingNotes(doc, 24, y + 14, 547, quote);
+  drawStandardColombiaCompanyFooter(doc, 24, Math.max(y + 8, 734), 547, quote);
+}
+
+function drawStandardColombiaPhotoReportHeader(doc, quote = {}, logoPath = '') {
+  const lineY = 58;
+  doc.moveTo(24, lineY).lineTo(571, lineY).strokeColor('#d8c7aa').lineWidth(1.2).stroke();
+  doc.font('Helvetica-Bold').fontSize(10.8).fillColor('#b7854a').text('6. Registro fotográfico', 24, 74, { width: 180, align: 'left' });
+}
+
+function drawCoverPhotoInFrame(doc, imagePath, x, y, width, height, frame = {}) {
+  const safeFrame = sanitizePhotoFrame(frame);
+  const image = doc.openImage(imagePath);
+  if (!image?.width || !image?.height) {
+    doc.image(imagePath, x, y, { fit: [width, height], align: 'center', valign: 'center' });
+    return;
+  }
+  const baseScale = Math.max(width / image.width, height / image.height);
+  const scale = baseScale * safeFrame.zoom;
+  const drawWidth = image.width * scale;
+  const drawHeight = image.height * scale;
+  const desiredX = x + (width / 2) - (drawWidth * safeFrame.focusX);
+  const desiredY = y + (height / 2) - (drawHeight * safeFrame.focusY);
+  const minX = x + width - drawWidth;
+  const minY = y + height - drawHeight;
+  const imageX = drawWidth <= width ? x + ((width - drawWidth) / 2) : Math.min(x, Math.max(minX, desiredX));
+  const imageY = drawHeight <= height ? y + ((height - drawHeight) / 2) : Math.min(y, Math.max(minY, desiredY));
+  doc.save();
+  doc.rect(x, y, width, height).clip();
+  doc.image(imagePath, imageX, imageY, { width: drawWidth, height: drawHeight });
+  doc.restore();
+}
+
+function drawStandardColombiaPhotoGrid(doc, x, y, width, height, quote = {}) {
+  const photos = Array.isArray(quote?.photos) ? quote.photos.filter((photo) => fs.existsSync(photo.filePath)).slice(0, 4) : [];
+  const cols = 4;
+  const cellW = width / cols;
+  const border = '#111';
+  doc.rect(x, y, width, height).lineWidth(1).strokeColor(border).stroke();
+  for (let index = 0; index < cols; index += 1) {
+    const cx = x + (index * cellW);
+    if (index > 0) {
+      doc.moveTo(cx, y).lineTo(cx, y + height).lineWidth(0.8).strokeColor(border).stroke();
+    }
+    const photo = photos[index];
+    if (photo?.filePath) {
+      try {
+        drawCoverPhotoInFrame(doc, photo.filePath, cx + 2, y + 2, cellW - 4, height - 4, photo.frame);
+      } catch {
+        doc.font('Helvetica').fontSize(8.5).fillColor('#777').text(`Foto ${index + 1}`, cx, y + (height / 2) - 4, { width: cellW, align: 'center' });
+      }
+    } else {
+      doc.font('Helvetica').fontSize(8.5).fillColor('#777').text(`Foto ${index + 1}`, cx, y + (height / 2) - 4, { width: cellW, align: 'center' });
+    }
+  }
+  doc.fillColor('#111');
+  return y + height;
+}
+
+function drawStandardColombiaPricingSummaryTable(doc, x, y, width, quote = {}) {
+  const border = '#5a5a5a';
+  const grey = '#d9d9d9';
+  const gold = '#d2a15f';
+  const leftW = 410;
+  const rightW = width - leftW;
+  const laborDescW = 258;
+  const laborUnitW = 134;
+  const laborQtyW = width - laborDescW - laborUnitW;
+  const materialH = 82;
+
+  const cell = (cx, cy, w, h, text, { fill = '#fff', bold = false, align = 'left', fontSize = 9.2, color = '#111', paddingX = 10, paddingY = 6, lineWidth = 0.8 } = {}) => {
+    doc.rect(cx, cy, w, h).lineWidth(lineWidth).fillAndStroke(fill, border);
+    doc.font(bold ? 'Helvetica-Bold' : 'Helvetica').fontSize(fontSize).fillColor(color).text(String(text ?? ''), cx + paddingX, cy + paddingY, { width: w - (paddingX * 2), align });
+  };
+
+  cell(x, y, width, 24, 'CUADRO DE PRECIOS - INSTALACIÓN', { fill: gold, bold: false, align: 'center', fontSize: 9.6, color: '#fff', paddingY: 5 });
+  y += 24;
+
+  cell(x, y, laborDescW, 28, 'MANO DE OBRA', { fill: grey, align: 'center', fontSize: 9.3, paddingY: 6 });
+  cell(x + laborDescW, y, laborUnitW, 28, 'UNIDAD', { fill: grey, align: 'center', fontSize: 9.3, paddingY: 6 });
+  cell(x + laborDescW + laborUnitW, y, laborQtyW, 28, 'CANTIDAD', { fill: grey, align: 'center', fontSize: 9.3, paddingY: 6 });
+  y += 28;
+
+  cell(x, y, laborDescW, 28, 'Técnico electricista certificado', { fontSize: 8.9, paddingY: 7 });
+  cell(x + laborDescW, y, laborUnitW, 28, 'GL', { align: 'center', fontSize: 8.9, paddingY: 7 });
+  cell(x + laborDescW + laborUnitW, y, laborQtyW, 28, '1', { align: 'center', fontSize: 8.9, paddingY: 7 });
+  y += 28;
+
+  cell(x, y, laborDescW, 28, 'Transporte y herramientas', { fontSize: 8.9, paddingY: 7 });
+  cell(x + laborDescW, y, laborUnitW, 28, 'GL', { align: 'center', fontSize: 8.9, paddingY: 7 });
+  cell(x + laborDescW + laborUnitW, y, laborQtyW, 28, '1', { align: 'center', fontSize: 8.9, paddingY: 7 });
+  y += 28;
+
+  cell(x, y, laborDescW, 28, 'MATERIAL', { fill: grey, align: 'center', fontSize: 9.3, paddingY: 6 });
+  cell(x + laborDescW, y, laborUnitW, 28, 'UNIDAD', { fill: grey, align: 'center', fontSize: 9.3, paddingY: 6 });
+  cell(x + laborDescW + laborUnitW, y, laborQtyW, 28, 'CANTIDAD', { fill: grey, align: 'center', fontSize: 9.3, paddingY: 6 });
+  y += 28;
+
+  const materialText = 'Cable, tubería, protecciones\neléctricas, accesorios y demás\nelementos necesarios para una\ninstalación segura y en correcto\nfuncionamiento.';
+  cell(x, y, laborDescW, materialH, materialText, { fontSize: 8.7, paddingY: 10 });
+  cell(x + laborDescW, y, laborUnitW, materialH, 'GL', { align: 'center', fontSize: 8.9, paddingY: 30 });
+  cell(x + laborDescW + laborUnitW, y, laborQtyW, materialH, '1', { align: 'center', fontSize: 8.9, paddingY: 30 });
+  y += materialH;
+
+  cell(x, y, leftW, 30, 'SUBTOTAL INSTALACION', { fill: grey, align: 'center', fontSize: 9.3, paddingY: 7 });
+  cell(x + leftW, y, rightW, 30, `$ ${pdfAmount(quote, quote.subtotal)}`, { fill: grey, align: 'right', fontSize: 9.3, paddingY: 7 });
+  y += 30;
+
+  cell(x, y, leftW, 30, `IVA ${quote.countryCode === 'CO' ? '19%' : '18%'}`, { align: 'center', fontSize: 9.3, paddingY: 7 });
+  cell(x + leftW, y, rightW, 30, `$ ${pdfAmount(quote, quote.igv)}`, { align: 'right', fontSize: 9.3, paddingY: 7 });
+  y += 30;
+
+  cell(x, y, leftW, 32, 'TOTAL INSTALACIÓN IVA INCLUIDO', { fill: gold, align: 'center', fontSize: 9.5, paddingY: 8 });
+  cell(x + leftW, y, rightW, 32, `$ ${pdfAmount(quote, quote.total)}`, { fill: gold, align: 'right', fontSize: 9.5, paddingY: 8 });
+  return y + 32;
+}
+
+function drawStandardColombiaPricingNotes(doc, x, y, width, quote = {}) {
+  doc.font('Helvetica').fontSize(8.9).fillColor('#111').text('Nota: Este valor NO incluye el cargador.', x, y, { width, align: 'center' });
+  y = doc.y + 8;
+  const notes = [
+    'Validez de la cotización: 7 dias',
+    'Duración estimada de la Instalación: 1-2 dias',
+    'Garantia materiales y cargador por defectos de fabricación: 1 año',
+  ];
+  notes.forEach((line) => {
+    doc.font('Helvetica').fontSize(8.3).fillColor('#111').text(line, x, y, { width, align: 'left' });
+    y = doc.y + 1;
+  });
+  doc.font('Helvetica').fontSize(8.3).fillColor('#ff1c1c').text('La propuesta incluye autodeclaración de cumplimiento RETIE por parte del constructor. No incluye dictamen de uso final, en caso de requerirse es un adicional.', x, y + 2, { width, align: 'left', lineGap: 0.5 });
+  return doc.y;
+}
+
+function drawStandardColombiaCompanyFooter(doc, x, y, width, quote = {}) {
+  doc.font('Helvetica-Bold').fontSize(8.7).fillColor('#e31c23').text('EVINKA TECHNOLOGY S.A.S.', x + 16, y, { width, align: 'left' });
+  doc.font('Helvetica').fontSize(7.9).fillColor('#e31c23').text('Soluciones de movilidad eléctrica, instalación, soporte técnico y operación comercial.', x + 16, y + 14, { width, align: 'left' });
+  doc.fillColor('#111').fontSize(8.1).text(`Contacto: ${quote?.countryCode === 'CO' ? '302 436 1227' : '949076102'} · contacto@evinka.tech`, x + 16, y + 28, { width, align: 'left' });
+  doc.text('Pag.Web: evinka.tech', x + 16, y + 40, { width, align: 'left' });
+}
+
+function resolveQuoteChargerPowerLabel(quote = {}) {
+  const numeric = Number(quote.powerKw || 0);
+  if (Number.isFinite(numeric) && numeric > 0) return formatNumber(numeric);
+  const ref = String(quote.chargerReference || quote.charger?.label || '').trim();
+  const match = ref.match(/(\d+(?:[\.,]\d+)?)\s*k\s*w/i);
+  if (match) return match[1].replace(',', '.');
+  const computed = Number(quote.voltage || 0) * Number(quote.current || 0) / 1000;
+  if (Number.isFinite(computed) && computed > 0) {
+    const rounded = Math.round(computed * 10) / 10;
+    return Number.isInteger(rounded) ? String(rounded) : String(rounded).replace(/\.0$/, '');
+  }
+  return '';
+}
+
+function formatDateLongCo(value) {
+  const raw = String(value || '').trim();
+  const match = raw.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (match) {
+    const months = ['enero', 'febrero', 'marzo', 'abril', 'mayo', 'junio', 'julio', 'agosto', 'septiembre', 'octubre', 'noviembre', 'diciembre'];
+    const [, year, month, day] = match;
+    return `${Number(day)} de ${months[Math.max(0, Number(month) - 1)] || month} de ${year}`;
+  }
+  try {
+    return new Intl.DateTimeFormat('es-CO', { day: 'numeric', month: 'long', year: 'numeric', timeZone: DISPLAY_TIME_ZONE }).format(new Date(value));
+  } catch {
+    return formatDateOnly(value);
+  }
 }
 
 function drawMotorysaCoverInfoTable(doc, startY, quote) {
@@ -4545,7 +5429,7 @@ function drawMotorysaPhotoGrid(doc, x, y, width, height, quote = {}) {
     const photo = photos[index];
     if (photo?.filePath) {
       try {
-        doc.image(photo.filePath, cx + 2, y + 2, { fit: [cellW - 4, height - 4], align: 'center', valign: 'center' });
+        drawCoverPhotoInFrame(doc, photo.filePath, cx + 2, y + 2, cellW - 4, height - 4, photo.frame);
       } catch {
         doc.font('Helvetica').fontSize(8).fillColor('#777').text(`Foto ${index + 1}`, cx, y + (height / 2) - 4, { width: cellW, align: 'center' });
       }
@@ -4928,12 +5812,28 @@ function defaultRoleMatrix() {
         permissions: ['quotes.create', 'quotes.write', 'quotes.review', 'visits.assign', 'conformities.review', 'advisor.handle'],
       },
       {
+        id: 'kam_b2c',
+        label: 'KAM B2C',
+        aliases: ['kam_b2c', 'kam', 'kam_b2c_pe', 'kam_b2c_co', 'comercial_kam'],
+        tabs: ['quote', 'quotes', 'visits', 'ops', 'conformities', 'advisor', 'audit'],
+        modules: ['inicio', 'asesor', 'visitas', 'cotizaciones', 'instalaciones', 'conformidades', 'auditoria', 'historial_cliente'],
+        permissions: ['quotes.create', 'quotes.write', 'quotes.review', 'visits.assign', 'visits.execute', 'installations.assign', 'conformities.review', 'advisor.handle', 'audit.read'],
+      },
+      {
+        id: 'kam_b2b',
+        label: 'KAM B2B',
+        aliases: ['kam_b2b', 'kam_b2b_pe', 'kam_b2b_co', 'corporativo_kam'],
+        tabs: ['quote', 'quotes', 'visits', 'ops', 'conformities', 'advisor', 'audit'],
+        modules: ['inicio', 'asesor', 'visitas', 'cotizaciones', 'instalaciones', 'conformidades', 'auditoria', 'historial_cliente'],
+        permissions: ['quotes.create', 'quotes.write', 'quotes.review', 'visits.assign', 'visits.execute', 'installations.assign', 'conformities.review', 'advisor.handle', 'audit.read'],
+      },
+      {
         id: 'tecnico_visitas',
         label: 'Técnico de visitas',
         aliases: ['tech', 'tecnico', 'tecnico_visitas', 'visit_tech'],
         tabs: ['visits', 'quotes'],
         modules: ['inicio', 'visitas', 'detalle_tecnico', 'cotizaciones_consulta', 'evidencias'],
-        permissions: ['quotes.create', 'visits.execute', 'quotes.review'],
+        permissions: ['quotes.create', 'visits.execute'],
       },
       {
         id: 'tecnico_instalador',
@@ -5097,6 +5997,7 @@ function normalizeClientRecord(client = {}) {
     address: String(client.address || '').trim(),
     residenceType: String(client.residenceType || '').trim(),
     companyName: String(client.companyName || '').trim(),
+    customerSegment: inferCustomerSegment(client),
     vehicleModel: String(client.vehicleModel || '').trim(),
     vin: String(client.vin || '').trim(),
     outOfCity: String(client.outOfCity || '').trim(),
@@ -5140,6 +6041,7 @@ function upsertOperationalClientFromQuote(quote, user) {
     address: quote.address,
     residenceType: quote.residenceType || quote.propertyType,
     companyName: quote.companyName,
+    customerSegment: quote.customerSegment,
     vehicleModel: quote.vehicleModel,
     vin: quote.vin,
     outOfCity: quote.outOfCity,
@@ -5305,12 +6207,30 @@ function canUserManageCommercialQuoteFlow(user = {}) {
   return userRoleHasPermission(user, 'quotes.write') || email === 'luis.campos@evinka.tech';
 }
 
+function canUserConfirmQuoteForSend(user = {}) {
+  return userRoleHasPermission(user, 'quotes.review') || canUserManageCommercialQuoteFlow(user);
+}
+
+function canUserMoveQuoteStatus(user = {}, nextStatus = '', currentStatus = '') {
+  const target = normalizeQuoteStatus(nextStatus || currentStatus || 'cotizada');
+  if (!target || target === currentStatus) return true;
+  if (target === 'lista_envio') return canUserConfirmQuoteForSend(user);
+  if (target === 'aceptada_cliente') return canUserManageCommercialQuoteFlow(user);
+  if (target === 'abono_100_confirmado') return canUserConfirmFullPayment(user);
+  if (['recotizar', 'cancelada', 'instalada', 'cotizada'].includes(target)) {
+    return canUserManageCommercialQuoteFlow(user);
+  }
+  return canUserManageCommercialQuoteFlow(user);
+}
+
 function canUserCreateQuote(user = {}) {
   return userRoleHasPermission(user, 'quotes.create') || canUserManageCommercialQuoteFlow(user);
 }
 
 function canUserScheduleInstallation(user = {}) {
-  return canUserManageCommercialQuoteFlow(user);
+  return userRoleHasPermission(user, 'installations.execute')
+    || userRoleHasPermission(user, 'installations.assign')
+    || canUserManageCommercialQuoteFlow(user);
 }
 
 function canUserReadAudit(user = {}) {
@@ -6003,19 +6923,24 @@ function resolveClickUpVisitStatus(visit = {}, quote = null) {
   if (conformityStatus === 'pdf_generated' || ['pendiente_cierre', 'cerrada'].includes(visitStatus) || quoteStatus === 'instalada') {
     return 'finalizados';
   }
-  if (String(visit.type || '').trim().toLowerCase() === 'instalacion' || ['agendada', 'en_ruta', 'en_visita'].includes(visitStatus)) {
+  if (
+    String(visit.type || '').trim().toLowerCase() === 'instalacion'
+    || ['agendada', 'en_ruta', 'en_visita'].includes(visitStatus)
+    || quoteStatus === 'aceptada_cliente'
+    || visitStatus === 'aceptada_cliente'
+  ) {
     return 'en ejecución';
   }
   if (['recotizar', 'cancelada'].includes(quoteStatus) || ['recotizar', 'cancelada', 'reprogramada'].includes(visitStatus)) {
     return 'trabajo previo / a la espe';
   }
-  if (quoteStatus === 'aceptada_cliente') {
+  if (visitStatus === 'lista_envio' || quoteStatus === 'lista_envio') {
     return 'cotizados';
   }
   if (
     visitStatus === 'pendiente_cotizacion'
     || visitStatus === 'cotizada'
-    || ['cotizada', 'lista_envio'].includes(quoteStatus)
+    || quoteStatus === 'cotizada'
   ) {
     return CLICKUP_B2C_QUOTE_PENDING_STATUS;
   }
@@ -6109,9 +7034,16 @@ async function buildClickUpVisitPayload(visit = {}, quote = null) {
   };
 }
 
+function resolveClickUpMilestoneAssigneeIds(visit = {}, quote = null) {
+  return [];
+}
+
 async function buildClickUpCreateVisitPayload(visit = {}, quote = null) {
   const payload = await buildClickUpVisitPayload(visit, quote);
-  if (Number.isFinite(CLICKUP_B2C_DEFAULT_ASSIGNEE_ID) && CLICKUP_B2C_DEFAULT_ASSIGNEE_ID > 0) {
+  const milestoneAssignees = resolveClickUpMilestoneAssigneeIds(visit, quote);
+  if (milestoneAssignees.length) {
+    payload.assignees = milestoneAssignees;
+  } else if (Number.isFinite(CLICKUP_B2C_DEFAULT_ASSIGNEE_ID) && CLICKUP_B2C_DEFAULT_ASSIGNEE_ID > 0) {
     payload.assignees = [CLICKUP_B2C_DEFAULT_ASSIGNEE_ID];
   }
   return payload;
@@ -6144,6 +7076,252 @@ async function syncClickUpCustomFields(taskId, fields = []) {
   }
 }
 
+function isClickUpNotFoundError(error) {
+  const message = error instanceof Error ? error.message : String(error || '');
+  return /clickup\s+404/i.test(message) || /task not found/i.test(message) || /deleted/i.test(message);
+}
+
+async function getClickUpAttachmentNames(taskId) {
+  const normalizedTaskId = String(taskId || '').trim();
+  if (!normalizedTaskId) return new Set();
+  const currentTask = await clickUpRequest('GET', `/task/${encodeURIComponent(normalizedTaskId)}`);
+  const names = Array.isArray(currentTask?.attachments)
+    ? currentTask.attachments
+      .map((item) => String(item?.title || item?.name || '').trim())
+      .filter(Boolean)
+    : [];
+  return new Set(names);
+}
+
+async function attachBufferToClickUpTask(taskId, {
+  buffer,
+  fileName = '',
+  mimeType = 'application/octet-stream',
+} = {}, attachedNames = null) {
+  const normalizedTaskId = String(taskId || '').trim();
+  const normalizedFileName = String(fileName || '').trim();
+  if (!normalizedTaskId || !normalizedFileName || !buffer) {
+    return { ok: false, skipped: true, reason: 'missing_attachment_payload' };
+  }
+  const knownNames = attachedNames || await getClickUpAttachmentNames(normalizedTaskId);
+  if (knownNames.has(normalizedFileName)) {
+    return { ok: true, skipped: true, reason: 'already_attached' };
+  }
+  const form = new FormData();
+  form.append('attachment', new Blob([buffer], { type: mimeType || 'application/octet-stream' }), normalizedFileName);
+
+  const response = await fetch(`${CLICKUP_API_BASE}/task/${encodeURIComponent(normalizedTaskId)}/attachment`, {
+    method: 'POST',
+    headers: {
+      Authorization: CLICKUP_API_TOKEN,
+    },
+    body: form,
+  });
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    throw new Error(`ClickUp attachment ${response.status}: ${data.err || data.error || response.statusText}`);
+  }
+  knownNames.add(normalizedFileName);
+  return {
+    ok: true,
+    skipped: false,
+    attachmentId: String(data?.id || '').trim(),
+    attachmentTitle: String(data?.title || normalizedFileName).trim(),
+  };
+}
+
+async function attachQuotePdfToClickUpTask(taskId, quote = null, attachedNames = null) {
+  const normalizedTaskId = String(taskId || '').trim();
+  const pdfPath = String(quote?.pdfFile || '').trim();
+  const pdfFilename = String(quote?.pdfFilename || path.basename(pdfPath || '')).trim();
+  if (!normalizedTaskId || !pdfPath || !pdfFilename) {
+    return { ok: false, skipped: true, reason: 'missing_pdf' };
+  }
+  if (!fs.existsSync(pdfPath)) {
+    return { ok: false, skipped: true, reason: 'pdf_not_found', error: `No existe el PDF ${pdfPath}` };
+  }
+  const buffer = await fs.promises.readFile(pdfPath);
+  return attachBufferToClickUpTask(normalizedTaskId, {
+    buffer,
+    fileName: pdfFilename,
+    mimeType: 'application/pdf',
+  }, attachedNames);
+}
+
+function isUuidLike(value = '') {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(String(value || '').trim());
+}
+
+function normalizeStoragePhone(value = '') {
+  return String(value || '').replace(/\D+/g, '');
+}
+
+async function listClientFilesForClickUpContext({ visit = {}, quote = null } = {}) {
+  if (!liveBookingsSb) return [];
+  const reference = String(visit?.reference || quote?.reference || '').trim();
+  const phone = normalizeStoragePhone(visit?.clientPhone || quote?.phone || '');
+  const conversationIds = new Set();
+  const rows = [];
+
+  if (reference) {
+    if (isUuidLike(reference)) conversationIds.add(reference);
+    try {
+      const conversations = await liveBookingsSb.select(
+        'conversaciones',
+        `codigo_ticket_solicitado=eq.${encodeURIComponent(reference)}&select=id_conversacion&limit=20`,
+      );
+      for (const item of conversations) {
+        const conversationId = String(item?.id_conversacion || '').trim();
+        if (conversationId) conversationIds.add(conversationId);
+      }
+    } catch (error) {
+      console.warn('listClientFilesForClickUpContext conversations lookup failed:', error?.message || error);
+    }
+  }
+
+  const queries = [];
+  if (reference) {
+    queries.push(`ticket_id=eq.${encodeURIComponent(reference)}&select=*&order=created_at.asc&limit=100`);
+  }
+  if (conversationIds.size) {
+    queries.push(`conversation_id=in.(${[...conversationIds].join(',')})&select=*&order=created_at.asc&limit=100`);
+  }
+  if (!queries.length && phone) {
+    queries.push(`phone=eq.${encodeURIComponent(phone)}&select=*&order=created_at.asc&limit=50`);
+  }
+
+  for (const query of queries) {
+    try {
+      const result = await liveBookingsSb.select('client_files', query);
+      if (Array.isArray(result)) rows.push(...result);
+    } catch (error) {
+      if (!String(error?.message || '').includes('client_files')) {
+        console.warn('listClientFilesForClickUpContext files lookup failed:', error?.message || error);
+      }
+    }
+  }
+
+  const seen = new Set();
+  return rows.filter((item) => {
+    const key = [
+      String(item?.id || '').trim(),
+      String(item?.storage_bucket || '').trim(),
+      String(item?.storage_path || '').trim(),
+      String(item?.file_name || '').trim(),
+    ].join('|');
+    if (!key || seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
+async function downloadClientFileForClickUp(file = {}) {
+  const bucket = String(file?.storage_bucket || '').trim();
+  const objectPath = String(file?.storage_path || '').trim();
+  const fileName = String(file?.file_name || 'archivo').trim() || 'archivo';
+  const mimeType = String(file?.mime_type || 'application/octet-stream').trim() || 'application/octet-stream';
+  if (liveStorageSb && bucket && objectPath) {
+    const downloaded = await liveStorageSb.downloadObject(bucket, objectPath);
+    return {
+      buffer: downloaded.buffer,
+      fileName,
+      mimeType: downloaded.mimeType || mimeType,
+    };
+  }
+  const url = String(file?.signed_url || file?.public_url || '').trim();
+  if (!url) {
+    throw new Error(`No encontré storage para ${fileName}.`);
+  }
+  const response = await fetch(url);
+  if (!response.ok) {
+    throw new Error(`No pude descargar ${fileName} (${response.status}).`);
+  }
+  return {
+    buffer: Buffer.from(await response.arrayBuffer()),
+    fileName,
+    mimeType: response.headers.get('content-type') || mimeType,
+  };
+}
+
+async function attachOperationalCaseFilesToClickUpTask(taskId, {
+  visit = null,
+  quote = null,
+  conformity = null,
+  warranty = null,
+} = {}) {
+  const normalizedTaskId = String(taskId || '').trim();
+  if (!normalizedTaskId) return { ok: false, skipped: true, reason: 'missing_task' };
+
+  let attachedNames = null;
+  const attached = [];
+  const errors = [];
+
+  try {
+    attachedNames = await getClickUpAttachmentNames(normalizedTaskId);
+  } catch (error) {
+    errors.push(error instanceof Error ? error.message : String(error || 'No pude leer los adjuntos actuales de ClickUp.'));
+    attachedNames = new Set();
+  }
+
+  if (quote) {
+    try {
+      const result = await attachQuotePdfToClickUpTask(normalizedTaskId, quote, attachedNames);
+      if (result.ok && !result.skipped) attached.push(result.attachmentTitle || String(quote?.pdfFilename || '').trim());
+    } catch (error) {
+      errors.push(error instanceof Error ? error.message : String(error || 'No pude adjuntar la cotización.'));
+    }
+  }
+
+  for (const generated of [
+    conformity
+      ? {
+          base64: String(conformity.pdfBase64 || '').trim(),
+          fileName: String(conformity.pdfFilename || `Conformidad_${conformity.installationOrderId || conformity.id}.pdf`).trim(),
+          mimeType: 'application/pdf',
+        }
+      : null,
+    warranty
+      ? {
+          base64: String(warranty.pdfBase64 || '').trim(),
+          fileName: String(warranty.pdfFilename || `Garantia_${warranty.installationOrderId || warranty.id}.pdf`).trim(),
+          mimeType: 'application/pdf',
+        }
+      : null,
+  ].filter(Boolean)) {
+    if (!generated.base64 || !generated.fileName) continue;
+    try {
+      const result = await attachBufferToClickUpTask(normalizedTaskId, {
+        buffer: Buffer.from(generated.base64, 'base64'),
+        fileName: generated.fileName,
+        mimeType: generated.mimeType,
+      }, attachedNames);
+      if (result.ok && !result.skipped) attached.push(result.attachmentTitle || generated.fileName);
+    } catch (error) {
+      errors.push(error instanceof Error ? error.message : String(error || `No pude adjuntar ${generated.fileName}.`));
+    }
+  }
+
+  const clientFiles = await listClientFilesForClickUpContext({ visit: visit || {}, quote });
+  for (const file of clientFiles) {
+    try {
+      const downloaded = await downloadClientFileForClickUp(file);
+      const result = await attachBufferToClickUpTask(normalizedTaskId, downloaded, attachedNames);
+      if (result.ok && !result.skipped) attached.push(result.attachmentTitle || downloaded.fileName);
+    } catch (error) {
+      const fileName = String(file?.file_name || 'archivo').trim() || 'archivo';
+      errors.push(error instanceof Error ? `${fileName}: ${error.message}` : `${fileName}: ${String(error || 'error desconocido')}`);
+    }
+  }
+
+  return {
+    ok: errors.length === 0,
+    skipped: !attached.length && !clientFiles.length,
+    attached,
+    clientFilesFound: clientFiles.length,
+    error: errors.join(' | '),
+  };
+}
+
 async function requestGlobalVisitDeleteSync({ eventId = '', ticket = '', countryCode = '' } = {}) {
   const normalizedEventId = String(eventId || '').trim();
   const normalizedTicket = String(ticket || '').trim();
@@ -6165,6 +7343,98 @@ async function requestGlobalVisitDeleteSync({ eventId = '', ticket = '', country
     throw new Error(data.error || `No pude eliminar la visita globalmente en meta-webhook (${response.status}).`);
   }
   return data;
+}
+
+function resolveStorageFilePath(value = '') {
+  const raw = String(value || '').trim();
+  if (!raw) return '';
+  if (path.isAbsolute(raw)) return raw;
+  if (raw.startsWith('/pdf/')) return path.join(quotesDir, raw.replace(/^\/pdf\//, ''));
+  if (raw.startsWith('pdf/')) return path.join(quotesDir, raw.replace(/^pdf\//, ''));
+  return '';
+}
+
+function archiveDeletedFile(filePath = '', backupDir = '') {
+  const normalized = String(filePath || '').trim();
+  if (!normalized || !fs.existsSync(normalized)) return '';
+  const destination = path.join(backupDir, path.basename(normalized));
+  try {
+    fs.renameSync(normalized, destination);
+    return destination;
+  } catch {
+    try {
+      fs.copyFileSync(normalized, destination);
+      fs.unlinkSync(normalized);
+      return destination;
+    } catch {
+      return '';
+    }
+  }
+}
+
+function matchesDeletedCaseAuditEntry(entry = {}, {
+  visitId = '',
+  relatedVisitIds = [],
+  quoteId = '',
+  orderId = '',
+  reference = '',
+  conformityIds = [],
+  warrantyIds = [],
+} = {}) {
+  const ids = new Set([
+    String(visitId || '').trim(),
+    ...relatedVisitIds.map((item) => String(item || '').trim()),
+    String(quoteId || '').trim(),
+    String(orderId || '').trim(),
+    String(reference || '').trim(),
+    ...conformityIds.map((item) => String(item || '').trim()),
+    ...warrantyIds.map((item) => String(item || '').trim()),
+  ].filter(Boolean));
+  if (!ids.size) return false;
+
+  const entityId = String(entry?.entityId || '').trim();
+  if (entityId && ids.has(entityId)) return true;
+
+  const detail = entry?.detail && typeof entry.detail === 'object' ? entry.detail : {};
+  const detailValues = [
+    detail.visitId,
+    detail.quoteId,
+    detail.installationOrderId,
+    detail.orderId,
+    detail.reference,
+    detail.ticket,
+    detail.conformityId,
+    detail.warrantyId,
+  ].map((item) => String(item || '').trim()).filter(Boolean);
+  return detailValues.some((item) => ids.has(item));
+}
+
+async function resetConversationAfterGlobalDelete({ visit = {}, booking = null, quote = null, order = null } = {}) {
+  if (!liveBookingsSb) return { ok: false, skipped: true, reason: 'supabase_not_configured' };
+
+  const candidates = [
+    String(visit.reference || '').trim(),
+    String(booking?.codigo_cita || '').trim(),
+    String(quote?.reference || '').trim(),
+    String(order?.reference || '').trim(),
+  ].filter(Boolean);
+
+  const conversationId = candidates.find((value) => /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value)) || '';
+  if (!conversationId) {
+    return { ok: true, skipped: true, reason: 'conversation_not_linked' };
+  }
+
+  await liveBookingsSb.update('conversaciones', `id_conversacion=eq.${encodeURIComponent(conversationId)}`, {
+    paso_actual: 'menu_principal',
+    estado_conversacion: 'open',
+    codigo_ticket_solicitado: null,
+    requiere_handoff: false,
+    motivo_handoff: null,
+    subestado_flujo: null,
+    actualizado_en: new Date().toISOString(),
+  }).catch(() => []);
+
+  return { ok: true, conversationId };
 }
 
 function shouldSyncVisitToClickUp(visit = {}) {
@@ -6192,19 +7462,53 @@ async function syncTechVisitToClickUp(visit = {}, { quote = null } = {}) {
   try {
     const linkedQuote = quote || findQuoteForVisit(visit);
     const payload = await buildClickUpVisitPayload(visit, linkedQuote);
+    const milestoneAssignees = resolveClickUpMilestoneAssigneeIds(visit, linkedQuote);
     const { custom_fields: customFields = [], ...taskPayload } = payload;
-    const task = visit.clickupTaskId
-      ? await clickUpRequest('PUT', `/task/${encodeURIComponent(visit.clickupTaskId)}`, taskPayload)
-      : await clickUpRequest('POST', `/list/${encodeURIComponent(CLICKUP_B2C_LIST_ID)}/task`, await buildClickUpCreateVisitPayload(visit, linkedQuote));
+    let task;
+    let taskId = String(visit.clickupTaskId || '').trim();
+    if (taskId) {
+      try {
+        if (milestoneAssignees.length) {
+          const currentTask = await clickUpRequest('GET', `/task/${encodeURIComponent(taskId)}`);
+          const currentAssignees = Array.isArray(currentTask?.assignees)
+            ? currentTask.assignees
+                .map((item) => Number(item?.id || item?.userid || item?.user_id || 0))
+                .filter((value, index, array) => Number.isFinite(value) && value > 0 && array.indexOf(value) === index)
+            : [];
+          const add = milestoneAssignees.filter((id) => !currentAssignees.includes(id));
+          const rem = currentAssignees.filter((id) => !milestoneAssignees.includes(id));
+          if (add.length || rem.length) {
+            taskPayload.assignees = { add, rem };
+          }
+        }
+        task = await clickUpRequest('PUT', `/task/${encodeURIComponent(taskId)}`, taskPayload);
+      } catch (error) {
+        if (!isClickUpNotFoundError(error)) throw error;
+        taskId = '';
+      }
+    }
+    if (!taskId) {
+      task = await clickUpRequest('POST', `/list/${encodeURIComponent(CLICKUP_B2C_LIST_ID)}/task`, await buildClickUpCreateVisitPayload(visit, linkedQuote));
+      taskId = String(task?.id || '').trim();
+    }
     if (customFields.length) {
-      await syncClickUpCustomFields(String(task.id || visit.clickupTaskId || '').trim(), customFields);
+      await syncClickUpCustomFields(String(task?.id || taskId || visit.clickupTaskId || '').trim(), customFields);
+    }
+    let attachmentError = '';
+    if (linkedQuote?.pdfFile && taskId) {
+      try {
+        await attachQuotePdfToClickUpTask(taskId, linkedQuote);
+      } catch (error) {
+        attachmentError = error instanceof Error ? error.message : String(error || 'No pude adjuntar el PDF en ClickUp.');
+      }
     }
     return {
-      ok: true,
+      ok: !attachmentError,
       skipped: false,
-      taskId: String(task.id || '').trim(),
-      taskUrl: String(task.url || '').trim(),
+      taskId: String(task?.id || taskId || '').trim(),
+      taskUrl: String(task?.url || visit.clickupTaskUrl || '').trim(),
       syncedAt: new Date().toISOString(),
+      error: attachmentError,
     };
   } catch (error) {
     console.error('syncTechVisitToClickUp failed:', error);

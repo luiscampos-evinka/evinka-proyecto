@@ -124,29 +124,37 @@ class _QuotesHistoryScreenState extends State<QuotesHistoryScreen> {
   }
 
   Future<void> _markClientAccepted(QuoteRecord quote) async {
+    final payment = await _promptPaymentCapture(
+      title: 'Registrar abono 50%',
+      clientName: quote.clientName,
+      suggestedAmount: quote.total * 0.5,
+      suggestedObservation: 'Abono 50% confirmado por KAM desde EVINKA Suite.',
+    );
+    if (payment == null) return;
     await _updateQuoteStatus(
       quote,
       status: 'aceptada_cliente',
       successMessage:
-          'Abono inicial del 50% registrado. Ahora ya puedes agendar la instalación.',
-      paymentAmount: quote.total * 0.5,
-      paymentObservation: 'Abono 50% confirmado por KAM desde EVINKA Suite.',
+          'Abono inicial registrado. Ahora ya puedes agendar la instalación.',
+      paymentAmount: payment.amount,
+      paymentObservation: payment.observation,
     );
   }
 
   Future<void> _markFullPayment(QuoteRecord quote) async {
-    final ok = await _confirmAction(
+    final payment = await _promptPaymentCapture(
       title: 'Registrar abono 100%',
-      message:
-          'Se marcará el proyecto de ${quote.clientName} como pagado al 100% y cerrado. ¿Continuar?',
+      clientName: quote.clientName,
+      suggestedAmount: quote.total,
+      suggestedObservation: 'Abono 100% confirmado por KAM desde EVINKA Suite.',
     );
-    if (!ok) return;
+    if (payment == null) return;
     await _updateQuoteStatus(
       quote,
       status: 'abono_100_confirmado',
       successMessage: 'Abono 100% registrado. El proyecto quedó cerrado.',
-      paymentAmount: quote.total,
-      paymentObservation: 'Abono 100% confirmado por KAM desde EVINKA Suite.',
+      paymentAmount: payment.amount,
+      paymentObservation: payment.observation,
     );
   }
 
@@ -230,6 +238,99 @@ class _QuotesHistoryScreenState extends State<QuotesHistoryScreen> {
       ),
     );
     return ok == true;
+  }
+
+  double? _parsePaymentAmount(String raw) {
+    final normalized = raw.trim().replaceAll(',', '.');
+    return double.tryParse(normalized);
+  }
+
+  Future<_PaymentCapture?> _promptPaymentCapture({
+    required String title,
+    required String clientName,
+    required double suggestedAmount,
+    required String suggestedObservation,
+  }) async {
+    final amountCtrl = TextEditingController(
+      text: suggestedAmount.toStringAsFixed(2),
+    );
+    final observationCtrl = TextEditingController(text: suggestedObservation);
+    String? errorText;
+    final result = await showDialog<_PaymentCapture>(
+      context: context,
+      builder: (dialogContext) {
+        return StatefulBuilder(
+          builder: (context, setStateDialog) => AlertDialog(
+            title: Text(title),
+            content: SizedBox(
+              width: 420,
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text('Cliente: $clientName'),
+                  const SizedBox(height: 12),
+                  TextField(
+                    controller: amountCtrl,
+                    keyboardType:
+                        const TextInputType.numberWithOptions(decimal: true),
+                    decoration: const InputDecoration(
+                      labelText: 'Monto recibido',
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  TextField(
+                    controller: observationCtrl,
+                    minLines: 2,
+                    maxLines: 4,
+                    decoration: const InputDecoration(
+                      labelText: 'Observación',
+                    ),
+                  ),
+                  if (errorText != null) ...[
+                    const SizedBox(height: 10),
+                    Text(
+                      errorText!,
+                      style: const TextStyle(color: Colors.redAccent),
+                    ),
+                  ],
+                ],
+              ),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(dialogContext),
+                child: const Text('Cancelar'),
+              ),
+              FilledButton(
+                onPressed: () {
+                  final amount = _parsePaymentAmount(amountCtrl.text);
+                  final observation = observationCtrl.text.trim();
+                  if (amount == null || amount < 0) {
+                    setStateDialog(
+                        () => errorText = 'Ingresa un monto válido.');
+                    return;
+                  }
+                  if (observation.isEmpty) {
+                    setStateDialog(
+                        () => errorText = 'Escribe una observación.');
+                    return;
+                  }
+                  Navigator.pop(
+                    dialogContext,
+                    _PaymentCapture(amount: amount, observation: observation),
+                  );
+                },
+                child: const Text('Guardar'),
+              ),
+            ],
+          ),
+        );
+      },
+    );
+    amountCtrl.dispose();
+    observationCtrl.dispose();
+    return result;
   }
 
   void _replaceQuote(QuoteRecord updated) {
@@ -472,7 +573,7 @@ class _QuotesHistoryScreenState extends State<QuotesHistoryScreen> {
                                         Icons.picture_as_pdf_outlined),
                                     label: const Text('PDF'),
                                   ),
-                                  if (widget.user.canEditCommercialFlow &&
+                                  if (widget.user.canConfirmQuoteForSend &&
                                       quote.canConfirmForSend)
                                     OutlinedButton.icon(
                                       onPressed: isBusy
@@ -482,7 +583,7 @@ class _QuotesHistoryScreenState extends State<QuotesHistoryScreen> {
                                           Icons.check_circle_outline),
                                       label: const Text('Confirmar cotización'),
                                     ),
-                                  if (widget.user.canEditCommercialFlow &&
+                                  if (widget.user.canMarkInitialPayment &&
                                       quote.canMarkClientAccepted)
                                     FilledButton.tonalIcon(
                                       onPressed: isBusy
@@ -510,7 +611,7 @@ class _QuotesHistoryScreenState extends State<QuotesHistoryScreen> {
                                       icon: const Icon(Icons.cancel_outlined),
                                       label: const Text('Cotización cancelada'),
                                     ),
-                                  if (widget.user.canEditCommercialFlow &&
+                                  if (widget.user.canScheduleInstallationFlow &&
                                       quote.canScheduleInstallation)
                                     FilledButton.icon(
                                       onPressed: isBusy
@@ -520,7 +621,7 @@ class _QuotesHistoryScreenState extends State<QuotesHistoryScreen> {
                                           Icons.event_available_outlined),
                                       label: const Text('Agendar instalación'),
                                     ),
-                                  if (widget.user.canEditCommercialFlow &&
+                                  if (widget.user.canMarkFullPayment &&
                                       quote.canMarkFullPayment)
                                     FilledButton.tonalIcon(
                                       onPressed: isBusy
@@ -597,4 +698,11 @@ class _QuotesHistoryScreenState extends State<QuotesHistoryScreen> {
     if (date == null) return iso;
     return DateFormat('dd/MM/yyyy HH:mm').format(date.toLocal());
   }
+}
+
+class _PaymentCapture {
+  const _PaymentCapture({required this.amount, required this.observation});
+
+  final double amount;
+  final String observation;
 }

@@ -4,7 +4,7 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>EVINKA Asesor</title>
-    <link rel="stylesheet" href="/styles.css?v=20260520advisor1" />
+    <link rel="stylesheet" href="/styles.css?v=20260521advisor3" />
   </head>
   <body>
     <div id="loginView" class="login-shell">
@@ -303,6 +303,145 @@
       </main>
     </div>
 
-    <script src="/app.js?v=20260520advisor1" defer></script>
+    <div id="visitModal" class="modal-shell hidden" aria-hidden="true">
+      <div id="visitModalBackdrop" class="modal-backdrop"></div>
+      <div class="modal-card">
+        <div class="modal-header">
+          <div>
+            <div class="eyebrow">EVINKA · VISITA TÉCNICA</div>
+            <h3>Coordinar visita</h3>
+            <p class="modal-subtitle">Confirma los datos que el cliente compartió por el chat y registra la visita de forma ordenada.</p>
+          </div>
+          <button type="button" id="closeVisitModalBtn" class="ghost compact-icon-btn" aria-label="Cerrar">✕</button>
+        </div>
+
+        <form id="visitForm" class="modal-body stack">
+          <section class="visit-summary-card">
+            <div class="visit-summary-name" id="visitCustomerName">Cliente EVINKA</div>
+            <div class="visit-summary-meta" id="visitCustomerMeta">-</div>
+            <div class="visit-summary-meta" id="visitCustomerLocation">-</div>
+            <div class="visit-summary-grid">
+              <div>
+                <span class="visit-summary-label">Correo</span>
+                <strong id="visitCustomerEmail">-</strong>
+              </div>
+              <div>
+                <span class="visit-summary-label">Ticket</span>
+                <strong id="visitCustomerTicket">-</strong>
+              </div>
+            </div>
+            <div class="visit-summary-grid single">
+              <div>
+                <span class="visit-summary-label">Motivo del caso</span>
+                <strong id="visitCustomerReason">-</strong>
+              </div>
+            </div>
+          </section>
+
+          <section class="visit-summary-card">
+            <div class="visit-summary-grid">
+              <label class="field-label">
+                Dirección del suministro
+                <textarea id="visitReceiptAddressInput" rows="2" placeholder="Tal cual figura en el recibo" required></textarea>
+              </label>
+              <label class="field-label">
+                Potencia contratada
+                <input id="visitReceiptPowerInput" type="text" placeholder="Ej.: 7.4 kW" required />
+              </label>
+            </div>
+            <div class="visit-summary-grid">
+              <label class="field-label">
+                Distrito
+                <input id="visitReceiptDistrictInput" type="text" placeholder="Ej.: Surco" required />
+              </label>
+              <label class="field-label">
+                Provincia
+                <input id="visitReceiptProvinceInput" type="text" placeholder="Ej.: Lima" required />
+              </label>
+            </div>
+          </section>
+
+          <section class="visit-summary-card">
+            <div class="visit-summary-grid">
+              <label class="field-label">
+                ¿Quién recibirá la visita?
+                <select id="visitReceiverRoleSelect">
+                  <option value="self">Cliente / titular del chat</option>
+                  <option value="other">Otra persona</option>
+                </select>
+              </label>
+              <label class="field-label">
+                Nombre completo
+                <input id="visitReceiverNameInput" type="text" placeholder="Nombre y apellidos" required />
+              </label>
+            </div>
+            <div class="visit-summary-grid">
+              <label class="field-label">
+                Documento
+                <input id="visitReceiverDocumentInput" type="text" placeholder="DNI / CE / Pasaporte / RUC" required />
+              </label>
+              <label class="field-label">
+                Teléfono de contacto
+                <input id="visitReceiverPhoneInput" type="text" placeholder="999 999 999" required />
+              </label>
+            </div>
+            <label class="field-label">
+              Correo electrónico
+              <input id="visitReceiverEmailInput" type="email" placeholder="cliente@correo.com" required />
+            </label>
+          </section>
+
+          <label class="field-label">
+            Dirección exacta del punto de instalación
+            <textarea id="visitAddressInput" rows="3" placeholder="Ej.: Av. Primavera 123, Surco" required></textarea>
+            <span class="field-help">Apenas la completes, te mostraremos los días y horas reales del bot para esa zona.</span>
+          </label>
+
+          <div class="slot-chips" id="visitDayChips"></div>
+          <div class="field-help" id="visitDaysHelp">Completa la dirección para cargar los días disponibles tal cual el bot.</div>
+
+          <div class="slot-chips" id="visitSlotChips"></div>
+          <div class="field-help" id="visitSlotsHelp">Selecciona un día para ver los horarios disponibles del chatbot.</div>
+
+          <input id="visitDateInput" type="hidden" required />
+          <input id="visitExactTimeInput" type="hidden" required />
+          <input id="visitTimeWindowInput" type="hidden" />
+
+          <section class="visit-summary-card">
+            <div class="visit-summary-grid">
+              <label class="field-label">
+                Marca del vehículo
+                <input id="visitVehicleBrandInput" type="text" placeholder="Ej.: BYD" required />
+              </label>
+              <label class="field-label">
+                Modelo del vehículo
+                <input id="visitVehicleModelInput" type="text" placeholder="Ej.: Yuan Up" required />
+              </label>
+            </div>
+            <label class="field-label">
+              Tipo de vehículo
+              <select id="visitVehicleTypeInput" required>
+                <option value="">Selecciona una opción</option>
+                <option value="100% eléctrico">100% eléctrico</option>
+                <option value="Híbrido enchufable">Híbrido enchufable</option>
+                <option value="No estoy seguro">No estoy seguro</option>
+              </select>
+            </label>
+          </section>
+
+          <label class="field-label">
+            Notas para la visita
+            <textarea id="visitNotesInput" rows="3" placeholder="Ej.: Cliente prefiere llamada previa, acceso por recepción, tablero en cochera..."></textarea>
+          </label>
+
+          <div class="modal-actions">
+            <button type="button" id="cancelVisitModalBtn" class="ghost">Cancelar</button>
+            <button type="submit" id="submitVisitBtn" class="primary">Crear visita</button>
+          </div>
+        </form>
+      </div>
+    </div>
+
+    <script src="/app.js?v=20260522advisor5" defer></script>
   </body>
 </html>

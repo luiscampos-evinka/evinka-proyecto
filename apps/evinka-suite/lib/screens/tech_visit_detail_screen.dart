@@ -48,6 +48,10 @@ class _TechVisitDetailScreenState extends State<TechVisitDetailScreen> {
       (_visit.isPendingClose || _visit.status == 'visitada');
   bool get _canManageCommercialFlow => widget.user.canEditCommercialFlow;
   bool get _canCreateQuote => widget.user.canCreateQuotes;
+  bool get _canConfirmQuoteForSend => widget.user.canConfirmQuoteForSend;
+  bool get _canScheduleInstallation => widget.user.canScheduleInstallationFlow;
+  bool get _canMarkInitialPayment => widget.user.canMarkInitialPayment;
+  bool get _canMarkFinalPayment => widget.user.canMarkFullPayment;
 
   @override
   void initState() {
@@ -394,6 +398,14 @@ class _TechVisitDetailScreenState extends State<TechVisitDetailScreen> {
   Future<void> _markClientAccepted() async {
     final quote = _quote;
     if (quote == null) return;
+    final payment = await _promptPaymentCapture(
+      title: 'Registrar abono 50%',
+      clientName: quote.clientName,
+      suggestedAmount: quote.total * 0.5,
+      suggestedObservation:
+          'Abono 50% confirmado por KAM desde detalle de visita.',
+    );
+    if (payment == null) return;
     setState(() => _busy = true);
     try {
       final updatedQuote = await _api.updateQuoteStatus(
@@ -401,9 +413,8 @@ class _TechVisitDetailScreenState extends State<TechVisitDetailScreen> {
         status: 'aceptada_cliente',
         visitId: _visit.id,
         reference: _visit.reference,
-        paymentAmount: quote.total * 0.5,
-        paymentObservation:
-            'Abono 50% confirmado por KAM desde detalle de visita.',
+        paymentAmount: payment.amount,
+        paymentObservation: payment.observation,
         paymentDate: DateTime.now().toIso8601String(),
       );
       final updatedVisit = await _api.updateTechVisit(
@@ -438,12 +449,14 @@ class _TechVisitDetailScreenState extends State<TechVisitDetailScreen> {
   Future<void> _markFullPayment() async {
     final quote = _quote;
     if (quote == null) return;
-    final ok = await _confirmAction(
+    final payment = await _promptPaymentCapture(
       title: 'Registrar abono 100%',
-      message:
-          'Se marcará el proyecto de ${quote.clientName} como pagado al 100% y cerrado. ¿Continuar?',
+      clientName: quote.clientName,
+      suggestedAmount: quote.total,
+      suggestedObservation:
+          'Abono 100% confirmado por KAM desde detalle de visita.',
     );
-    if (!ok) return;
+    if (payment == null) return;
     setState(() => _busy = true);
     try {
       final updatedQuote = await _api.updateQuoteStatus(
@@ -451,9 +464,8 @@ class _TechVisitDetailScreenState extends State<TechVisitDetailScreen> {
         status: 'abono_100_confirmado',
         visitId: _visit.id,
         reference: _visit.reference,
-        paymentAmount: quote.total,
-        paymentObservation:
-            'Abono 100% confirmado por KAM desde detalle de visita.',
+        paymentAmount: payment.amount,
+        paymentObservation: payment.observation,
         paymentDate: DateTime.now().toIso8601String(),
       );
       if (!mounted) return;
@@ -757,6 +769,99 @@ class _TechVisitDetailScreenState extends State<TechVisitDetailScreen> {
     return ok == true;
   }
 
+  double? _parsePaymentAmount(String raw) {
+    final normalized = raw.trim().replaceAll(',', '.');
+    return double.tryParse(normalized);
+  }
+
+  Future<_PaymentCapture?> _promptPaymentCapture({
+    required String title,
+    required String clientName,
+    required double suggestedAmount,
+    required String suggestedObservation,
+  }) async {
+    final amountCtrl = TextEditingController(
+      text: suggestedAmount.toStringAsFixed(2),
+    );
+    final observationCtrl = TextEditingController(text: suggestedObservation);
+    String? errorText;
+    final result = await showDialog<_PaymentCapture>(
+      context: context,
+      builder: (dialogContext) {
+        return StatefulBuilder(
+          builder: (context, setStateDialog) => AlertDialog(
+            title: Text(title),
+            content: SizedBox(
+              width: 420,
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text('Cliente: $clientName'),
+                  const SizedBox(height: 12),
+                  TextField(
+                    controller: amountCtrl,
+                    keyboardType:
+                        const TextInputType.numberWithOptions(decimal: true),
+                    decoration: const InputDecoration(
+                      labelText: 'Monto recibido',
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  TextField(
+                    controller: observationCtrl,
+                    minLines: 2,
+                    maxLines: 4,
+                    decoration: const InputDecoration(
+                      labelText: 'Observación',
+                    ),
+                  ),
+                  if (errorText != null) ...[
+                    const SizedBox(height: 10),
+                    Text(
+                      errorText!,
+                      style: const TextStyle(color: Colors.redAccent),
+                    ),
+                  ],
+                ],
+              ),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(dialogContext),
+                child: const Text('Cancelar'),
+              ),
+              FilledButton(
+                onPressed: () {
+                  final amount = _parsePaymentAmount(amountCtrl.text);
+                  final observation = observationCtrl.text.trim();
+                  if (amount == null || amount < 0) {
+                    setStateDialog(
+                        () => errorText = 'Ingresa un monto válido.');
+                    return;
+                  }
+                  if (observation.isEmpty) {
+                    setStateDialog(
+                        () => errorText = 'Escribe una observación.');
+                    return;
+                  }
+                  Navigator.pop(
+                    dialogContext,
+                    _PaymentCapture(amount: amount, observation: observation),
+                  );
+                },
+                child: const Text('Guardar'),
+              ),
+            ],
+          ),
+        );
+      },
+    );
+    amountCtrl.dispose();
+    observationCtrl.dispose();
+    return result;
+  }
+
   Future<void> _launchExternal(String value, String scheme) async {
     final trimmed = value.trim();
     if (trimmed.isEmpty) return;
@@ -777,6 +882,73 @@ class _TechVisitDetailScreenState extends State<TechVisitDetailScreen> {
     }
   }
 
+  Future<void> _deleteCaseGlobally() async {
+    if (!widget.user.isAdmin || _busy) return;
+    final confirmed = await showDialog<bool>(
+          context: context,
+          builder: (context) => AlertDialog(
+            title: const Text('Borrar caso completo'),
+            content: Text(
+              'Esto eliminará globalmente esta visita aunque ya tenga cotización, conformidad u orden. También limpiará ClickUp, Supabase y los registros internos visibles del caso.\n\nCliente: ${_visit.clientName.isNotEmpty ? _visit.clientName : 'Sin nombre'}\nVisita: ${_visit.id}',
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(context, false),
+                child: const Text('Cancelar'),
+              ),
+              FilledButton.icon(
+                style: FilledButton.styleFrom(backgroundColor: Colors.red),
+                onPressed: () => Navigator.pop(context, true),
+                icon: const Icon(Icons.delete_forever_outlined),
+                label: const Text('Borrar todo'),
+              ),
+            ],
+          ),
+        ) ??
+        false;
+    if (!confirmed) return;
+
+    setState(() => _busy = true);
+    try {
+      final result = await _api.deleteVisitGlobally(_visit.id);
+      if (!mounted) return;
+      final deleted =
+          Map<String, dynamic>.from(result['deleted'] as Map? ?? const {});
+      final summary = [
+        if (deleted['visit'] == true) 'visita',
+        if (deleted['quote'] == true) 'cotización',
+        if (deleted['installationOrder'] == true) 'orden',
+        if ((deleted['conformities'] as num?)?.toInt() != null &&
+            ((deleted['conformities'] as num).toInt() > 0))
+          'conformidad',
+        if ((deleted['warranties'] as num?)?.toInt() != null &&
+            ((deleted['warranties'] as num).toInt() > 0))
+          'garantía',
+      ].join(', ');
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            summary.isEmpty
+                ? 'Caso eliminado globalmente.'
+                : 'Caso eliminado globalmente: $summary.',
+          ),
+        ),
+      );
+      Navigator.of(context).pop(true);
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            e.toString().replaceFirst('Exception: ', ''),
+          ),
+        ),
+      );
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
@@ -784,6 +956,12 @@ class _TechVisitDetailScreenState extends State<TechVisitDetailScreen> {
       appBar: AppBar(
         title: const Text('Detalle de visita'),
         actions: [
+          if (widget.user.isAdmin)
+            IconButton(
+              tooltip: 'Borrar caso completo',
+              onPressed: _busy ? null : _deleteCaseGlobally,
+              icon: const Icon(Icons.delete_forever_outlined),
+            ),
           IconButton(
               onPressed: _busy ? null : _reloadVisit,
               icon: const Icon(Icons.refresh)),
@@ -1192,14 +1370,13 @@ class _TechVisitDetailScreenState extends State<TechVisitDetailScreen> {
                 icon: const Icon(Icons.picture_as_pdf_outlined),
                 label: const Text('Abrir PDF'),
               ),
-            if (_canManageCommercialFlow && quote?.canConfirmForSend == true)
+            if (_canConfirmQuoteForSend && quote?.canConfirmForSend == true)
               FilledButton.tonalIcon(
                 onPressed: _busy ? null : _confirmQuote,
                 icon: const Icon(Icons.verified_outlined),
                 label: const Text('Confirmar cotización'),
               ),
-            if (_canManageCommercialFlow &&
-                quote?.canMarkClientAccepted == true)
+            if (_canMarkInitialPayment && quote?.canMarkClientAccepted == true)
               FilledButton.icon(
                 onPressed: _busy ? null : _markClientAccepted,
                 icon: const Icon(Icons.thumb_up_alt_outlined),
@@ -1217,14 +1394,14 @@ class _TechVisitDetailScreenState extends State<TechVisitDetailScreen> {
                 icon: const Icon(Icons.cancel_outlined),
                 label: const Text('Cotización cancelada'),
               ),
-            if (_canManageCommercialFlow &&
+            if (_canScheduleInstallation &&
                 quote?.canScheduleInstallation == true)
               FilledButton.icon(
                 onPressed: _busy ? null : _scheduleInstallation,
                 icon: const Icon(Icons.event_available_outlined),
                 label: const Text('Agendar instalación'),
               ),
-            if (_canManageCommercialFlow && quote?.canMarkFullPayment == true)
+            if (_canMarkFinalPayment && quote?.canMarkFullPayment == true)
               FilledButton.tonalIcon(
                 onPressed: _busy ? null : _markFullPayment,
                 icon: const Icon(Icons.payments_outlined),
@@ -1232,7 +1409,9 @@ class _TechVisitDetailScreenState extends State<TechVisitDetailScreen> {
               ),
           ],
         ),
-        if (_canManageCommercialFlow &&
+        if ((_canManageCommercialFlow ||
+                _canConfirmQuoteForSend ||
+                _canScheduleInstallation) &&
             quote != null &&
             quote.canConfirmForSend)
           Padding(
@@ -1407,6 +1586,13 @@ class _TechVisitDetailScreenState extends State<TechVisitDetailScreen> {
     if (parsed == null) return fallback;
     return DateFormat('EEE d MMM · hh:mm a', 'es').format(parsed.toLocal());
   }
+}
+
+class _PaymentCapture {
+  const _PaymentCapture({required this.amount, required this.observation});
+
+  final double amount;
+  final String observation;
 }
 
 extension<T> on Iterable<T> {

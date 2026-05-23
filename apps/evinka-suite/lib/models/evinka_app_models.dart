@@ -35,6 +35,7 @@ class EvinkaUser {
         'asesor_comercial',
         'asesor_venta',
         'kam_b2c',
+        'kam_b2b',
         'kam',
         'asesor_ventas',
         'ventas',
@@ -71,9 +72,22 @@ class EvinkaUser {
       (!isAdmin && !isCommercial && !isAdvisor);
   bool get canSeeCommercialData =>
       hasFullAccess || isCommercial || isTechSupervisor;
+  bool get canViewQuotes =>
+      hasFullAccess ||
+      isCommercial ||
+      isTechSupervisor ||
+      isVisitTech ||
+      isInstaller;
   bool get canCreateQuotes =>
       hasFullAccess || isCommercial || isTechSupervisor || isVisitTech;
-  bool get canViewQuotes => canCreateQuotes;
+  bool get canConfirmQuoteForSend =>
+      hasFullAccess || isCommercial || isTechSupervisor || isInstaller;
+  bool get canScheduleInstallationFlow =>
+      hasFullAccess || isCommercial || isTechSupervisor || isInstaller;
+  bool get canMarkInitialPayment =>
+      hasFullAccess || isCommercial || isTechSupervisor;
+  bool get canMarkFullPayment =>
+      hasFullAccess || isCommercial || isTechSupervisor;
   bool get canEditCommercialFlow =>
       hasFullAccess || isCommercial || isTechSupervisor;
   bool get canReviewConformityFlow =>
@@ -537,6 +551,8 @@ class QuoteRecord {
   final String clientDocument;
   final String status;
   final String conformityStatus;
+  final String conformityId;
+  final String conformityPdfUrl;
   final String installationOrderId;
   final String installationType;
   final String propertyType;
@@ -561,6 +577,8 @@ class QuoteRecord {
     required this.clientDocument,
     required this.status,
     required this.conformityStatus,
+    required this.conformityId,
+    required this.conformityPdfUrl,
     required this.installationOrderId,
     required this.installationType,
     required this.propertyType,
@@ -584,7 +602,9 @@ class QuoteRecord {
       conformityStatus.trim().toLowerCase();
   bool get hasOrder => installationOrderId.isNotEmpty;
   bool get hasGeneratedConformity =>
-      normalizedConformityStatus == 'pdf_generated';
+      normalizedConformityStatus == 'pdf_generated' ||
+      conformityId.trim().isNotEmpty ||
+      conformityPdfUrl.trim().isNotEmpty;
   bool get hasScheduledInstallation =>
       scheduledInstallationAt.trim().isNotEmpty;
   bool get canConfirmForSend => normalizedStatus == 'cotizada';
@@ -637,6 +657,8 @@ class QuoteRecord {
       clientDocument: json['clientDocument']?.toString() ?? '',
       status: json['status']?.toString() ?? 'cotizada',
       conformityStatus: json['conformityStatus']?.toString() ?? 'not_started',
+      conformityId: json['conformityId']?.toString() ?? '',
+      conformityPdfUrl: json['conformityPdfUrl']?.toString() ?? '',
       installationOrderId: json['installationOrderId']?.toString() ?? '',
       installationType: json['installationType']?.toString() ?? '',
       propertyType: json['propertyType']?.toString() ?? '',
@@ -669,6 +691,7 @@ class TechVisit {
   final String clientDocument;
   final String clientEmail;
   final String clientAddress;
+  final String customerSegment;
   final String scheduledAt;
   final String timeWindow;
   final String notes;
@@ -694,6 +717,7 @@ class TechVisit {
     required this.clientDocument,
     required this.clientEmail,
     required this.clientAddress,
+    required this.customerSegment,
     required this.scheduledAt,
     required this.timeWindow,
     required this.notes,
@@ -769,6 +793,8 @@ class TechVisit {
   bool get hasQuote => quoteId.isNotEmpty;
   bool get hasOrder => installationOrderId.isNotEmpty;
   bool get isInstallation => type == 'instalacion';
+  bool get isB2B => customerSegment == 'b2b';
+  bool get isB2C => !isB2B;
   String get typeLabel =>
       isInstallation ? 'Instalación' : 'Evaluación / visita';
   bool get needsQuoteConfirmation => status == 'cotizada';
@@ -864,6 +890,7 @@ class TechVisit {
       clientDocument: json['clientDocument']?.toString() ?? '',
       clientEmail: json['clientEmail']?.toString() ?? '',
       clientAddress: json['clientAddress']?.toString() ?? '',
+      customerSegment: json['customerSegment']?.toString() ?? 'b2c',
       scheduledAt: json['scheduledAt']?.toString() ?? '',
       timeWindow: json['timeWindow']?.toString() ?? '',
       notes: json['notes']?.toString() ?? '',

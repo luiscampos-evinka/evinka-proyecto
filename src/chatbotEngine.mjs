@@ -1,4 +1,5 @@
 import { MicrosoftGraphClient } from './microsoftGraph.mjs';
+import { detectCorporateLead } from './chatRouting.mjs';
 
 const MENU = `¡Hola! 👋
 Bienvenido a EVINKA.
@@ -246,6 +247,15 @@ const ADVISOR_SHORTCUTS = new Set([
   'ayuda humana',
 ]);
 const COLOMBIA_SHARED_TECH_CAPACITY = 3;
+const TEST_FLOW_PHONE_ALLOWLIST = new Set(['573028564794']);
+
+function normalizePhoneDigits(value = '') {
+  return String(value || '').replace(/\D/g, '');
+}
+
+function isTestFlowPhone(value = '') {
+  return TEST_FLOW_PHONE_ALLOWLIST.has(normalizePhoneDigits(value));
+}
 
 function normalizeDisplayName(value = '') {
   const cleaned = String(value || '')
@@ -289,12 +299,15 @@ function makeSlots(ranges = []) {
   });
 }
 
+const PE_VISIT_DURATION_MINUTES = Number(process.env.PE_VISIT_DURATION_MINUTES || 45);
+const PE_TRAVEL_BUFFER_MINUTES = Number(process.env.PE_TRAVEL_BUFFER_MINUTES || 45);
+
 const SLOT_TEMPLATES = {
-  lunes: makeSlots(['10:00-11:00', '11:30-12:15', '14:00-14:45', '15:30-16:15']),
-  martes: makeSlots(['10:00-11:00', '11:30-12:15']),
-  miercoles: makeSlots(['10:00-11:00', '11:30-12:15', '14:00-14:45', '15:30-16:15']),
-  jueves: makeSlots(['10:00-11:00', '11:30-12:15']),
-  viernes: makeSlots(['10:00-11:00', '11:30-12:15', '14:00-14:45', '15:30-16:15']),
+  lunes: makeSlots(['10:00-10:45', '11:30-12:15', '14:00-14:45', '15:30-16:15']),
+  martes: makeSlots(['10:00-10:45', '11:30-12:15']),
+  miercoles: makeSlots(['10:00-10:45', '11:30-12:15', '14:00-14:45', '15:30-16:15']),
+  jueves: makeSlots(['10:00-10:45', '11:30-12:15']),
+  viernes: makeSlots(['10:00-10:45', '11:30-12:15', '14:00-14:45', '15:30-16:15']),
 };
 
 const COLOMBIA_ZONE_SLOT_TEMPLATES = {
@@ -475,6 +488,7 @@ function shouldResetFlowOnGreeting(step = '', text = '') {
 
 const STEP_INTERACTIVE_CODE_MAP = {
   menu_principal: { menu_install: 'A', menu_reschedule: 'B', menu_cancel: 'C', menu_support: 'D', menu_human: 'E' },
+  menu_principal_test: { menu_test_mode: 'F' },
   soporte_tipo: { support_technical: 'A', support_emergency: 'B', support_advisor: 'C' },
   soporte_equipo: { support_equipment_evinka: 'A', support_equipment_chargepoint: 'B', support_equipment_station: 'C', support_equipment_other: 'D' },
   soporte_evidencia_opcion: { support_evidence_yes: 'A', support_evidence_skip: 'B' },
@@ -578,7 +592,7 @@ function pickLetter(text, payloadCrudo = null, step = '') {
   const interactive = extractInteractiveReply(payloadCrudo);
   if (interactive) {
     const interactiveId = normalize(interactive.id || '');
-    const mapped = STEP_INTERACTIVE_CODE_MAP[step]?.[interactiveId];
+    const mapped = STEP_INTERACTIVE_CODE_MAP[step]?.[interactiveId] || STEP_INTERACTIVE_CODE_MAP[`${step}_test`]?.[interactiveId];
     if (mapped) return mapped;
     if (/^[a-j]$/.test(interactiveId)) return interactiveId.toUpperCase();
     const prefix = DYNAMIC_STEP_ID_PREFIX[step] || '';
@@ -663,7 +677,7 @@ function countryFromIntent(value = '') {
   return match?.[1] || null;
 }
 
-function inferCountryFromZone(zone = '') {
+export function inferCountryFromZone(zone = '') {
   const value = String(zone || '').toUpperCase();
   if (!value) return null;
   if (value.includes('LIMA')) return 'PE';
@@ -734,7 +748,7 @@ function inferZone(locationText = '', countryHint = null) {
   return findZoneByText(text, PERU_ZONES) || findZoneByText(text, COLOMBIA_ZONES) || null;
 }
 
-function resolveProfileZone(profile = {}, options = {}) {
+export function resolveProfileZone(profile = {}, options = {}) {
   const countryHint = options.country
     || profile?.pais_cliente
     || detectPhoneCountry(options.phone || profile?.telefono_receptor || profile?.telefono_principal || '');
@@ -849,20 +863,38 @@ function weekdayForDate(date) {
   return normalize(day);
 }
 
+function eventCountryFromText(text = '') {
+  const raw = String(text || '');
+  const countryMatch = raw.match(/pais\s*:\s*([^\n\r]+)/i) || raw.match(/país\s*:\s*([^\n\r]+)/i);
+  const value = normalize(cleanTextValue(countryMatch?.[1] || ''));
+  if (['pe', 'peru', 'perú'].includes(value)) return 'PE';
+  if (['co', 'colombia'].includes(value)) return 'CO';
+  return null;
+}
+
 function eventZoneFromText(text = '') {
   const raw = String(text || '');
+  const eventCountry = eventCountryFromText(raw);
   const zoneMatch = raw.match(/zona\s*:\s*([^\n\r]+)/i);
   if (zoneMatch) return cleanTextValue(zoneMatch[1]).toUpperCase();
   const districtMatch = raw.match(/(?:distrito|localidad)\s*:\s*([^\n\r]+)/i);
   if (districtMatch) {
-    const inferredFromDistrict = inferZone(districtMatch[1]);
+    const inferredFromDistrict = inferZone(districtMatch[1], eventCountry);
     if (inferredFromDistrict) return inferredFromDistrict;
   }
-  return inferZone(raw) || null;
+  return inferZone(raw, eventCountry) || null;
 }
 
 function overlaps(startA, endA, startB, endB) {
   return startA < endB && startB < endA;
+}
+
+function hasMinimumGapBetweenVisits(slotStart, slotEnd, eventStart, eventEnd, minimumGapMinutes = 0) {
+  const minimumGapMs = Math.max(0, Number(minimumGapMinutes) || 0) * 60 * 1000;
+  if (overlaps(slotStart, slotEnd, eventStart, eventEnd)) return false;
+  if (slotEnd <= eventStart) return (eventStart.getTime() - slotEnd.getTime()) >= minimumGapMs;
+  if (eventEnd <= slotStart) return (slotStart.getTime() - eventEnd.getTime()) >= minimumGapMs;
+  return true;
 }
 
 function parseCalendarDateTime(dateTime, timeZone = '') {
@@ -1620,46 +1652,7 @@ function cleanCorporateName(value = '') {
 }
 
 function extractCorporateLead(text = '') {
-  const raw = cleanTextValue(text);
-  const normalized = normalize(raw);
-  if (!normalized) return null;
-
-  const namedMatch = raw.match(/(?:^|\b)(?:hola|buenas|buen dia|buen día|buenas tardes|buenas noches)?\s*(?:soy|habla|hablo|mi nombre es)\s+([A-Za-zÁÉÍÓÚÜÑáéíóúüñ'´`.-]+(?:\s+[A-Za-zÁÉÍÓÚÜÑáéíóúüñ'´`.-]+){0,3})\s+de\s+([A-Za-zÁÉÍÓÚÜÑáéíóúüñ0-9&().,\-/ ]{2,80})/i);
-  if (namedMatch) {
-    return {
-      contactName: titleCase(normalizeDisplayName(namedMatch[1])),
-      companyName: cleanCorporateName(namedMatch[2]),
-      reason: 'intro_de_empresa',
-    };
-  }
-
-  const companyOnlyMatch = raw.match(/(?:^|\b)(?:somos|escribo|te escribo|escribimos|llamo|vengo|contacto)\s+(?:de|desde)\s+([A-Za-zÁÉÍÓÚÜÑáéíóúüñ0-9&().,\-/ ]{2,80})/i);
-  if (companyOnlyMatch) {
-    return {
-      contactName: '',
-      companyName: cleanCorporateName(companyOnlyMatch[1]),
-      reason: 'empresa_directa',
-    };
-  }
-
-  const companyHint = CORPORATE_COMPANY_HINTS.find((item) => normalized.includes(normalize(item)));
-  if (companyHint && (normalized.includes('empresa') || normalized.includes('de ') || normalized.includes('somos') || normalized.includes('corporativ') || normalized.includes('grifo') || normalized.includes('operador'))) {
-    return {
-      contactName: '',
-      companyName: cleanCorporateName(companyHint),
-      reason: 'empresa_conocida',
-    };
-  }
-
-  if (CORPORATE_SUFFIX_RE.test(raw) || CORPORATE_CONTEXT_HINTS.some((item) => normalized.includes(normalize(item)))) {
-    return {
-      contactName: '',
-      companyName: '',
-      reason: 'contexto_corporativo',
-    };
-  }
-
-  return null;
+  return detectCorporateLead(text);
 }
 
 function corporateHandoffText({ contactName = '', companyName = '', country = null } = {}) {
@@ -2001,7 +1994,7 @@ function parseReplySummary(summary) {
   try { return JSON.parse(summary || 'null'); } catch { return null; }
 }
 
-function interactiveReplyForStep(step, text, { resumen, subestado } = {}) {
+function interactiveReplyForStep(step, text, { resumen, subestado, specialMenu = false } = {}) {
   switch (step) {
     case 'menu_principal':
       return makeStepList(step, text, [
@@ -2010,6 +2003,7 @@ function interactiveReplyForStep(step, text, { resumen, subestado } = {}) {
         { id: 'C', title: 'Cancelar visita', description: 'Cancelar una cita existente' },
         { id: 'D', title: 'Asistencia técnica', description: 'Reportar falla o emergencia' },
         { id: 'E', title: 'Soporte humano', description: 'Si ya tenías seguimiento, escribe ASESOR' },
+        ...(specialMenu ? [{ id: 'menu_test_mode', title: 'Modo pruebas', description: 'Pruebas del flujo como usuario final' }] : []),
       ], { title: 'Elige una opción', buttonText: 'Abrir menú' });
     case 'soporte_tipo':
       return makeStepButtons(step, text, [
@@ -2334,6 +2328,7 @@ function calendarDescription({ ticket, appointment, profile, dateLabel, hourLabe
     `Dirección: ${profile.direccion_instalacion || appointment.direccion_cita || ''}`,
     `Distrito: ${profile.distrito_instalacion || appointment.distrito_cita || ''}`,
     `Provincia: ${profile.provincia_instalacion || appointment.provincia_cita || ''}`,
+    `País: ${inferCountryFromZone(profile.zona_cliente || appointment.zona_cliente || profile.provincia_instalacion || appointment.provincia_cita || '') || ''}`,
     `Zona: ${profile.zona_cliente || appointment.zona_cliente || ''}`,
     `Vehículo: ${`${profile.marca_vehiculo || appointment.marca_vehiculo || ''} ${profile.modelo_vehiculo || appointment.modelo_vehiculo || ''}`.trim()}`,
   ].filter(Boolean).join('\n');
@@ -2353,6 +2348,11 @@ export class ChatbotEngine {
     this.reminderScheduler = reminderScheduler;
     this.visitPublisher = visitPublisher;
     this.supportCasePublisher = supportCasePublisher;
+    this.availabilityCache = new Map();
+  }
+
+  clearAvailabilityCache() {
+    this.availabilityCache.clear();
   }
 
   async availableDaysForZone(zone, { includeToday = false } = {}) {
@@ -2398,32 +2398,62 @@ export class ChatbotEngine {
   async availableHoursForDate(date, { excludeEventId = null, clientZone = null } = {}) {
     const slots = hoursForDate(date, clientZone);
     if (!this.calendar || !slots.length) return slots;
-    const events = await this.calendar.listEvents({
-      startDateTime: `${date}T00:00:00-05:00`,
-      endDateTime: `${date}T23:59:59-05:00`,
-      top: 100,
-      clientZone,
-      countryCode: inferCountryFromZone(clientZone) || null,
-    });
-    const normalizedClientZone = String(clientZone || '').toUpperCase().trim();
-    const sharedCapacity = inferCountryFromZone(clientZone) === 'CO' ? COLOMBIA_SHARED_TECH_CAPACITY : 1;
-    const relevant = events.filter(event => {
-      if (event.id === excludeEventId || event.isCancelled) return false;
-      if (!normalizedClientZone) return true;
-      const eventZone = eventZoneFromText(event.body?.content || event.bodyPreview || '');
-      return !eventZone || eventZone === normalizedClientZone;
-    });
-    return slots.filter(slot => {
-      const slotStart = new Date(`${date}T${slot.time}-05:00`);
-      const slotEnd = new Date(`${date}T${slot.endTime}-05:00`);
-      const overlapping = relevant.filter(event => {
-        const start = parseCalendarDateTime(event.start?.dateTime || event.start, event.start?.timeZone);
-        const end = parseCalendarDateTime(event.end?.dateTime || event.end, event.end?.timeZone);
-        if (!start || !end || Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) return false;
-        return overlaps(slotStart, slotEnd, start, end);
+    const cacheKey = `${date}|${String(clientZone || '').toUpperCase().trim()}|${String(excludeEventId || '')}`;
+    const now = Date.now();
+    const cached = this.availabilityCache.get(cacheKey);
+    if (cached && cached.expiresAt > now) {
+      if (cached.promise) return cached.promise;
+      return cached.slots.map((slot) => ({ ...slot }));
+    }
+    const promise = (async () => {
+      const events = await this.calendar.listEvents({
+        startDateTime: `${date}T00:00:00-05:00`,
+        endDateTime: `${date}T23:59:59-05:00`,
+        top: 100,
+        clientZone,
+        countryCode: inferCountryFromZone(clientZone) || null,
       });
-      return overlapping.length < sharedCapacity;
-    });
+      const normalizedClientZone = String(clientZone || '').toUpperCase().trim();
+      const normalizedClientCountry = inferCountryFromZone(clientZone) || null;
+      const sharedCapacity = normalizedClientCountry === 'CO' ? COLOMBIA_SHARED_TECH_CAPACITY : 1;
+      const relevant = events.filter(event => {
+        if (event.id === excludeEventId || event.isCancelled) return false;
+        const eventText = event.body?.content || event.bodyPreview || '';
+        const eventZone = eventZoneFromText(eventText);
+        const eventCountry = eventCountryFromText(eventText) || inferCountryFromZone(eventZone || '');
+        if (normalizedClientCountry && eventCountry && eventCountry !== normalizedClientCountry) return false;
+        if (normalizedClientCountry === 'PE') return true;
+        if (!normalizedClientZone) return true;
+        return !eventZone || eventZone === normalizedClientZone;
+      });
+      const available = slots.filter(slot => {
+        const slotStart = new Date(`${date}T${slot.time}-05:00`);
+        const slotEnd = new Date(`${date}T${slot.endTime}-05:00`);
+        const blocking = relevant.filter(event => {
+          const start = parseCalendarDateTime(event.start?.dateTime || event.start, event.start?.timeZone);
+          let end = parseCalendarDateTime(event.end?.dateTime || event.end, event.end?.timeZone);
+          if (!start || Number.isNaN(start.getTime())) return false;
+          if (!end || Number.isNaN(end.getTime())) {
+            end = new Date(start.getTime() + PE_VISIT_DURATION_MINUTES * 60 * 1000);
+          }
+          if (normalizedClientCountry === 'PE') {
+            const operationalEnd = new Date(start.getTime() + PE_VISIT_DURATION_MINUTES * 60 * 1000);
+            return !hasMinimumGapBetweenVisits(slotStart, slotEnd, start, operationalEnd, PE_TRAVEL_BUFFER_MINUTES);
+          }
+          return overlaps(slotStart, slotEnd, start, end);
+        });
+        return blocking.length < sharedCapacity;
+      });
+      this.availabilityCache.set(cacheKey, { expiresAt: Date.now() + 15000, slots: available.map((slot) => ({ ...slot })) });
+      return available;
+    })();
+    this.availabilityCache.set(cacheKey, { expiresAt: now + 15000, promise });
+    try {
+      return await promise;
+    } catch (error) {
+      this.availabilityCache.delete(cacheKey);
+      throw error;
+    }
   }
 
   async ensureCalendarEvent({ appointment, profile, dateLabel, hourLabel, ticket }) {
@@ -2445,6 +2475,7 @@ export class ChatbotEngine {
         attendees,
         countryCode,
       });
+      this.clearAvailabilityCache();
       return appointment.microsoft_event_id;
     }
 
@@ -2459,6 +2490,7 @@ export class ChatbotEngine {
       categories: ['EVINKA'],
       countryCode,
     });
+    this.clearAvailabilityCache();
     return event.id;
   }
 
@@ -2483,6 +2515,18 @@ export class ChatbotEngine {
       .filter(Boolean)
       .join(' ')
       .trim();
+    const corporateSignals = [
+      conversation?.motivo_handoff,
+      conversation?.resumen,
+      conversation?.intencion_principal,
+      conversation?.subestado_flujo,
+    ]
+      .filter(Boolean)
+      .join(' ')
+      .toLowerCase();
+    const customerSegment = String(profile?.nombre_empresa || '').trim() || /\b(corporativo|empresa|b2b|asesor_corporativo)\b/.test(corporateSignals)
+      ? 'b2b'
+      : 'b2c';
     const countryCode = inferCountryFromZone(profile.zona_cliente || appointment.zona_cliente || profile.provincia_instalacion || appointment.provincia_cita || '') || null;
     return this.visitPublisher({
       reference: appointment.codigo_cita,
@@ -2494,6 +2538,8 @@ export class ChatbotEngine {
       clientDocument: profile.dni_receptor || profile.ruc_receptor || appointment.dni_cliente || '',
       clientEmail: profile.correo_receptor || appointment.correo_cliente || '',
       clientAddress: fullAddress || appointment.direccion_cita || '',
+      customerSegment,
+      companyName: profile.nombre_empresa || '',
       scheduledAt: appointment.fecha_hora_inicio,
       timeWindow: hourLabel,
       notes: `Visita creada automáticamente desde el chatbot. Ticket ${appointment.codigo_cita}.`,
@@ -2685,23 +2731,27 @@ export class ChatbotEngine {
 
   async reply(conversation, text, patch = {}) {
     await this.patchConversation(conversation.id_conversacion, { ultimo_mensaje_en: new Date().toISOString(), ...patch });
-    await this.logMessage(conversation.id_conversacion, conversation.id_usuario, 'assistant', text);
     const nextStep = patch.paso_actual || conversation.paso_actual || 'menu_principal';
-    const interactive = interactiveReplyForStep(nextStep, text, { resumen: patch.resumen ?? conversation.resumen ?? null, subestado: patch.subestado_flujo ?? conversation.subestado_flujo ?? null });
+    const specialMenu = nextStep === 'menu_principal' && isTestFlowPhone(this.phoneForUserId(conversation.id_usuario));
+    const finalText = specialMenu ? `${text}\n\nF. Modo pruebas` : text;
+    await this.logMessage(conversation.id_conversacion, conversation.id_usuario, 'assistant', finalText);
+    const interactive = interactiveReplyForStep(nextStep, finalText, { resumen: patch.resumen ?? conversation.resumen ?? null, subestado: patch.subestado_flujo ?? conversation.subestado_flujo ?? null, specialMenu });
     if (interactive) return ensureAdvisorOption(interactive);
-    return { kind: 'text', text: addAdvisorHint(text, nextStep) };
+    return { kind: 'text', text: addAdvisorHint(finalText, nextStep) };
   }
 
   async replySequence(conversation, messages = [], patch = {}) {
     await this.patchConversation(conversation.id_conversacion, { ultimo_mensaje_en: new Date().toISOString(), ...patch });
     const normalized = [];
     const nextStep = patch.paso_actual || conversation.paso_actual || 'menu_principal';
+    const specialMenu = nextStep === 'menu_principal' && isTestFlowPhone(this.phoneForUserId(conversation.id_usuario));
     for (let i = 0; i < messages.length; i += 1) {
       const item = messages[i];
       const text = typeof item === 'string' ? item : String(item?.text || '');
-      await this.logMessage(conversation.id_conversacion, conversation.id_usuario, 'assistant', text);
-      const interactive = interactiveReplyForStep(i === messages.length - 1 ? nextStep : '__sequence__', text, { resumen: patch.resumen ?? conversation.resumen ?? null, subestado: patch.subestado_flujo ?? conversation.subestado_flujo ?? null });
-      normalized.push(interactive || { kind: 'text', text });
+      const finalText = specialMenu && i === messages.length - 1 ? `${text}\n\nF. Modo pruebas` : text;
+      await this.logMessage(conversation.id_conversacion, conversation.id_usuario, 'assistant', finalText);
+      const interactive = interactiveReplyForStep(i === messages.length - 1 ? nextStep : '__sequence__', finalText, { resumen: patch.resumen ?? conversation.resumen ?? null, subestado: patch.subestado_flujo ?? conversation.subestado_flujo ?? null, specialMenu });
+      normalized.push(interactive || { kind: 'text', text: finalText });
     }
     return { kind: 'sequence', messages: normalized };
   }
@@ -2771,6 +2821,7 @@ export class ChatbotEngine {
     const selectedCountry = forcedChannelCountry || inferCountryFromZone(profile?.zona_cliente) || countryFromIntent(conversation.intencion_principal) || detectPhoneCountry(phone);
     const step = conversation.paso_actual || 'menu_principal';
     const letter = pickLetter(text, payloadCrudo, step);
+    const specialTestFlow = isTestFlowPhone(phone);
     const corporateLead = extractCorporateLead(text);
     const sendToAdvisor = (reason = 'Soporte humano solicitado', customText = null) => this.reply(
       conversation,
@@ -2982,6 +3033,7 @@ export class ChatbotEngine {
         if (!cita) return this.reply(conversation, 'No pude encontrar la cita a gestionar. Vuelve a ingresar tu ticket.', { paso_actual: 'gestion_ticket', subestado_flujo: 'esperando_ticket', accion_ticket_actual: 'cancel' });
         if (cita.microsoft_event_id && this.calendar) {
           await this.calendar.cancelEvent(cita.microsoft_event_id, 'Cancelada por cliente desde recordatorio de WhatsApp.');
+          this.clearAvailabilityCache();
         }
         await this.sb.update('citas', `codigo_cita=eq.${encodeURIComponent(ticket)}`, { estado_cita: 'cancelada', motivo_cancelacion: 'Cancelada por cliente desde recordatorio de WhatsApp.', cancelada_en: new Date().toISOString() });
         return this.reply(conversation, 'Entendido 👍\n\nTu cita ha sido cancelada correctamente.\n\nSi más adelante deseas agendar una nueva visita, estaremos encantados de ayudarte.\n\n¡Gracias por confiar en EVINKA! ⚡', { paso_actual: 'ticket_cancelado', subestado_flujo: ticket, estado_conversacion: 'closed', accion_ticket_actual: 'cancel', codigo_ticket_solicitado: ticket, cerrada_en: new Date().toISOString() });
@@ -3038,6 +3090,13 @@ export class ChatbotEngine {
 
     if (step === 'menu_principal') {
       if (!letter) return this.reply(conversation, MENU);
+      if (specialTestFlow && letter === 'F') {
+        return this.reply(
+          conversation,
+          'Modo pruebas activado ✅\n\nEste número puede seguir probando el flujo como usuario final sin afectar a los demás.\n\nEscribe MENU cuando quieras volver a ver las opciones.',
+          { paso_actual: 'menu_principal', subestado_flujo: 'modo_pruebas', estado_conversacion: 'open' },
+        );
+      }
       if (letter === 'D') {
         return this.reply(conversation, SUPPORT_CASE_MENU, {
           intencion_principal: 'asistencia_tecnica',
@@ -3916,6 +3975,7 @@ export class ChatbotEngine {
           if (!cita) return this.reply(conversation, 'No pude encontrar la cita a gestionar. Vuelve a ingresar tu ticket.', { paso_actual: 'gestion_ticket', subestado_flujo: 'esperando_ticket' });
           if (cita.microsoft_event_id && this.calendar) {
             await this.calendar.cancelEvent(cita.microsoft_event_id, 'Cancelada por cliente desde WhatsApp.');
+            this.clearAvailabilityCache();
           }
           await this.sb.update('citas', `codigo_cita=eq.${encodeURIComponent(ticket)}`, { estado_cita: 'cancelada', motivo_cancelacion: 'Cancelada por cliente desde WhatsApp.', cancelada_en: new Date().toISOString() });
           return this.reply(conversation, 'Entendido 👍\n\nTu cita ha sido cancelada correctamente.\n\nLamentamos que no puedas continuar por ahora. Cuando lo desees, estaremos encantados de ayudarte a agendar una nueva visita.\n\n¡Gracias por confiar en EVINKA! ⚡', { paso_actual: 'ticket_cancelado', subestado_flujo: ticket, estado_conversacion: 'closed', cerrada_en: new Date().toISOString() });
@@ -3940,6 +4000,7 @@ export class ChatbotEngine {
       if (letter === 'B') {
         if (cita.microsoft_event_id && this.calendar) {
           await this.calendar.cancelEvent(cita.microsoft_event_id, 'Cancelada por cliente desde WhatsApp.');
+          this.clearAvailabilityCache();
         }
         await this.sb.update('citas', `codigo_cita=eq.${encodeURIComponent(ticket)}`, { estado_cita: 'cancelada', motivo_cancelacion: 'Cancelada por cliente desde WhatsApp.', cancelada_en: new Date().toISOString() });
         return this.reply(conversation, 'Entendido 👍\n\nTu cita ha sido cancelada correctamente.\n\nLamentamos que no puedas continuar por ahora. Cuando lo desees, estaremos encantados de ayudarte a agendar una nueva visita.\n\n¡Gracias por confiar en EVINKA! ⚡', { paso_actual: 'ticket_cancelado', subestado_flujo: ticket, estado_conversacion: 'closed', cerrada_en: new Date().toISOString() });
@@ -3987,6 +4048,7 @@ export class ChatbotEngine {
           start: { dateTime: `${chosen.date}T${chosen.time}`, timeZone: 'America/Lima' },
           end: { dateTime: `${chosen.date}T${chosen.endTime}`, timeZone: 'America/Lima' },
         });
+        this.clearAvailabilityCache();
       }
       try {
         await this.publishTechVisit({
@@ -4036,6 +4098,7 @@ export class ChatbotEngine {
           start: { dateTime: `${data.date}T${chosen.time}`, timeZone: 'America/Lima' },
           end: { dateTime: `${data.date}T${endTime}`, timeZone: 'America/Lima' },
         });
+        this.clearAvailabilityCache();
       }
       try {
         await this.publishTechVisit({
