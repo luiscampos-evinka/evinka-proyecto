@@ -8,6 +8,7 @@
     "chatbot:cli": "node scripts/run_chatbot_cli.mjs",
     "check:chatbot": "node --check src/chatbotEngine.mjs && node --check scripts/run_chatbot_cli.mjs && node --check src/receiptOcr.mjs",
     "test:chat-routing": "node scripts/test_chat_routing.mjs",
+    "test:advisor-alerts": "node scripts/test_advisor_alerts.mjs",
     "meta:webhook": "node src/metaWebhookServer.mjs",
     "check:meta": "node --check src/whatsappMeta.mjs && node --check src/metaWebhookServer.mjs && node --check src/receiptOcr.mjs",
     "test:ocr": "node scripts/test_receipt_ocr.mjs",

@@ -7,10 +7,16 @@ import { ChatbotEngine, resolveProfileZone, inferCountryFromZone } from './chatb
 import { WhatsAppMetaClient } from './whatsappMeta.mjs';
 import { extractReceiptDataFromBuffer } from './receiptOcr.mjs';
 import { MicrosoftGraphClient } from './microsoftGraph.mjs';
+import { BookingsClient } from './bookingsClient.mjs';
 import { ClickUpCalendarClient } from './clickupCalendar.mjs';
 import { getAdvisorConversationState, patchAdvisorConversation } from './advisorInboxState.mjs';
 import { saveConversationMedia } from './advisorMediaStore.mjs';
 import { SupabaseStorage } from './supabaseStorage.mjs';
+import {
+  advisorQueueLabel as advisorQueueLabelRule,
+  resolveAdvisorAlertRecipients as resolveAdvisorAlertRecipientsRule,
+  resolveAdvisorQueue as resolveAdvisorQueueRule,
+} from './advisorAlertRouting.mjs';
 
 loadEnv();
 
@@ -24,6 +30,24 @@ const sb = new SupabaseRest({
 });
 
 const AGENDA_TIME_ZONE = 'America/Lima';
+const META_DELIVERY_LOG_PATH = path.join(process.cwd(), 'data/meta-delivery-status-log.json');
+
+function appendMetaDeliveryStatuses(items = []) {
+  if (!Array.isArray(items) || !items.length) return;
+  try {
+    fs.mkdirSync(path.dirname(META_DELIVERY_LOG_PATH), { recursive: true });
+    const current = fs.existsSync(META_DELIVERY_LOG_PATH)
+      ? JSON.parse(fs.readFileSync(META_DELIVERY_LOG_PATH, 'utf8') || '[]')
+      : [];
+    const next = [
+      ...current,
+      ...items.map((item) => ({ ...item, loggedAt: new Date().toISOString() })),
+    ].slice(-500);
+    fs.writeFileSync(META_DELIVERY_LOG_PATH, JSON.stringify(next, null, 2));
+  } catch (error) {
+    console.error('appendMetaDeliveryStatuses failed:', error);
+  }
+}
 
 function agendaDate(value) {
   if (!value) return '';
@@ -257,6 +281,9 @@ const calendar = ['hybrid', 'dual', 'clickup+microsoft', 'clickup+ms'].includes(
   : calendarProvider === 'clickup'
     ? clickupCalendar
     : microsoftCalendar;
+const bookings = microsoftCalendar && (process.env.BOOKINGS_ENABLED || 'true') !== 'false'
+  ? new BookingsClient({ graph: microsoftCalendar })
+  : null;
 const storage = new SupabaseStorage({
   url: requiredEnv('SUPABASE_URL'),
   key: requiredEnv('SUPABASE_SERVICE_ROLE_KEY'),
@@ -787,6 +814,14 @@ function advisorChannelForCountry(countryCode = null) {
   return defaultWhatsAppChannel;
 }
 
+function advisorLeadContext(summary = '') {
+  try {
+    const parsed = JSON.parse(String(summary || '{}'));
+    if (parsed?.kind === 'advisor_lead') return String(parsed.comentario || '').trim();
+  } catch {}
+  return '';
+}
+
 function buildAdvisorAlertText({ conversation, profile = null, customerPhone = '', customerName = '', countryCode = null, queueKey = 'comercial' }) {
   const countryLabel = String(countryCode || '').trim().toUpperCase() === 'CO' ? 'Colombia' : 'Perú';
   const clientName = String(
@@ -797,6 +832,7 @@ function buildAdvisorAlertText({ conversation, profile = null, customerPhone = '
     || 'Cliente'
   ).trim();
   const reason = String(conversation?.motivo_handoff || 'Solicitud de asesor').trim();
+  const requestContext = advisorLeadContext(conversation?.resumen);
   const inboxUrl = buildAdvisorCaseUrl(conversation?.id_conversacion, countryCode);
   const priorityLine = String(queueKey || '').trim().toLowerCase() === 'b2b'
     ? 'Prioridad: Antonio (B2B)'
@@ -805,10 +841,11 @@ function buildAdvisorAlertText({ conversation, profile = null, customerPhone = '
     'Nuevo cliente solicitando asesor EVINKA ⚡',
     '',
     `País: ${countryLabel}`,
-    `Cola: ${advisorQueueLabel(queueKey)}`,
+    `Cola: ${advisorQueueLabelRule(queueKey)}`,
     ...(priorityLine ? [priorityLine] : []),
     `Cliente: ${clientName}`,
     `Teléfono: ${customerPhone || '-'}`,
+    ...(requestContext ? [`Contexto: ${requestContext}`] : []),
     `Motivo: ${reason}`,
     `Caso: ${conversation?.id_conversacion || '-'}`,
     '',
@@ -818,8 +855,8 @@ function buildAdvisorAlertText({ conversation, profile = null, customerPhone = '
 }
 
 async function notifyAdvisorRecipients({ conversation, customerPhone, customerName = '', countryCode = null }) {
-  const queueKey = resolveAdvisorQueue({ conversation });
-  const recipients = resolveAdvisorAlertRecipients({ countryCode, queueKey });
+  const queueKey = resolveAdvisorQueueRule({ conversation });
+  const recipients = resolveAdvisorAlertRecipientsRule(loadOperationalUsers(), { countryCode, queueKey });
   if (!recipients.length) return { ok: false, skipped: true, reason: 'no_recipients' };
 
   const profileRows = await sb.select('perfiles_cliente', `id_conversacion=eq.${conversation.id_conversacion}&select=*`);
@@ -864,6 +901,7 @@ function buildAdvisorReminderText({ conversation, profile = null, customerPhone 
     || 'Cliente'
   ).trim();
   const reason = String(conversation?.motivo_handoff || 'Solicitud de asesor').trim();
+  const requestContext = advisorLeadContext(conversation?.resumen);
   const inboxUrl = buildAdvisorCaseUrl(conversation?.id_conversacion, countryCode);
   const priorityLine = String(queueKey || '').trim().toLowerCase() === 'b2b'
     ? 'Prioridad: Antonio (B2B)'
@@ -873,10 +911,11 @@ function buildAdvisorReminderText({ conversation, profile = null, customerPhone 
     '',
     `Cliente esperando asesor hace ${waitingMinutes} min.`,
     `País: ${countryLabel}`,
-    `Cola: ${advisorQueueLabel(queueKey)}`,
+    `Cola: ${advisorQueueLabelRule(queueKey)}`,
     ...(priorityLine ? [priorityLine] : []),
     `Cliente: ${clientName}`,
     `Teléfono: ${customerPhone || '-'}`,
+    ...(requestContext ? [`Contexto: ${requestContext}`] : []),
     `Motivo: ${reason}`,
     `Caso: ${conversation?.id_conversacion || '-'}`,
     '',
@@ -886,8 +925,8 @@ function buildAdvisorReminderText({ conversation, profile = null, customerPhone 
 }
 
 async function notifyAdvisorReminder({ conversation, customerPhone, customerName = '', countryCode = null, waitingMinutes = 60, reminderCount = 1 }) {
-  const queueKey = resolveAdvisorQueue({ conversation });
-  const recipients = resolveAdvisorAlertRecipients({ countryCode, queueKey });
+  const queueKey = resolveAdvisorQueueRule({ conversation });
+  const recipients = resolveAdvisorAlertRecipientsRule(loadOperationalUsers(), { countryCode, queueKey });
   if (!recipients.length) return { ok: false, skipped: true, reason: 'no_recipients' };
 
   const profileRows = await sb.select('perfiles_cliente', `id_conversacion=eq.${conversation.id_conversacion}&select=*`);
@@ -1432,7 +1471,7 @@ async function publishSupportCase({ conversation, profile = null, caseData = {},
   };
 }
 
-const engine = new ChatbotEngine({ sb, calendar, reminderScheduler: scheduleReminder, visitPublisher: publishTechVisit, supportCasePublisher: publishSupportCase });
+const engine = new ChatbotEngine({ sb, calendar, bookings, reminderScheduler: scheduleReminder, visitPublisher: publishTechVisit, supportCasePublisher: publishSupportCase });
 
 function conversationUserScope(conversation = {}) {
   return String(conversation?.id_usuario || '').startsWith('wco_') ? 'co' : 'default';
@@ -2227,6 +2266,19 @@ const server = http.createServer(async (req, res) => {
       }
 
       const payload = JSON.parse(raw.toString('utf8') || '{}');
+      const statuses = meta.extractStatuses(payload);
+      if (statuses.length) {
+        appendMetaDeliveryStatuses(statuses);
+        for (const status of statuses) {
+          console.log('meta delivery status:', JSON.stringify({
+            id: status.id,
+            status: status.status,
+            recipientId: status.recipientId,
+            channelDisplayPhoneNumber: status.channelDisplayPhoneNumber,
+            errorData: status.errorData,
+          }));
+        }
+      }
       const messages = meta.extractMessages(payload);
       for (const message of messages) {
         const channel = resolveWhatsAppChannel(message.channelPhoneNumberId);

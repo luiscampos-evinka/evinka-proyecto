@@ -362,7 +362,7 @@ function computePriority(item = {}) {
   if (item.manualPriority === 'urgent' || item.manualPriority === 'high' || item.manualPriority === 'normal') {
     return item.manualPriority;
   }
-  const text = `${item.handoffReason || ''} ${item.lastMessageText || ''}`.toLowerCase();
+  const text = `${item.handoffReason || ''} ${item.requestContext || ''} ${item.lastMessageText || ''}`.toLowerCase();
   const mins = minutesSince(waitReference(item));
   const urgentSignals = ['urgente', 'hoy', 'ahora', 'llamar', 'caído', 'problema'];
   if (item.status === 'new' && (mins >= 20 || Number(item.unreadCount || 0) >= 3)) return 'urgent';
@@ -392,6 +392,7 @@ function mediaClassFromMessage(message) {
 function buildSummary(conversation = {}) {
   const bits = [];
   if (conversation.handoffReason) bits.push(conversation.handoffReason);
+  if (conversation.requestContext) bits.push(`Contexto del cliente: ${conversation.requestContext}`);
   if (conversation.nextAction) bits.push(`Próximo paso: ${labelNextAction(conversation.nextAction)}.`);
   if (conversation.internalNote) bits.push(`Nota interna: ${conversation.internalNote}`);
   if (!bits.length && conversation.ticketContext) bits.push(`Ticket/contexto: ${conversation.ticketContext}`);
@@ -412,6 +413,7 @@ function buildQuoteUrl(conversation = {}) {
     conversation.phonePretty ? `Teléfono: ${conversation.phonePretty}` : '',
     conversation.ticketContext ? `Ticket: ${conversation.ticketContext}` : '',
     conversation.handoffReason ? `Motivo: ${conversation.handoffReason}` : '',
+    conversation.requestContext ? `Contexto: ${conversation.requestContext}` : '',
     conversation.internalNote ? `Nota asesor: ${conversation.internalNote}` : '',
   ].filter(Boolean).join('\n');
   if (notes) params.set('technicianNotes', notes);
@@ -483,7 +485,7 @@ function renderConversationList() {
             ${item.assignedToLabel ? `<span class="badge neutral">${escapeHtml(item.assignedToLabel)}</span>` : ''}
           </div>
         </div>
-        <div class="conversation-preview">${escapeHtml(item.internalNote || item.lastMessageText || item.handoffReason || item.phonePretty)}</div>
+        <div class="conversation-preview">${escapeHtml(item.internalNote || item.requestContext || item.lastMessageText || item.handoffReason || item.phonePretty)}</div>
         <div class="conversation-footer-row">
           <span class="sla-label ${sla.tone}">${escapeHtml(sla.label)}</span>
           ${item.nextAction ? `<span class="mini-inline">${escapeHtml(labelNextAction(item.nextAction))}</span>` : ''}
@@ -1076,7 +1078,7 @@ function openProfileDrawer() {
   els.drawerEmail.textContent = detail.conversation.email || '-';
   els.drawerLocation.textContent = [detail.conversation.district, detail.conversation.province].filter(Boolean).join(' · ') || '-';
   els.drawerAddress.textContent = detail.conversation.installationAddress || detail.conversation.receiptAddress || '-';
-  els.drawerReason.textContent = detail.conversation.handoffReason || '-';
+  els.drawerReason.textContent = [detail.conversation.handoffReason, detail.conversation.requestContext].filter(Boolean).join(' · ') || '-';
   els.drawerStatus.textContent = labelStatus(detail.conversation.status);
   els.drawerAssigned.textContent = detail.conversation.assignedToLabel || 'Sin asignar';
   renderDrawerFiles(detail.files || []);
@@ -1137,7 +1139,7 @@ function renderConversationDetail({ preserveScroll = true } = {}) {
       : '',
   ].filter(Boolean).join(' · ');
   els.customerAvatar.textContent = initials(detail.conversation.customerName);
-  els.handoffReason.textContent = detail.conversation.handoffReason || 'Solicitud manual del cliente';
+  els.handoffReason.textContent = [detail.conversation.handoffReason, detail.conversation.requestContext].filter(Boolean).join(' · ') || 'Solicitud manual del cliente';
   els.caseStatus.textContent = labelStatus(detail.conversation.status);
   els.casePriority.textContent = priorityLabel(priority);
   els.caseSla.textContent = sla.label;

@@ -226,4 +226,31 @@ export class WhatsAppMetaClient {
     }
     return out;
   }
+
+  extractStatuses(payload) {
+    const entries = payload?.entry || [];
+    const out = [];
+    for (const entry of entries) {
+      for (const change of entry.changes || []) {
+        const value = change.value || {};
+        const statuses = value.statuses || [];
+        for (const status of statuses) {
+          out.push({
+            id: status.id || null,
+            status: status.status || null,
+            recipientId: status.recipient_id || null,
+            timestamp: status.timestamp || null,
+            conversationId: status.conversation?.id || null,
+            conversationOrigin: status.conversation?.origin?.type || null,
+            pricingCategory: status.pricing?.category || null,
+            errorData: status.errors || [],
+            channelPhoneNumberId: value.metadata?.phone_number_id || null,
+            channelDisplayPhoneNumber: value.metadata?.display_phone_number || null,
+            raw: status,
+          });
+        }
+      }
+    }
+    return out;
+  }
 }

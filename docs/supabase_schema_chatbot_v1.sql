@@ -625,3 +625,71 @@ join public.usuarios u
  on u.id_usuario = ci.id_usuario
 left join public.perfiles_cliente p
  on p.id_perfil = ci.id_perfil;
+
+-- =========================================================
+-- 9) BOOKING APPOINTMENTS CO (MICROSOFT BOOKINGS)
+-- =========================================================
+create table if not exists public.booking_appointments_co (
+ id bigserial primary key,
+ booking_appointment_id varchar(120) null,
+ idempotency_key varchar(128) null,
+ booking_business_id varchar(255) null,
+ booking_service_id varchar(120) null,
+ booking_service_name varchar(255) null,
+ booking_staff_id varchar(120) null,
+ whatsapp_phone varchar(20) not null,
+ customer_phone varchar(20) null,
+ customer_name varchar(255) null,
+ customer_email citext null,
+ starts_at_local timestamptz null,
+ ends_at_local timestamptz null,
+ local_date date null,
+ local_start_time time null,
+ local_end_time time null,
+ zone varchar(150) null,
+ status varchar(40) not null default 'pending_create',
+ ticket varchar(50) null,
+ id_usuario varchar(20) null,
+ id_conversacion uuid null,
+ id_cita bigint null,
+ cancel_reason text null,
+ graph_payload jsonb null,
+ graph_last_response jsonb null,
+ creado_en timestamptz not null default now(),
+ actualizado_en timestamptz not null default now(),
+
+ constraint booking_appointments_co_appointment_key unique (booking_appointment_id),
+ constraint booking_appointments_co_idempotency_key unique (idempotency_key),
+ constraint booking_appointments_co_status_check
+ check (status in ('pending_create', 'booked', 'rescheduled', 'cancelled', 'sync_error')),
+ constraint booking_appointments_co_whatsapp_phone_check
+ check (whatsapp_phone ~ '^[0-9]{10,15}$'),
+ constraint booking_appointments_co_customer_phone_check
+ check (customer_phone is null or customer_phone ~ '^[0-9]{10,15}$'),
+ constraint booking_appointments_co_usuario_fkey
+ foreign key (id_usuario)
+ references public.usuarios(id_usuario)
+ on delete set null,
+ constraint booking_appointments_co_conversacion_fkey
+ foreign key (id_conversacion)
+ references public.conversaciones(id_conversacion)
+ on delete set null,
+ constraint booking_appointments_co_cita_fkey
+ foreign key (id_cita)
+ references public.citas(id_cita)
+ on delete set null
+);
+
+create index if not exists idx_booking_appointments_co_whatsapp_phone
+ on public.booking_appointments_co (whatsapp_phone, starts_at_local desc);
+
+create index if not exists idx_booking_appointments_co_ticket
+ on public.booking_appointments_co (ticket);
+
+create index if not exists idx_booking_appointments_co_status
+ on public.booking_appointments_co (status);
+
+create trigger trg_booking_appointments_co_actualizado_en
+before update on public.booking_appointments_co
+for each row
+execute function public.actualiza_fecha_modificacion();

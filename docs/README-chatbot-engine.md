@@ -50,9 +50,20 @@ npm run chatbot:cli
 ## Estado actual
 Esto ya guarda de verdad en Supabase, pero todavía es una primera versión.
 
+## Integración Colombia + Microsoft Bookings
+Existe una implementación nueva orientada al canal Colombia que reutiliza el flujo conversacional actual del bot y cambia la capa de agenda hacia Microsoft Bookings.
+
+Documento de referencia:
+- `/root/.openclaw/workspace/docs/README-bookings-colombia.md`
+
+Resumen:
+- `src/metaWebhookServer.mjs` inyecta `BookingsClient` al motor
+- `src/bookingsClient.mjs` encapsula Graph + Bookings
+- `src/chatbotEngine.mjs` usa Bookings en CO para disponibilidad, creación, reprogramación y cancelación
+- la selección de horario en CO ya no autoasigna el primer slot; el usuario elige explícitamente
+- la trazabilidad local propuesta queda en `booking_appointments_co`
+
 ## Lo que falta después
-- conectar WhatsApp real
-- conectar OCR real
-- conectar Microsoft Calendar real
-- completar rama D de ticket/reprogramación/cancelación
-- endurecer validaciones y casos borde
+- ejecutar prueba real end-to-end contra Bookings
+- crear la tabla `booking_appointments_co` en Supabase
+- endurecer validaciones y casos borde de Graph/slot perdido

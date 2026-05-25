@@ -23,7 +23,7 @@ android {
     }
 
     defaultConfig {
-        applicationId "com.example.protocolo_cargador"
+        applicationId "com.evinka.suite"
         minSdkVersion flutter.minSdkVersion
         targetSdkVersion flutter.targetSdkVersion
         versionCode flutter.versionCode
@@ -35,13 +35,17 @@ android {
     productFlavors {
         pe {
             dimension "country"
+            applicationId "com.evinka.suite.pe"
             resValue "string", "app_name", "EVINKA Suite PE"
             resValue "string", "evinka_country", "PE"
+            versionNameSuffix "-pe"
         }
         co {
             dimension "country"
+            applicationId "com.evinka.suite.co"
             resValue "string", "app_name", "EVINKA Suite CO"
             resValue "string", "evinka_country", "CO"
+            versionNameSuffix "-co"
         }
     }
 

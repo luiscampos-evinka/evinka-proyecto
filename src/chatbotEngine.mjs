@@ -1,4 +1,4 @@
-import { MicrosoftGraphClient } from './microsoftGraph.mjs';
+import { createHash } from 'node:crypto';
 import { detectCorporateLead } from './chatRouting.mjs';
 
 const MENU = `¡Hola! 👋
@@ -1386,6 +1386,66 @@ function personFieldPrompt(field, other = false) {
   return `${intro}\n\n${highlightedFieldRequest('Correo electrónico')}`;
 }
 
+function advisorLeadSummary(summary) {
+  try {
+    const parsed = JSON.parse(String(summary || '{}'));
+    return parsed && typeof parsed === 'object' ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
+function nextAdvisorLeadField(data = {}) {
+  if (!data.nombre) return 'nombre';
+  if (!data.telefono) return 'telefono';
+  if (!data.correo) return 'correo';
+  if (!data.marca) return 'marca';
+  if (!data.comentario) return 'comentario';
+  return null;
+}
+
+function advisorLeadPrompt(field = 'nombre') {
+  const intro = 'Antes de derivarte con un asesor, necesito registrar estos 5 datos obligatorios:\n\n- nombre completo\n- teléfono de contacto\n- correo electrónico\n- marca del carro\n- comentario breve de lo que necesitas\n\nSi no completas esta información, no podré derivar tu solicitud.';
+  if (field === 'nombre') return `${intro}\n\nPaso 1 de 5\n\n${highlightedFieldRequest('Nombre completo')}`;
+  if (field === 'telefono') return `Perfecto 👍\n\nPaso 2 de 5\n\n${highlightedFieldRequest('Teléfono de contacto')}`;
+  if (field === 'correo') return `Perfecto 👍\n\nPaso 3 de 5\n\n${highlightedFieldRequest('Correo electrónico')}`;
+  if (field === 'marca') return `Perfecto 👍\n\nPaso 4 de 5\n\n${highlightedFieldRequest('Marca del carro')}`;
+  return `Perfecto 👍\n\nPaso 5 de 5\n\n👉 *AHORA ENVÍAME SOLO ESTO:*\n*COMENTARIO BREVE DE LO QUE NECESITAS*\n\nEjemplo: Quiero cotizar instalación para mi BYD en Surco y saber si pueden visitarme esta semana.`;
+}
+
+function normalizeAdvisorLeadPhone(value = '') {
+  const known = normalizeContactPhone(value);
+  if (known) return known;
+  const digits = cleanPhone(value);
+  if (!/^\d{8,15}$/.test(digits)) return null;
+  return `+${digits}`;
+}
+
+function parseSingleAdvisorLeadField(field, text, payloadCrudo = null) {
+  if (field === 'nombre') {
+    const nombre = normalizeNameCandidate(text);
+    return nombre && nombre.split(/\s+/).length >= 2 ? nombre : null;
+  }
+  if (field === 'telefono') return normalizeAdvisorLeadPhone(text);
+  if (field === 'correo') return String(text || '').match(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/i)?.[0]?.toLowerCase() || null;
+  if (field === 'marca') return parseSingleVehicleField('marca', text, payloadCrudo);
+  const comentario = cleanTextValue(text);
+  return comentario && comentario.length >= 8 ? comentario : null;
+}
+
+function invalidAdvisorLeadFieldPrompt(field = 'nombre') {
+  if (field === 'nombre') return 'No pude leer un nombre completo válido. Envíamelo otra vez, por favor.';
+  if (field === 'telefono') return 'No pude leer un teléfono válido. Envíamelo otra vez, por favor.';
+  if (field === 'correo') return 'No pude leer un correo electrónico válido. Envíamelo otra vez, por favor.';
+  if (field === 'marca') return 'No pude leer una marca válida. Envíamela otra vez, por favor.';
+  return 'No pude leer bien el comentario. Envíamelo otra vez con un poco más de detalle, por favor.';
+}
+
+function advisorLeadHandoffText(country = null) {
+  const brand = country === 'CO' ? 'EVINKA Colombia' : 'EVINKA';
+  return `Muchas gracias por tu información 👍\n\nHemos derivado tu requerimiento a nuestro asesor de ${brand}, quien en breve se comunicará contigo.`;
+}
+
 const BOOKING_DATA_NOTICE_CO = '📍 ¡Perfecto! Hemos registrado correctamente la localidad seleccionada.\n\n🔐 Antes de continuar, queremos informarte que los datos suministrados serán tratados conforme a nuestra política de tratamiento de datos personales, garantizando su confidencialidad y uso adecuado únicamente para fines relacionados con el proceso de atención.\n\nAl continuar, aceptas el tratamiento de tus datos de acuerdo con la normativa vigente. 😊';
 
 const BOOKING_DOCUMENT_TYPE_OPTIONS = {
@@ -1716,16 +1776,18 @@ function combinedSlotsPrompt(zone, options = []) {
   return `Perfecto 👍\n\nEstos son los horarios disponibles para tu zona (${zone}):\n\n${options.map(o => `${o.code}. ${o.dateLabel} — ${o.hourLabel}`).join('\n')}\n\nPor favor elige una opción.`;
 }
 
-function buildPagedSlotSummary(items = [], page = 0) {
-  return JSON.stringify({ items, page });
+function buildPagedSlotSummary(items = [], page = 0, extra = {}) {
+  return JSON.stringify({ items, page, ...(extra && typeof extra === 'object' ? extra : {}) });
 }
 
 function parsePagedSlotSummary(summary) {
   const parsed = parseReplySummary(summary);
-  if (Array.isArray(parsed)) return { items: parsed, page: 0 };
+  if (Array.isArray(parsed)) return { items: parsed, page: 0, invalidAttempts: 0, slotLossAttempts: 0 };
   return {
     items: Array.isArray(parsed?.items) ? parsed.items : [],
     page: Number.isInteger(parsed?.page) && parsed.page >= 0 ? parsed.page : 0,
+    invalidAttempts: Number(parsed?.invalidAttempts || 0),
+    slotLossAttempts: Number(parsed?.slotLossAttempts || 0),
   };
 }
 
@@ -2342,9 +2404,10 @@ function calendarSyncNote(provider = '') {
 }
 
 export class ChatbotEngine {
-  constructor({ sb, calendar = null, reminderScheduler = null, visitPublisher = null, supportCasePublisher = null }) {
+  constructor({ sb, calendar = null, bookings = null, reminderScheduler = null, visitPublisher = null, supportCasePublisher = null }) {
     this.sb = sb;
     this.calendar = calendar;
+    this.bookings = bookings;
     this.reminderScheduler = reminderScheduler;
     this.visitPublisher = visitPublisher;
     this.supportCasePublisher = supportCasePublisher;
@@ -2353,6 +2416,251 @@ export class ChatbotEngine {
 
   clearAvailabilityCache() {
     this.availabilityCache.clear();
+  }
+
+  bookingsEnabledForCountry(countryCode = null) {
+    return String(countryCode || '').trim().toUpperCase() === 'CO' && typeof this.bookings?.isEnabled === 'function' && this.bookings.isEnabled();
+  }
+
+  normalizeWhatsappPhoneForBookings(value = '') {
+    const digits = String(value || '').replace(/\D/g, '');
+    if (!digits) return '';
+    if (digits.startsWith('57') && digits.length === 12) return digits;
+    if (digits.length === 10) return `57${digits}`;
+    return digits;
+  }
+
+  bookingsIdempotencyKey({ whatsappPhone, serviceId, date, time, endTime }) {
+    return createHash('sha256').update(`${whatsappPhone}|${serviceId}|${date}|${time}|${endTime}`).digest('hex');
+  }
+
+  bookingsStateTable() {
+    return process.env.BOOKINGS_STATE_TABLE || 'booking_appointments_co';
+  }
+
+  async syncBookingState(action, payload = {}) {
+    if (!this.sb) return null;
+    const table = this.bookingsStateTable();
+    try {
+      if (action === 'upsert') {
+        const bookingAppointmentId = payload.booking_appointment_id || null;
+        const idempotencyKey = payload.idempotency_key || null;
+        const match = bookingAppointmentId
+          ? `booking_appointment_id=eq.${encodeURIComponent(bookingAppointmentId)}`
+          : idempotencyKey
+            ? `idempotency_key=eq.${encodeURIComponent(idempotencyKey)}`
+            : null;
+        if (!match) return null;
+        const existing = await this.sb.select(table, `${match}&select=*`);
+        if (existing.length) {
+          const rows = await this.sb.update(table, match, { ...payload, actualizado_en: new Date().toISOString() });
+          return rows[0] || null;
+        }
+        const rows = await this.sb.insert(table, { ...payload, actualizado_en: new Date().toISOString() });
+        return rows[0] || null;
+      }
+      if (action === 'findByPhone') {
+        const phone = this.normalizeWhatsappPhoneForBookings(payload.whatsappPhone || '');
+        if (!phone) return null;
+        const rows = await this.sb.select(table, `whatsapp_phone=eq.${encodeURIComponent(phone)}&order=starts_at_local.desc&limit=1&select=*`);
+        return rows[0] || null;
+      }
+    } catch (error) {
+      const message = String(error?.message || '');
+      if (message.includes('relation') || message.includes('does not exist') || message.includes('404')) return null;
+      console.warn('syncBookingState skipped:', error?.message || error);
+    }
+    return null;
+  }
+
+  async findManagedColombiaAppointment(conversation, fallbackTicket = null) {
+    const phone = this.normalizeWhatsappPhoneForBookings(this.phoneForUserId(conversation?.id_usuario || ''));
+    if (!phone || !this.bookingsEnabledForCountry('CO')) return null;
+    const local = await this.syncBookingState('findByPhone', { whatsappPhone: phone });
+    if (local?.booking_appointment_id) {
+      try {
+        const result = await this.bookings.getAppointment({ appointmentId: local.booking_appointment_id });
+        if (result?.appointment) return { appointment: result.appointment, localState: local, whatsappPhone: phone };
+      } catch (error) {
+        if (error?.reason !== 'not_found') throw error;
+      }
+    }
+    const result = await this.bookings.getAppointment({ appointmentId: null, whatsappPhone: phone });
+    if (!result?.appointment) return null;
+    return { appointment: result.appointment, localState: local, whatsappPhone: phone };
+  }
+
+  async buildManagedColombiaSlots(zone, { limit = 10 } = {}) {
+    const availability = await this.bookings.getAvailability({ zone, limit: Math.max(limit, 10) });
+    return availability?.slots || [];
+  }
+
+  async createManagedColombiaBooking({ conversation, profile, draft, chosen }) {
+    const whatsappPhone = this.normalizeWhatsappPhoneForBookings(this.phoneForUserId(conversation.id_usuario));
+    const addressLine = bookingAddressLine(draft);
+    const serviceId = chosen.serviceId || null;
+    const idempotencyKey = this.bookingsIdempotencyKey({ whatsappPhone, serviceId, date: chosen.date, time: chosen.time, endTime: chosen.endTime });
+    const existingState = await this.syncBookingState('upsert', {
+      booking_appointment_id: null,
+      idempotency_key: idempotencyKey,
+      booking_business_id: this.bookings.businessId,
+      booking_service_id: serviceId,
+      whatsapp_phone: whatsappPhone,
+      customer_phone: this.normalizeWhatsappPhoneForBookings(draft.telefono || whatsappPhone),
+      customer_name: draft.nombre || null,
+      customer_email: draft.correo || null,
+      starts_at_local: `${chosen.date}T${chosen.time}-05:00`,
+      ends_at_local: `${chosen.date}T${chosen.endTime}-05:00`,
+      local_date: chosen.date,
+      local_start_time: chosen.time,
+      local_end_time: chosen.endTime,
+      zone,
+      status: 'pending_create',
+      id_usuario: conversation.id_usuario,
+      id_conversacion: conversation.id_conversacion,
+    });
+    if (existingState?.booking_appointment_id) {
+      const existingRemote = await this.bookings.getAppointment({ appointmentId: existingState.booking_appointment_id });
+      if (existingRemote?.appointment) return { booking: existingRemote.appointment, localState: existingState, idempotencyKey };
+    }
+    const answers = {
+      documento: draft.tipo_documento,
+      barrio: draft.barrio,
+      direccion: addressLine,
+      numero_documento: draft.numero_documento,
+      marca_vehiculo: draft.marca_vehiculo,
+      ya_tiene_vehiculo: 'Sí',
+      ya_tiene_cargador: 'No',
+    };
+    const created = await this.bookings.createAppointment({
+      zone,
+      slot: chosen,
+      whatsappPhone,
+      customer: {
+        name: draft.nombre,
+        phone: draft.telefono,
+        email: draft.correo,
+      },
+      answers,
+      notes: `Zona: ${zone}\nDirección: ${addressLine}\nBarrio: ${draft.barrio || ''}\nDocumento: ${draft.tipo_documento || ''} ${draft.numero_documento || ''}`,
+    });
+    const booking = created.appointment;
+    const technicianId = booking?.staffMemberIds?.[0] || created.staffId || chosen.defaultStaffId || null;
+    const appointment = await this.createOrUpdateAppointment(conversation, profile, {
+      codigo_cita: this.ticketFor(chosen.date, conversation.id_conversacion),
+      fecha_cita: chosen.date,
+      hora_inicio: chosen.time,
+      hora_fin: chosen.endTime,
+      fecha_hora_inicio: `${chosen.date}T${chosen.time}-05:00`,
+      fecha_hora_fin: `${chosen.date}T${chosen.endTime}-05:00`,
+      nombre_cliente: draft.nombre,
+      telefono_cliente: draft.telefono,
+      dni_cliente: cleanTextValue(draft.numero_documento || '') || null,
+      correo_cliente: draft.correo,
+      direccion_cita: addressLine,
+      distrito_cita: draft.localidad || zone,
+      provincia_cita: 'Colombia',
+      zona_cliente: zone,
+      zona_dia: zone,
+      control_zona: zone,
+      etiqueta_horario: compactScheduleLabel(chosen.time, chosen.endTime),
+      marca_vehiculo: draft.marca_vehiculo || null,
+      modelo_vehiculo: null,
+      potencia_kw: null,
+      fase_electrica: 'no_definido',
+      validacion_recibo: false,
+      estado_cita: 'confirmada',
+      aprobacion: 'aprobada',
+      confirmada_por_cliente: true,
+      confirmada_en: new Date().toISOString(),
+      observaciones: `Bookings appointmentId=${booking?.id || ''}; staffId=${technicianId || ''}; serviceId=${serviceId || ''}`.trim(),
+    });
+    const state = await this.syncBookingState('upsert', {
+      booking_appointment_id: booking?.id || null,
+      idempotency_key: created.idempotencyKey || idempotencyKey,
+      booking_business_id: this.bookings.businessId,
+      booking_service_id: serviceId,
+      booking_service_name: chosen.serviceName || null,
+      booking_staff_id: technicianId,
+      whatsapp_phone: whatsappPhone,
+      customer_phone: created.customerPhone || this.normalizeWhatsappPhoneForBookings(draft.telefono || whatsappPhone),
+      customer_name: draft.nombre || null,
+      customer_email: draft.correo || null,
+      starts_at_local: `${chosen.date}T${chosen.time}-05:00`,
+      ends_at_local: `${chosen.date}T${chosen.endTime}-05:00`,
+      local_date: chosen.date,
+      local_start_time: chosen.time,
+      local_end_time: chosen.endTime,
+      zone,
+      status: 'booked',
+      ticket: appointment.codigo_cita,
+      id_usuario: conversation.id_usuario,
+      id_conversacion: conversation.id_conversacion,
+      id_cita: appointment.id_cita,
+      graph_payload: created.payload,
+      graph_last_response: booking,
+    });
+    return { booking, appointment, localState: state, technicianId };
+  }
+
+  async rescheduleManagedColombiaBooking({ conversation, cita, chosen }) {
+    const managed = await this.findManagedColombiaAppointment(conversation, cita?.codigo_cita || null);
+    const appointmentId = managed?.appointment?.id || managed?.localState?.booking_appointment_id || null;
+    if (!appointmentId) throw new Error('No encontré la cita de Bookings asociada al teléfono de WhatsApp.');
+    await this.bookings.updateAppointment({ appointmentId, startDate: chosen.date, startTime: chosen.time, endTime: chosen.endTime });
+    await this.sb.update('citas', `id_cita=eq.${cita.id_cita}`, {
+      fecha_cita: chosen.date,
+      hora_inicio: chosen.time,
+      hora_fin: chosen.endTime,
+      fecha_hora_inicio: `${chosen.date}T${chosen.time}-05:00`,
+      fecha_hora_fin: `${chosen.date}T${chosen.endTime}-05:00`,
+      etiqueta_horario: compactScheduleLabel(chosen.time, chosen.endTime),
+      estado_cita: 'reprogramada',
+      motivo_reprogramacion: 'Reprogramada por cliente desde WhatsApp (Bookings).',
+      confirmada_por_cliente: true,
+      confirmada_en: new Date().toISOString(),
+    });
+    await this.syncBookingState('upsert', {
+      booking_appointment_id: appointmentId,
+      whatsapp_phone: this.normalizeWhatsappPhoneForBookings(this.phoneForUserId(conversation.id_usuario)),
+      starts_at_local: `${chosen.date}T${chosen.time}-05:00`,
+      ends_at_local: `${chosen.date}T${chosen.endTime}-05:00`,
+      local_date: chosen.date,
+      local_start_time: chosen.time,
+      local_end_time: chosen.endTime,
+      zone: cita.zona_cliente || null,
+      status: 'rescheduled',
+      ticket: cita.codigo_cita,
+      id_usuario: conversation.id_usuario,
+      id_conversacion: conversation.id_conversacion,
+      id_cita: cita.id_cita,
+    });
+    return appointmentId;
+  }
+
+  async cancelManagedColombiaBooking({ conversation, cita, reason = 'Cancelada por cliente desde WhatsApp.' }) {
+    const managed = await this.findManagedColombiaAppointment(conversation, cita?.codigo_cita || null);
+    const appointmentId = managed?.appointment?.id || managed?.localState?.booking_appointment_id || null;
+    if (!appointmentId) throw new Error('No encontré la cita de Bookings asociada al teléfono de WhatsApp.');
+    await this.bookings.cancelAppointment({ appointmentId, reason });
+    await this.sb.update('citas', `id_cita=eq.${cita.id_cita}`, {
+      estado_cita: 'cancelada',
+      motivo_cancelacion: reason,
+      cancelada_en: new Date().toISOString(),
+    });
+    await this.syncBookingState('upsert', {
+      booking_appointment_id: appointmentId,
+      whatsapp_phone: this.normalizeWhatsappPhoneForBookings(this.phoneForUserId(conversation.id_usuario)),
+      zone: cita.zona_cliente || null,
+      status: 'cancelled',
+      ticket: cita.codigo_cita,
+      id_usuario: conversation.id_usuario,
+      id_conversacion: conversation.id_conversacion,
+      id_cita: cita.id_cita,
+      cancelled_at: new Date().toISOString(),
+      last_error_message: null,
+    });
+    return appointmentId;
   }
 
   async availableDaysForZone(zone, { includeToday = false } = {}) {
@@ -2396,6 +2704,10 @@ export class ChatbotEngine {
   }
 
   async availableHoursForDate(date, { excludeEventId = null, clientZone = null } = {}) {
+    if (this.bookingsEnabledForCountry(inferCountryFromZone(clientZone || ''))) {
+      const availability = await this.bookings.getAvailability({ zone: clientZone, startDate: date, endDate: date, limit: 30 });
+      return (availability?.slots || []).filter((slot) => !excludeEventId || slot.id !== excludeEventId);
+    }
     const slots = hoursForDate(date, clientZone);
     if (!this.calendar || !slots.length) return slots;
     const cacheKey = `${date}|${String(clientZone || '').toUpperCase().trim()}|${String(excludeEventId || '')}`;
@@ -2823,7 +3135,7 @@ export class ChatbotEngine {
     const letter = pickLetter(text, payloadCrudo, step);
     const specialTestFlow = isTestFlowPhone(phone);
     const corporateLead = extractCorporateLead(text);
-    const sendToAdvisor = (reason = 'Soporte humano solicitado', customText = null) => this.reply(
+    const sendToAdvisor = (reason = 'Soporte humano solicitado', customText = null, extraPatch = {}) => this.reply(
       conversation,
       customText || advisorHandoffText(selectedCountry),
       {
@@ -2833,8 +3145,71 @@ export class ChatbotEngine {
         requiere_handoff: true,
         motivo_handoff: reason,
         intencion_principal: conversation.intencion_principal || 'otro',
+        ...extraPatch,
       },
     );
+
+    const routeManagedColombiaAction = async (action) => {
+      try {
+        const managed = await this.findManagedColombiaAppointment(conversation);
+        if (!managed?.appointment) {
+          return sendToAdvisor(
+            'No se encontró cita de Bookings asociada al teléfono de WhatsApp.',
+            'No pude encontrar una visita activa asociada a este número de WhatsApp.\n\nPara evitar errores, te voy a pasar con un asesor de EVINKA Colombia para revisarlo contigo.',
+            { accion_ticket_actual: action, codigo_ticket_solicitado: null },
+          );
+        }
+        const citaRows = managed?.localState?.id_cita
+          ? await this.sb.select('citas', `id_cita=eq.${encodeURIComponent(managed.localState.id_cita)}&limit=1&select=*`).catch(() => [])
+          : await this.sb.select('citas', `id_usuario=eq.${encodeURIComponent(conversation.id_usuario)}&order=confirmada_en.desc.nullslast,creado_en.desc&limit=1&select=*`).catch(() => []);
+        const cita = citaRows[0] || null;
+        if (action === 'cancel') {
+          if (!cita) {
+            return sendToAdvisor('La cita de Bookings existe, pero no tiene espejo local confiable en Supabase.', 'Encontré tu reserva, pero necesito que un asesor valide el estado interno antes de cancelarla.\n\nTe paso con EVINKA Colombia para resolverlo ahora mismo.');
+          }
+          await this.cancelManagedColombiaBooking({ conversation, cita, reason: 'Cancelada por cliente desde WhatsApp.' });
+          return this.reply(conversation, 'Entendido 👍\n\nTu cita ha sido cancelada correctamente.\n\nSi más adelante deseas agendar una nueva visita, estaremos encantados de ayudarte.\n\n¡Gracias por confiar en EVINKA! ⚡', { paso_actual: 'ticket_cancelado', subestado_flujo: cita.codigo_cita, estado_conversacion: 'closed', cerrada_en: new Date().toISOString() });
+        }
+        const zone = cita?.zona_cliente || profile?.zona_cliente || resolveProfileZone(profile, { phone: this.phoneForUserId(conversation.id_usuario), country: 'CO' }) || defaultZoneForCountry('CO');
+        const options = await this.buildManagedColombiaSlots(zone, { limit: 15 });
+        if (!options.length) {
+          return sendToAdvisor('No se encontraron slots válidos para reprogramación Bookings.', 'Por ahora no encontré horarios disponibles para reprogramar tu visita.\n\nTe voy a pasar con un asesor de EVINKA Colombia para ayudarte a moverla manualmente.');
+        }
+        const ticket = cita?.codigo_cita || conversation.codigo_ticket_solicitado || this.ticketFor(options[0].date, conversation.id_conversacion);
+        return this.reply(conversation, combinedSlotsPrompt(zone, options), { paso_actual: 'seleccionando_bloque_horario_reprogramacion', subestado_flujo: ticket, accion_ticket_actual: 'reschedule', codigo_ticket_solicitado: ticket, resumen: buildPagedSlotSummary(options, 0) });
+      } catch (error) {
+        console.error('routeManagedColombiaAction failed:', error);
+        return sendToAdvisor('Falló la consulta de Bookings para gestionar la cita.', 'Tuve un problema al consultar la disponibilidad real de tu visita.\n\nTe paso con un asesor de EVINKA Colombia para continuar sin perder tiempo.');
+      }
+    };
+
+    const startAdvisorLeadCapture = (reason = 'Soporte humano solicitado', customPrompt = null) => {
+      const previousSummary = conversation.resumen || null;
+      const draft = {
+        kind: 'advisor_lead',
+        reason,
+        country: selectedCountry || forcedChannelCountry || null,
+        nombre: '',
+        telefono: '',
+        correo: '',
+        marca: '',
+        comentario: '',
+        previousSummary,
+      };
+      return this.reply(
+        conversation,
+        customPrompt || advisorLeadPrompt('nombre'),
+        {
+          paso_actual: 'capturando_datos_handoff',
+          subestado_flujo: 'nombre',
+          estado_conversacion: 'open',
+          requiere_handoff: false,
+          motivo_handoff: reason,
+          resumen: JSON.stringify(draft),
+          intencion_principal: conversation.intencion_principal || 'otro',
+        },
+      );
+    };
 
     const knownCustomerName = hasKnownCustomerName(user, profile, profileName);
     const allowCorporateDetection = ['menu_principal', 'seleccion_pais', 'retomar_o_reiniciar', 'consentimiento', 'compra_menu'].includes(step);
@@ -2879,23 +3254,77 @@ export class ChatbotEngine {
     }
 
     if (step === 'capturando_nombre_handoff') {
+      return startAdvisorLeadCapture(conversation.motivo_handoff || 'Soporte humano solicitado');
+    }
+
+    if (step === 'capturando_datos_handoff') {
       if (isMainMenuRequest(text, payloadCrudo)) {
         return this.reply(conversation, MENU, { paso_actual: 'menu_principal', subestado_flujo: 'menu_desde_nombre_handoff', estado_conversacion: 'open', resumen: null, requiere_handoff: false, motivo_handoff: null, intencion_principal: null });
       }
       if (isAdvisorRequest(text)) {
-        return this.reply(conversation, 'Antes de pasarte con un asesor, compárteme por favor tu nombre para identificar tu caso.', { paso_actual: 'capturando_nombre_handoff', subestado_flujo: 'nombre_asesor' });
+        const draft = advisorLeadSummary(conversation.resumen);
+        const field = conversation.subestado_flujo || nextAdvisorLeadField(draft) || 'nombre';
+        return this.reply(conversation, advisorLeadPrompt(field), { paso_actual: 'capturando_datos_handoff', subestado_flujo: field, resumen: conversation.resumen || null });
       }
-      const requestedName = normalizeDisplayName(text);
-      if (!requestedName) {
-        return this.reply(conversation, 'Antes de pasarte con un asesor, compárteme por favor tu nombre para identificar tu caso.', { paso_actual: 'capturando_nombre_handoff', subestado_flujo: 'nombre_asesor' });
+      const draft = advisorLeadSummary(conversation.resumen);
+      const field = conversation.subestado_flujo || nextAdvisorLeadField(draft) || 'nombre';
+      const value = parseSingleAdvisorLeadField(field, text, payloadCrudo);
+      if (!value) {
+        return this.reply(conversation, `${invalidAdvisorLeadFieldPrompt(field)}\n\n${advisorLeadPrompt(field)}`, { paso_actual: 'capturando_datos_handoff', subestado_flujo: field, resumen: conversation.resumen || null });
       }
-      user = await this.rememberUserName(user, requestedName, 'handoff_prompt');
+      draft[field] = value;
+      draft.reason = draft.reason || conversation.motivo_handoff || 'Soporte humano solicitado';
+      draft.country = draft.country || selectedCountry || forcedChannelCountry || null;
+      const nextField = nextAdvisorLeadField(draft);
+      user = await this.rememberUserName(user, draft.nombre, 'handoff_prompt');
+      if (nextField) {
+        return this.reply(conversation, advisorLeadPrompt(nextField), {
+          paso_actual: 'capturando_datos_handoff',
+          subestado_flujo: nextField,
+          estado_conversacion: 'open',
+          requiere_handoff: false,
+          motivo_handoff: draft.reason,
+          resumen: JSON.stringify(draft),
+          intencion_principal: conversation.intencion_principal || 'otro',
+        });
+      }
       try {
-        profile = await this.patchProfile(conversation.id_conversacion, { nombre_receptor: profile?.nombre_receptor || requestedName }) || profile;
+        profile = await this.patchProfile(conversation.id_conversacion, {
+          nombre_receptor: draft.nombre,
+          telefono_receptor: draft.telefono,
+          correo_receptor: draft.correo,
+          marca_vehiculo: draft.marca,
+          estado_perfil: profile?.estado_perfil || 'incomplete',
+        }) || profile;
       } catch (error) {
-        console.warn('handoff profile name skipped:', error?.message || error);
+        console.warn('handoff profile update skipped:', error?.message || error);
       }
-      return sendToAdvisor('Soporte humano solicitado por el cliente');
+      try {
+        await this.sb.update('usuarios', `id_usuario=eq.${conversation.id_usuario}`, {
+          nombre_visible: draft.nombre,
+          nombre_usuario: draft.nombre,
+          correo_electronico: draft.correo,
+          telefono_principal: cleanPhone(draft.telefono) || draft.telefono,
+        });
+      } catch (error) {
+        const message = String(error?.message || '');
+        if (!message.includes('usuarios_correo_key')) {
+          console.warn('handoff user update skipped:', error?.message || error);
+        } else {
+          await this.sb.update('usuarios', `id_usuario=eq.${conversation.id_usuario}`, {
+            nombre_visible: draft.nombre,
+            nombre_usuario: draft.nombre,
+            telefono_principal: cleanPhone(draft.telefono) || draft.telefono,
+          }).catch((innerError) => {
+            console.warn('handoff user update fallback skipped:', innerError?.message || innerError);
+          });
+        }
+      }
+      return sendToAdvisor(
+        draft.reason || 'Soporte humano solicitado por el cliente',
+        advisorLeadHandoffText(draft.country || selectedCountry || forcedChannelCountry || null),
+        { resumen: JSON.stringify(draft) },
+      );
     }
 
     if (step === 'esperando_timeout_asesor') {
@@ -2926,18 +3355,12 @@ export class ChatbotEngine {
       });
     }
 
-    if (isAdvisorRequest(text)) {
-      if (!knownCustomerName) {
-        return this.reply(conversation, 'Claro 👍 Antes de pasarte con un asesor, compárteme por favor tu nombre para identificar tu caso.', { paso_actual: 'capturando_nombre_handoff', subestado_flujo: 'nombre_asesor', estado_conversacion: 'open' });
-      }
-      return sendToAdvisor('Soporte humano solicitado por el cliente');
+    if (isAdvisorRequest(text) && conversation.estado_conversacion !== 'handoff' && step !== 'handoff_asesor') {
+      return startAdvisorLeadCapture('Soporte humano solicitado por el cliente');
     }
 
-    if (isNegativeAttentionSignal(text)) {
-      if (!knownCustomerName) {
-        return this.reply(conversation, 'Lamento que hayas tenido una mala experiencia. Antes de pasarte con un asesor, compárteme por favor tu nombre para identificar tu caso y priorizarlo.', { paso_actual: 'capturando_nombre_handoff', subestado_flujo: 'nombre_asesor', estado_conversacion: 'open' });
-      }
-      return sendToAdvisor('Cliente reporta molestia o inconformidad en la atención');
+    if (isNegativeAttentionSignal(text) && conversation.estado_conversacion !== 'handoff' && step !== 'handoff_asesor') {
+      return startAdvisorLeadCapture('Cliente reporta molestia o inconformidad en la atención');
     }
 
     if (conversation.estado_conversacion === 'handoff' || conversation.paso_actual === 'handoff_asesor') {
@@ -2957,7 +3380,10 @@ export class ChatbotEngine {
 
     if (latestConversation && latestConversation.estado_conversacion === 'closed' && ['cita_confirmada', 'cita_reprogramada', 'ticket_cancelado'].includes(latestConversation.paso_actual || '') && letter) {
       if (letter === 'A') return this.reply(conversation, MENU, { paso_actual: 'menu_principal', subestado_flujo: 'post_cierre_menu', estado_conversacion: 'open' });
-      if (letter === 'B') return this.reply(conversation, ticketRequestPrompt('reschedule'), { paso_actual: 'gestion_ticket', subestado_flujo: 'esperando_ticket', intencion_principal: 'otro', accion_ticket_actual: 'reschedule' });
+      if (letter === 'B') {
+        if (this.bookingsEnabledForCountry(selectedCountry)) return routeManagedColombiaAction('reschedule');
+        return this.reply(conversation, ticketRequestPrompt('reschedule'), { paso_actual: 'gestion_ticket', subestado_flujo: 'esperando_ticket', intencion_principal: 'otro', accion_ticket_actual: 'reschedule' });
+      }
     }
     const continueWithCountry = async (menuOption, country) => {
       const forcedZone = defaultZoneForCountry(country);
@@ -2966,7 +3392,9 @@ export class ChatbotEngine {
       }
       if (menuOption === 'A' && country === 'CO') return this.reply(conversation, CO_LOCATION_PROMPT, { intencion_principal: 'instalacion_cargador', paso_actual: 'capturando_localidad_co', subestado_flujo: 'localidad_inicial' });
       if (menuOption === 'A') return this.reply(conversation, CONSENT, { intencion_principal: 'instalacion_cargador', paso_actual: 'consentimiento', subestado_flujo: 'instalacion' });
+      if (menuOption === 'B' && this.bookingsEnabledForCountry(country)) return routeManagedColombiaAction('reschedule');
       if (menuOption === 'B') return this.reply(conversation, ticketRequestPrompt('reschedule'), { intencion_principal: 'otro', paso_actual: 'gestion_ticket', subestado_flujo: 'esperando_ticket', accion_ticket_actual: 'reschedule' });
+      if (menuOption === 'C' && this.bookingsEnabledForCountry(country)) return routeManagedColombiaAction('cancel');
       if (menuOption === 'C') return this.reply(conversation, ticketRequestPrompt('cancel'), { intencion_principal: 'otro', paso_actual: 'gestion_ticket', subestado_flujo: 'esperando_ticket', accion_ticket_actual: 'cancel' });
       if (menuOption === 'D') {
         return this.reply(conversation, SUPPORT_CASE_MENU, {
@@ -2977,10 +3405,7 @@ export class ChatbotEngine {
         });
       }
       if (menuOption === 'E') {
-        if (!knownCustomerName) {
-          return this.reply(conversation, 'Claro 👍 Antes de pasarte con un asesor, compárteme por favor tu nombre para identificar tu caso.', { paso_actual: 'capturando_nombre_handoff', subestado_flujo: 'nombre_asesor', estado_conversacion: 'open' });
-        }
-        return sendToAdvisor('Soporte humano solicitado desde el menú principal');
+        return startAdvisorLeadCapture('Soporte humano solicitado desde el menú principal');
       }
       return this.reply(conversation, MENU, { paso_actual: 'menu_principal', subestado_flujo: 'reinicio' });
     };
@@ -3021,6 +3446,9 @@ export class ChatbotEngine {
       if (action === 'reschedule') {
         const rows = await this.sb.select('citas', `codigo_cita=eq.${encodeURIComponent(ticket)}&select=*`);
         const cita = rows[0];
+        if (this.bookingsEnabledForCountry(inferCountryFromZone(cita?.zona_cliente || cita?.provincia_cita || '') || selectedCountry)) {
+          return routeManagedColombiaAction('reschedule');
+        }
         if (!cita) return this.reply(conversation, 'No pude encontrar la cita a gestionar. Vuelve a ingresar tu ticket.', { paso_actual: 'gestion_ticket', subestado_flujo: 'esperando_ticket', accion_ticket_actual: 'reschedule' });
         const zone = cita.zona_cliente || resolveProfileZone(profile, { phone: this.phoneForUserId(conversation.id_usuario), country: selectedCountry }) || defaultZoneForCountry(selectedCountry);
         const options = await this.availableDateHourOptionsForZone(zone, { includeToday: false, excludeEventId: cita?.microsoft_event_id || null, throughFriday: true });
@@ -3030,6 +3458,10 @@ export class ChatbotEngine {
       if (action === 'cancel') {
         const rows = await this.sb.select('citas', `codigo_cita=eq.${encodeURIComponent(ticket)}&select=*`);
         const cita = rows[0];
+        if (this.bookingsEnabledForCountry(inferCountryFromZone(cita?.zona_cliente || cita?.provincia_cita || '') || selectedCountry)) {
+          await this.cancelManagedColombiaBooking({ conversation, cita, reason: 'Cancelada por cliente desde recordatorio de WhatsApp.' });
+          return this.reply(conversation, 'Entendido 👍\n\nTu cita ha sido cancelada correctamente.\n\nSi más adelante deseas agendar una nueva visita, estaremos encantados de ayudarte.\n\n¡Gracias por confiar en EVINKA! ⚡', { paso_actual: 'ticket_cancelado', subestado_flujo: ticket, estado_conversacion: 'closed', accion_ticket_actual: 'cancel', codigo_ticket_solicitado: ticket, cerrada_en: new Date().toISOString() });
+        }
         if (!cita) return this.reply(conversation, 'No pude encontrar la cita a gestionar. Vuelve a ingresar tu ticket.', { paso_actual: 'gestion_ticket', subestado_flujo: 'esperando_ticket', accion_ticket_actual: 'cancel' });
         if (cita.microsoft_event_id && this.calendar) {
           await this.calendar.cancelEvent(cita.microsoft_event_id, 'Cancelada por cliente desde recordatorio de WhatsApp.');
@@ -3106,10 +3538,7 @@ export class ChatbotEngine {
         });
       }
       if (letter === 'E') {
-        if (!knownCustomerName) {
-          return this.reply(conversation, 'Claro 👍 Antes de pasarte con un asesor, compárteme por favor tu nombre para identificar tu caso.', { paso_actual: 'capturando_nombre_handoff', subestado_flujo: 'nombre_asesor', estado_conversacion: 'open' });
-        }
-        return sendToAdvisor('Soporte humano solicitado desde el menú principal');
+        return startAdvisorLeadCapture('Soporte humano solicitado desde el menú principal');
       }
       if (['A','B','C'].includes(letter)) {
         if (forcedChannelCountry) {
@@ -3130,10 +3559,7 @@ export class ChatbotEngine {
     if (step === 'soporte_tipo') {
       if (!letter) return this.reply(conversation, SUPPORT_CASE_MENU, { paso_actual: 'soporte_tipo', subestado_flujo: conversation.subestado_flujo, resumen: conversation.resumen || JSON.stringify({ mode: null }) });
       if (letter === 'C') {
-        if (!knownCustomerName) {
-          return this.reply(conversation, 'Claro 👍 Antes de pasarte con un asesor, compárteme por favor tu nombre para identificar tu caso.', { paso_actual: 'capturando_nombre_handoff', subestado_flujo: 'nombre_asesor', estado_conversacion: 'open' });
-        }
-        return sendToAdvisor('Asistencia técnica: cliente solicita asesor');
+        return startAdvisorLeadCapture('Asistencia técnica: cliente solicita asesor');
       }
       const mode = letter === 'B' ? 'emergency' : letter === 'A' ? 'technical' : null;
       if (!mode) return this.reply(conversation, SUPPORT_CASE_MENU, { paso_actual: 'soporte_tipo', subestado_flujo: conversation.subestado_flujo, resumen: conversation.resumen || JSON.stringify({ mode: null }) });
@@ -3263,10 +3689,7 @@ export class ChatbotEngine {
         });
       }
       if (letter === 'C') {
-        if (!knownCustomerName && !summary.name) {
-          return this.reply(conversation, 'Claro 👍 Antes de pasarte con un asesor, compárteme por favor tu nombre para identificar tu caso.', { paso_actual: 'capturando_nombre_handoff', subestado_flujo: 'nombre_asesor', estado_conversacion: 'open' });
-        }
-        return sendToAdvisor(summary.mode === 'emergency' ? 'Emergencia técnica reportada por cliente' : 'Caso de soporte técnico solicitado por cliente');
+        return startAdvisorLeadCapture(summary.mode === 'emergency' ? 'Emergencia técnica reportada por cliente' : 'Caso de soporte técnico solicitado por cliente');
       }
       if (letter === 'A') {
         const published = await this.publishSupportCase({
@@ -3610,64 +4033,49 @@ export class ChatbotEngine {
     }
 
     if (step === 'seleccionando_bloque_horario') {
-      const options = (() => { try { return JSON.parse(conversation.resumen || '[]'); } catch { return []; } })();
+      const summary = (() => { try { return JSON.parse(conversation.resumen || '[]'); } catch { return []; } })();
+      const options = Array.isArray(summary) ? summary : (summary.options || []);
+      const zone = summary.zone || resolveProfileZone(profile, { phone: this.phoneForUserId(conversation.id_usuario), country: selectedCountry }) || defaultZoneForCountry(selectedCountry);
       const chosen = options.find(x => x.code === letter);
-      const zone = resolveProfileZone(profile, { phone: this.phoneForUserId(conversation.id_usuario), country: selectedCountry }) || defaultZoneForCountry(selectedCountry);
-      if (!chosen) return this.reply(conversation, combinedSlotsPrompt(zone, options), { paso_actual: 'seleccionando_bloque_horario', subestado_flujo: 'agenda_directa', resumen: conversation.resumen || null });
+      if (!chosen) {
+        if (selectedCountry === 'CO' && summary?.kind === 'booking_co' && Number(summary.invalidAttempts || 0) >= 1) {
+          return sendToAdvisor('Dos selecciones de horario no entendidas en el flujo de Bookings.', 'No logré entender tu elección de horario dos veces seguidas.\n\nPara no hacerte perder tiempo, te paso con un asesor de EVINKA Colombia para continuar contigo.');
+        }
+        const nextSummary = Array.isArray(summary) ? summary : { ...summary, invalidAttempts: Number(summary.invalidAttempts || 0) + 1 };
+        return this.reply(conversation, combinedSlotsPrompt(zone, options), { paso_actual: 'seleccionando_bloque_horario', subestado_flujo: 'agenda_directa', resumen: JSON.stringify(nextSummary) });
+      }
       profile = await this.getOrCreateProfile(conversation);
-      if (selectedCountry === 'CO') {
-        const addressLine = profile.direccion_instalacion || '';
-        const appointment = await this.createOrUpdateAppointment(conversation, profile, {
-          codigo_cita: this.ticketFor(chosen.date, conversation.id_conversacion),
-          fecha_cita: chosen.date,
-          hora_inicio: chosen.time,
-          hora_fin: chosen.endTime,
-          fecha_hora_inicio: `${chosen.date}T${chosen.time}-05:00`,
-          fecha_hora_fin: `${chosen.date}T${chosen.endTime}-05:00`,
-          nombre_cliente: profile.nombre_receptor,
-          telefono_cliente: profile.telefono_receptor,
-          dni_cliente: profile.dni_receptor || profile.ruc_receptor,
-          correo_cliente: profile.correo_receptor,
-          direccion_cita: addressLine,
-          distrito_cita: profile.distrito_instalacion,
-          provincia_cita: 'Colombia',
-          zona_cliente: zone,
-          zona_dia: zone,
-          control_zona: zone,
-          etiqueta_horario: compactScheduleLabel(chosen.time, chosen.endTime),
-          marca_vehiculo: profile.marca_vehiculo,
-          modelo_vehiculo: null,
-          potencia_kw: null,
-          fase_electrica: 'no_definido',
-          validacion_recibo: false,
-          estado_cita: 'confirmada',
-          aprobacion: 'aprobada',
-          confirmada_por_cliente: true,
-          confirmada_en: new Date().toISOString(),
-        });
-        let microsoftEventId = null;
+      if (selectedCountry === 'CO' && summary?.kind === 'booking_co') {
         try {
-          microsoftEventId = await this.ensureCalendarEvent({ appointment, profile, dateLabel: chosen.dateLabel, hourLabel: chosen.hourLabel, ticket: appointment.codigo_cita });
-          if (microsoftEventId) {
-            appointment.microsoft_event_id = microsoftEventId;
-            await this.sb.update('citas', `id_cita=eq.${appointment.id_cita}`, { microsoft_event_id: microsoftEventId, observaciones: calendarSyncNote(this.calendar?.provider) });
+          const created = await this.createManagedColombiaBooking({ conversation, profile, draft: summary.draft, chosen: { ...chosen, serviceId: chosen.serviceId || summary.serviceId || null } });
+          const finalAddress = `${bookingAddressLine(summary.draft)} ${summary.draft.localidad || ''} Colombia`.trim();
+          try {
+            await this.scheduleBookingReminder({ userId: conversation.id_usuario, ticket: created.appointment.codigo_cita, dateLabel: chosen.dateLabel, hourLabel: chosen.hourLabel, address: finalAddress });
+          } catch (error) {
+            console.error('scheduleBookingReminder failed:', error);
           }
+          try {
+            await this.publishTechVisit({ conversation, profile: { ...profile, marca_vehiculo: summary.draft.marca_vehiculo, nombre_receptor: summary.draft.nombre, correo_receptor: summary.draft.correo, telefono_receptor: summary.draft.telefono, direccion_instalacion: bookingAddressLine(summary.draft), distrito_instalacion: summary.draft.localidad || zone, provincia_instalacion: 'Colombia', zona_cliente: zone }, appointment: created.appointment, dateLabel: chosen.dateLabel, hourLabel: chosen.hourLabel });
+          } catch (error) {
+            console.error('publishTechVisit failed:', error);
+          }
+          await this.patchProfile(conversation.id_conversacion, { estado_perfil: 'scheduled' });
+          return this.reply(conversation, finalConfirmation({ ticket: created.appointment.codigo_cita, dateLabel: chosen.dateLabel, hourLabel: chosen.hourLabel, address: finalAddress, country: 'CO' }), { paso_actual: 'cita_confirmada', subestado_flujo: 'agenda_confirmada', estado_conversacion: 'closed', accion_ticket_actual: 'confirm', codigo_ticket_solicitado: created.appointment.codigo_cita, cerrada_en: new Date().toISOString() });
         } catch (error) {
-          console.error('ensureCalendarEvent failed:', error);
+          console.error('createManagedColombiaBooking failed:', error);
+          if (error?.reason === 'slot_unavailable') {
+            const attempts = Number(summary.slotLossAttempts || 0) + 1;
+            if (attempts >= 2) {
+              return sendToAdvisor('Dos pérdidas consecutivas de slot en Bookings.', 'El horario elegido ya no estaba disponible y esto pasó más de una vez.\n\nTe paso con un asesor de EVINKA Colombia para terminar el agendamiento contigo.');
+            }
+            const refreshed = await this.buildManagedColombiaSlots(zone, { limit: 15 });
+            if (!refreshed.length) {
+              return sendToAdvisor('El slot se perdió y no quedaron opciones de reemplazo en Bookings.', 'El horario elegido ya no estaba disponible y ahora no veo más opciones válidas para ofrecerte.\n\nTe paso con un asesor de EVINKA Colombia para continuar.');
+            }
+            return this.reply(conversation, `Ese horario se acaba de ocupar.\n\nTe muestro nuevas opciones disponibles para que elijas otra:`, { paso_actual: 'seleccionando_bloque_horario', subestado_flujo: 'agenda_directa', resumen: JSON.stringify({ ...summary, options: refreshed, slotLossAttempts: attempts, invalidAttempts: 0 }) });
+          }
+          return sendToAdvisor('Falló la creación de la cita en Bookings.', 'Tuve un problema al confirmar la visita con la agenda real.\n\nTe paso con un asesor de EVINKA Colombia para cerrar el proceso sin demoras.');
         }
-        const finalAddress = `${addressLine} ${profile.distrito_instalacion || ''} Colombia`.trim();
-        try {
-          await this.scheduleBookingReminder({ userId: conversation.id_usuario, ticket: appointment.codigo_cita, dateLabel: chosen.dateLabel, hourLabel: chosen.hourLabel, address: finalAddress });
-        } catch (error) {
-          console.error('scheduleBookingReminder failed:', error);
-        }
-        try {
-          await this.publishTechVisit({ conversation, profile, appointment, dateLabel: chosen.dateLabel, hourLabel: chosen.hourLabel });
-        } catch (error) {
-          console.error('publishTechVisit failed:', error);
-        }
-        await this.patchProfile(conversation.id_conversacion, { estado_perfil: 'scheduled' });
-        return this.reply(conversation, finalConfirmation({ ticket: appointment.codigo_cita, dateLabel: chosen.dateLabel, hourLabel: chosen.hourLabel, address: finalAddress, country: 'CO' }), { paso_actual: 'cita_confirmada', subestado_flujo: 'agenda_confirmada', estado_conversacion: 'closed', accion_ticket_actual: 'confirm', codigo_ticket_solicitado: appointment.codigo_cita, cerrada_en: new Date().toISOString() });
       }
       const draft = {
         kind: 'booking_residencial_co',
@@ -3801,7 +4209,14 @@ export class ChatbotEngine {
         return this.reply(conversation, bookingFieldPrompt('marca_vehiculo'), { paso_actual: 'capturando_datos_booking_residencial', subestado_flujo: 'marca_vehiculo', resumen: conversation.resumen || null });
       }
       const value = parseSingleBookingField(field, text, letter);
-      if (!value) return this.reply(conversation, `${invalidBookingFieldPrompt(field)}\n\n${bookingFieldPrompt(field)}`, { paso_actual: 'capturando_datos_booking_residencial', subestado_flujo: field, resumen: conversation.resumen || null });
+      if (!value) {
+        const invalidAttempts = Number(draft.invalidAttempts || 0) + 1;
+        if (invalidAttempts >= 2) {
+          return sendToAdvisor('Dos inputs no entendidos durante captura de datos de Bookings.', 'No logré entender tus datos dos veces seguidas.\n\nPara avanzar más rápido, te paso con un asesor de EVINKA Colombia para continuar contigo.');
+        }
+        return this.reply(conversation, `${invalidBookingFieldPrompt(field)}\n\n${bookingFieldPrompt(field)}`, { paso_actual: 'capturando_datos_booking_residencial', subestado_flujo: field, resumen: JSON.stringify({ ...draft, invalidAttempts }) });
+      }
+      draft.invalidAttempts = 0;
       draft.marca_vehiculo = (field === 'marca_vehiculo' || field === 'marca_vehiculo_more') ? value : draft.marca_vehiculo;
       if (field !== 'marca_vehiculo' && field !== 'marca_vehiculo_more') draft[field] = value;
       const pendingField = nextBookingField(draft);
@@ -3836,61 +4251,46 @@ export class ChatbotEngine {
           if (!message.includes('usuarios_correo_key')) throw error;
           await this.sb.update('usuarios', `id_usuario=eq.${conversation.id_usuario}`, { nombre_visible: draft.nombre, nombre_usuario: draft.nombre, telefono_principal: draft.telefono });
         }
+        if (this.bookingsEnabledForCountry('CO') && draft.date && draft.time && draft.endTime) {
+          try {
+            const refreshed = await this.buildManagedColombiaSlots(draft.zone, { limit: 20 });
+            const chosen = refreshed.find((item) => item.date === draft.date && item.time === draft.time && item.endTime === draft.endTime);
+            if (!chosen) {
+              if (!refreshed.length) {
+                return sendToAdvisor('El slot elegido ya no está disponible y no hay reemplazo en Bookings.', 'El horario que habías elegido ya no está disponible y ahora no veo opciones válidas para ofrecerte.\n\nTe paso con un asesor de EVINKA Colombia para continuar sin perder el caso.');
+              }
+              return this.reply(conversation, 'El horario que habías elegido ya no está disponible.\n\nTe muestro opciones nuevas para que elijas otra:', { paso_actual: 'seleccionando_bloque_horario', subestado_flujo: 'agenda_directa', resumen: JSON.stringify({ kind: 'booking_co', draft, invalidAttempts: 0, slotLossAttempts: 1, options: refreshed }) });
+            }
+            profile = await this.getOrCreateProfile(conversation);
+            const created = await this.createManagedColombiaBooking({ conversation, profile, draft, chosen });
+            const finalAddress = `${bookingAddressLine(draft)} ${draft.localidad || ''} Colombia`.trim();
+            try {
+              await this.scheduleBookingReminder({ userId: conversation.id_usuario, ticket: created.appointment.codigo_cita, dateLabel: chosen.dateLabel, hourLabel: chosen.hourLabel, address: finalAddress });
+            } catch (error) {
+              console.error('scheduleBookingReminder failed:', error);
+            }
+            try {
+              await this.publishTechVisit({ conversation, profile: { ...profile, marca_vehiculo: draft.marca_vehiculo, nombre_receptor: draft.nombre, correo_receptor: draft.correo, telefono_receptor: draft.telefono, direccion_instalacion: bookingAddressLine(draft), distrito_instalacion: draft.localidad || draft.zone, provincia_instalacion: 'Colombia', zona_cliente: draft.zone }, appointment: created.appointment, dateLabel: chosen.dateLabel, hourLabel: chosen.hourLabel });
+            } catch (error) {
+              console.error('publishTechVisit failed:', error);
+            }
+            await this.patchProfile(conversation.id_conversacion, { estado_perfil: 'scheduled' });
+            return this.reply(conversation, finalConfirmation({ ticket: created.appointment.codigo_cita, dateLabel: chosen.dateLabel, hourLabel: chosen.hourLabel, address: finalAddress, country: 'CO' }), { paso_actual: 'cita_confirmada', subestado_flujo: 'agenda_confirmada', estado_conversacion: 'closed', accion_ticket_actual: 'confirm', codigo_ticket_solicitado: created.appointment.codigo_cita, cerrada_en: new Date().toISOString() });
+          } catch (error) {
+            console.error('createManagedColombiaBooking from selected slot failed:', error);
+            if (error?.reason === 'slot_unavailable') {
+              const refreshed = await this.buildManagedColombiaSlots(draft.zone, { limit: 20 });
+              if (!refreshed.length) {
+                return sendToAdvisor('Slot perdido sin reemplazo al confirmar datos en Bookings.', 'El horario elegido se perdió al momento de confirmar y ahora no veo opciones válidas.\n\nTe paso con un asesor de EVINKA Colombia para continuar.');
+              }
+              return this.reply(conversation, 'El horario elegido se ocupó justo antes de confirmar.\n\nTe muestro opciones nuevas para que elijas otra:', { paso_actual: 'seleccionando_bloque_horario', subestado_flujo: 'agenda_directa', resumen: JSON.stringify({ kind: 'booking_co', draft, invalidAttempts: 0, slotLossAttempts: 1, options: refreshed }) });
+            }
+            return sendToAdvisor('Falló la creación de la cita Bookings tras confirmar datos.', 'Tuve un problema al confirmar la visita con la agenda real.\n\nTe paso con un asesor de EVINKA Colombia para cerrar el proceso sin demoras.');
+          }
+        }
         const options = await this.availableDateHourOptionsForZone(draft.zone);
         if (!options.length) return this.reply(conversation, 'Por ahora no encontré horarios disponibles para esa zona.\n\nTe llevo al menú principal para seguir con el bot.', { paso_actual: 'menu_principal', subestado_flujo: 'sin_disponibilidad', estado_conversacion: 'open', requiere_handoff: false, motivo_handoff: null, resumen: null, intencion_principal: null });
-        profile = await this.getOrCreateProfile(conversation);
-        const chosen = options[0];
-        const appointment = await this.createOrUpdateAppointment(conversation, profile, {
-          codigo_cita: this.ticketFor(chosen.date, conversation.id_conversacion),
-          fecha_cita: chosen.date,
-          hora_inicio: chosen.time,
-          hora_fin: chosen.endTime,
-          fecha_hora_inicio: `${chosen.date}T${chosen.time}-05:00`,
-          fecha_hora_fin: `${chosen.date}T${chosen.endTime}-05:00`,
-          nombre_cliente: draft.nombre,
-          telefono_cliente: draft.telefono,
-          dni_cliente: documentValue || null,
-          correo_cliente: draft.correo,
-          direccion_cita: addressLine,
-          distrito_cita: draft.localidad || draft.zone,
-          provincia_cita: 'Colombia',
-          zona_cliente: draft.zone,
-          zona_dia: draft.zone,
-          control_zona: draft.zone,
-          etiqueta_horario: compactScheduleLabel(chosen.time, chosen.endTime),
-          marca_vehiculo: draft.marca_vehiculo || null,
-          modelo_vehiculo: null,
-          potencia_kw: null,
-          fase_electrica: 'no_definido',
-          validacion_recibo: false,
-          estado_cita: 'confirmada',
-          aprobacion: 'aprobada',
-          confirmada_por_cliente: true,
-          confirmada_en: new Date().toISOString(),
-        });
-        let microsoftEventId = null;
-        try {
-          microsoftEventId = await this.ensureCalendarEvent({ appointment, profile: { ...profile, marca_vehiculo: draft.marca_vehiculo, nombre_receptor: draft.nombre, correo_receptor: draft.correo, telefono_receptor: draft.telefono, direccion_instalacion: addressLine, distrito_instalacion: draft.localidad || draft.zone, provincia_instalacion: 'Colombia', zona_cliente: draft.zone }, dateLabel: chosen.dateLabel, hourLabel: chosen.hourLabel, ticket: appointment.codigo_cita });
-          if (microsoftEventId) {
-            appointment.microsoft_event_id = microsoftEventId;
-            await this.sb.update('citas', `id_cita=eq.${appointment.id_cita}`, { microsoft_event_id: microsoftEventId, observaciones: calendarSyncNote(this.calendar?.provider) });
-          }
-        } catch (error) {
-          console.error('ensureCalendarEvent failed:', error);
-        }
-        const finalAddress = `${addressLine} ${draft.localidad || ''} Colombia`.trim();
-        try {
-          await this.scheduleBookingReminder({ userId: conversation.id_usuario, ticket: appointment.codigo_cita, dateLabel: chosen.dateLabel, hourLabel: chosen.hourLabel, address: finalAddress });
-        } catch (error) {
-          console.error('scheduleBookingReminder failed:', error);
-        }
-        try {
-          await this.publishTechVisit({ conversation, profile: { ...profile, marca_vehiculo: draft.marca_vehiculo, nombre_receptor: draft.nombre, correo_receptor: draft.correo, telefono_receptor: draft.telefono, direccion_instalacion: addressLine, distrito_instalacion: draft.localidad || draft.zone, provincia_instalacion: 'Colombia', zona_cliente: draft.zone }, appointment, dateLabel: chosen.dateLabel, hourLabel: chosen.hourLabel });
-        } catch (error) {
-          console.error('publishTechVisit failed:', error);
-        }
-        await this.patchProfile(conversation.id_conversacion, { estado_perfil: 'scheduled' });
-        return this.reply(conversation, finalConfirmation({ ticket: appointment.codigo_cita, dateLabel: chosen.dateLabel, hourLabel: chosen.hourLabel, address: finalAddress, country: 'CO' }), { paso_actual: 'cita_confirmada', subestado_flujo: 'agenda_confirmada', estado_conversacion: 'closed', accion_ticket_actual: 'confirm', codigo_ticket_solicitado: appointment.codigo_cita, cerrada_en: new Date().toISOString() });
+        return this.reply(conversation, combinedSlotsPrompt(draft.zone, options), { paso_actual: 'seleccionando_bloque_horario', subestado_flujo: 'agenda_directa', resumen: JSON.stringify({ kind: 'booking_co', draft, invalidAttempts: 0, options }) });
       }
     }
 
@@ -3962,6 +4362,7 @@ export class ChatbotEngine {
           const ticket = conversation.subestado_flujo;
           const rows = await this.sb.select('citas', `codigo_cita=eq.${encodeURIComponent(ticket)}&select=*`);
           const cita = rows[0];
+          if (this.bookingsEnabledForCountry(inferCountryFromZone(cita?.zona_cliente || cita?.provincia_cita || '') || selectedCountry)) return routeManagedColombiaAction('reschedule');
           if (!cita) return this.reply(conversation, 'No pude encontrar la cita a gestionar. Vuelve a ingresar tu ticket.', { paso_actual: 'gestion_ticket', subestado_flujo: 'esperando_ticket' });
           const zone = cita.zona_cliente || resolveProfileZone(profile, { phone: this.phoneForUserId(conversation.id_usuario), country: selectedCountry }) || defaultZoneForCountry(selectedCountry);
           const options = await this.availableDateHourOptionsForZone(zone, { includeToday: false, excludeEventId: cita?.microsoft_event_id || null, throughFriday: true });
@@ -3972,6 +4373,11 @@ export class ChatbotEngine {
           const ticket = conversation.subestado_flujo;
           const rows = await this.sb.select('citas', `codigo_cita=eq.${encodeURIComponent(ticket)}&select=*`);
           const cita = rows[0];
+          if (this.bookingsEnabledForCountry(inferCountryFromZone(cita?.zona_cliente || cita?.provincia_cita || '') || selectedCountry)) {
+            if (!cita) return routeManagedColombiaAction('cancel');
+            await this.cancelManagedColombiaBooking({ conversation, cita, reason: 'Cancelada por cliente desde WhatsApp.' });
+            return this.reply(conversation, 'Entendido 👍\n\nTu cita ha sido cancelada correctamente.\n\nLamentamos que no puedas continuar por ahora. Cuando lo desees, estaremos encantados de ayudarte a agendar una nueva visita.\n\n¡Gracias por confiar en EVINKA! ⚡', { paso_actual: 'ticket_cancelado', subestado_flujo: ticket, estado_conversacion: 'closed', cerrada_en: new Date().toISOString() });
+          }
           if (!cita) return this.reply(conversation, 'No pude encontrar la cita a gestionar. Vuelve a ingresar tu ticket.', { paso_actual: 'gestion_ticket', subestado_flujo: 'esperando_ticket' });
           if (cita.microsoft_event_id && this.calendar) {
             await this.calendar.cancelEvent(cita.microsoft_event_id, 'Cancelada por cliente desde WhatsApp.');
@@ -3992,12 +4398,17 @@ export class ChatbotEngine {
       const cita = rows[0];
       if (!cita) return this.reply(conversation, 'No pude encontrar la cita a gestionar. Vuelve a ingresar tu ticket.', { paso_actual: 'gestion_ticket', subestado_flujo: 'esperando_ticket' });
       if (letter === 'A') {
+        if (this.bookingsEnabledForCountry(inferCountryFromZone(cita?.zona_cliente || cita?.provincia_cita || '') || selectedCountry)) return routeManagedColombiaAction('reschedule');
         const zone = cita.zona_cliente || resolveProfileZone(profile, { phone: this.phoneForUserId(conversation.id_usuario), country: selectedCountry }) || defaultZoneForCountry(selectedCountry);
         const options = await this.availableDateHourOptionsForZone(zone, { includeToday: false, excludeEventId: cita?.microsoft_event_id || null, throughFriday: true });
         if (!options.length) return this.reply(conversation, 'Por ahora no encontré horarios disponibles en el calendario para reprogramar esa cita.\n\nTe llevo al menú principal para seguir con el bot.', { paso_actual: 'menu_principal', subestado_flujo: 'sin_disponibilidad_reprogramacion', estado_conversacion: 'open', requiere_handoff: false, motivo_handoff: null, resumen: null, intencion_principal: null });
         return this.reply(conversation, combinedSlotsPrompt(zone, options), { paso_actual: 'seleccionando_bloque_horario_reprogramacion', subestado_flujo: ticket, accion_ticket_actual: 'reschedule', codigo_ticket_solicitado: ticket, resumen: buildPagedSlotSummary(options, 0) });
       }
       if (letter === 'B') {
+        if (this.bookingsEnabledForCountry(inferCountryFromZone(cita?.zona_cliente || cita?.provincia_cita || '') || selectedCountry)) {
+          await this.cancelManagedColombiaBooking({ conversation, cita, reason: 'Cancelada por cliente desde WhatsApp.' });
+          return this.reply(conversation, 'Entendido 👍\n\nTu cita ha sido cancelada correctamente.\n\nLamentamos que no puedas continuar por ahora. Cuando lo desees, estaremos encantados de ayudarte a agendar una nueva visita.\n\n¡Gracias por confiar en EVINKA! ⚡', { paso_actual: 'ticket_cancelado', subestado_flujo: ticket, estado_conversacion: 'closed', cerrada_en: new Date().toISOString() });
+        }
         if (cita.microsoft_event_id && this.calendar) {
           await this.calendar.cancelEvent(cita.microsoft_event_id, 'Cancelada por cliente desde WhatsApp.');
           this.clearAvailabilityCache();
@@ -4029,26 +4440,51 @@ export class ChatbotEngine {
         return this.reply(conversation, combinedSlotsPrompt(zone, options), { paso_actual: 'seleccionando_bloque_horario_reprogramacion', subestado_flujo: conversation.subestado_flujo, accion_ticket_actual: 'reschedule', codigo_ticket_solicitado: conversation.subestado_flujo, resumen: buildPagedSlotSummary(options, Math.max(0, summary.page - 1)) });
       }
       const chosen = options.find(x => x.code === letter);
-      if (!chosen) return this.reply(conversation, combinedSlotsPrompt(zone, options), { paso_actual: 'seleccionando_bloque_horario_reprogramacion', subestado_flujo: conversation.subestado_flujo, accion_ticket_actual: 'reschedule', codigo_ticket_solicitado: conversation.subestado_flujo, resumen: conversation.resumen || null });
+      if (!chosen) {
+        if (this.bookingsEnabledForCountry(inferCountryFromZone(old?.zona_cliente || old?.provincia_cita || '') || selectedCountry) && Number(summary.invalidAttempts || 0) >= 1) {
+          return sendToAdvisor('Dos selecciones no entendidas al reprogramar Bookings.', 'No logré entender tu elección de horario dos veces seguidas.\n\nTe paso con un asesor de EVINKA Colombia para continuar.');
+        }
+        const nextSummary = this.bookingsEnabledForCountry(inferCountryFromZone(old?.zona_cliente || old?.provincia_cita || '') || selectedCountry)
+          ? buildPagedSlotSummary(options, summary.page || 0, { invalidAttempts: Number(summary.invalidAttempts || 0) + 1 })
+          : (conversation.resumen || null);
+        return this.reply(conversation, combinedSlotsPrompt(zone, options), { paso_actual: 'seleccionando_bloque_horario_reprogramacion', subestado_flujo: conversation.subestado_flujo, accion_ticket_actual: 'reschedule', codigo_ticket_solicitado: conversation.subestado_flujo, resumen: nextSummary });
+      }
       if (!old) return this.reply(conversation, 'No pude encontrar la cita original. Vuelve a intentarlo con tu ticket.', { paso_actual: 'gestion_ticket', subestado_flujo: 'esperando_ticket' });
-      await this.sb.update('citas', `id_cita=eq.${old.id_cita}`, {
-        fecha_cita: chosen.date,
-        hora_inicio: chosen.time,
-        hora_fin: chosen.endTime,
-        fecha_hora_inicio: `${chosen.date}T${chosen.time}-05:00`,
-        fecha_hora_fin: `${chosen.date}T${chosen.endTime}-05:00`,
-        etiqueta_horario: compactScheduleLabel(chosen.time, chosen.endTime),
-        estado_cita: 'reprogramada',
-        motivo_reprogramacion: 'Reprogramada por cliente desde WhatsApp.',
-        confirmada_por_cliente: true,
-        confirmada_en: new Date().toISOString(),
-      });
-      if (old.microsoft_event_id && this.calendar) {
-        await this.calendar.updateEvent(old.microsoft_event_id, {
-          start: { dateTime: `${chosen.date}T${chosen.time}`, timeZone: 'America/Lima' },
-          end: { dateTime: `${chosen.date}T${chosen.endTime}`, timeZone: 'America/Lima' },
+      if (this.bookingsEnabledForCountry(inferCountryFromZone(old?.zona_cliente || old?.provincia_cita || '') || selectedCountry)) {
+        try {
+          await this.rescheduleManagedColombiaBooking({ conversation, cita: old, chosen });
+        } catch (error) {
+          console.error('rescheduleManagedColombiaBooking failed:', error);
+          if (error?.reason === 'slot_unavailable') {
+            const refreshed = await this.buildManagedColombiaSlots(zone, { limit: 15 });
+            const attempts = Number(summary.slotLossAttempts || 0) + 1;
+            if (attempts >= 2 || !refreshed.length) {
+              return sendToAdvisor('Dos pérdidas consecutivas de slot al reprogramar Bookings.', 'El horario elegido ya no estaba disponible más de una vez.\n\nTe paso con un asesor de EVINKA Colombia para terminar la reprogramación contigo.');
+            }
+            return this.reply(conversation, combinedSlotsPrompt(zone, refreshed), { paso_actual: 'seleccionando_bloque_horario_reprogramacion', subestado_flujo: conversation.subestado_flujo, accion_ticket_actual: 'reschedule', codigo_ticket_solicitado: conversation.subestado_flujo, resumen: buildPagedSlotSummary(refreshed, 0, { slotLossAttempts: attempts, invalidAttempts: 0 }) });
+          }
+          return sendToAdvisor('Falló la reprogramación de Bookings.', 'Tuve un problema al mover la cita con la agenda real.\n\nTe paso con un asesor de EVINKA Colombia para resolverlo por aquí.');
+        }
+      } else {
+        await this.sb.update('citas', `id_cita=eq.${old.id_cita}`, {
+          fecha_cita: chosen.date,
+          hora_inicio: chosen.time,
+          hora_fin: chosen.endTime,
+          fecha_hora_inicio: `${chosen.date}T${chosen.time}-05:00`,
+          fecha_hora_fin: `${chosen.date}T${chosen.endTime}-05:00`,
+          etiqueta_horario: compactScheduleLabel(chosen.time, chosen.endTime),
+          estado_cita: 'reprogramada',
+          motivo_reprogramacion: 'Reprogramada por cliente desde WhatsApp.',
+          confirmada_por_cliente: true,
+          confirmada_en: new Date().toISOString(),
         });
-        this.clearAvailabilityCache();
+        if (old.microsoft_event_id && this.calendar) {
+          await this.calendar.updateEvent(old.microsoft_event_id, {
+            start: { dateTime: `${chosen.date}T${chosen.time}`, timeZone: 'America/Lima' },
+            end: { dateTime: `${chosen.date}T${chosen.endTime}`, timeZone: 'America/Lima' },
+          });
+          this.clearAvailabilityCache();
+        }
       }
       try {
         await this.publishTechVisit({

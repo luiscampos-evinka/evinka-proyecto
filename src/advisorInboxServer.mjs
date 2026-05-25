@@ -108,6 +108,14 @@ function writeJSON(file, value) {
   fs.writeFileSync(file, `${JSON.stringify(value, null, 2)}\n`);
 }
 
+function advisorLeadContext(summary = '') {
+  try {
+    const parsed = JSON.parse(String(summary || '{}'));
+    if (parsed?.kind === 'advisor_lead') return String(parsed.comentario || '').trim();
+  } catch {}
+  return '';
+}
+
 function readUsers() {
   return readJSON(usersFile, []).map((user) => ({
     ...user,
@@ -276,8 +284,8 @@ function userPhoneFromConversation(conversation) {
   const rawUserId = String(conversation?.id_usuario || '').trim();
   const normalized = rawUserId.replace(/^wco_/, '').replace(/^whatsapp_/, '');
   const digits = normalizePhone(normalized).replace(/^\+/, '');
-  if (/^(51\d{9}|57\d{10}|9\d{8}|3\d{9})$/.test(digits)) {
-    return normalized.startsWith('+') ? normalized : `+${digits}`;
+  if (/^\d{8,15}$/.test(digits)) {
+    return `+${digits}`;
   }
   return '';
 }
@@ -1100,6 +1108,7 @@ async function listInboxConversations({ mode = 'active' } = {}) {
       province: mergedProfile?.provincia_instalacion || mergedProfile?.provincia_recibo || '',
       currentStep: primaryConversation.paso_actual || '',
       handoffReason: primaryConversation.motivo_handoff || '',
+      requestContext: advisorLeadContext(primaryConversation.resumen),
       whatsappState: primaryConversation.estado_conversacion,
       status: conversationStatus(primaryConversation, primaryLocal),
       assignedTo: primaryLocal.assignedTo || null,
@@ -1191,6 +1200,7 @@ async function getConversationDetail(conversationId) {
       email: profile?.correo_receptor || user?.correo_electronico || '',
       step: primaryConversation.paso_actual || '',
       handoffReason: primaryConversation.motivo_handoff || '',
+      requestContext: advisorLeadContext(primaryConversation.resumen),
       whatsappState: primaryConversation.estado_conversacion,
       status: conversationStatus(primaryConversation, primaryState),
       assignedTo: primaryState.assignedTo || null,

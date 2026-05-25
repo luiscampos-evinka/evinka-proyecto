@@ -3640,9 +3640,78 @@ function computeCountrySpecificAdjustments({ payload = {}, config, subtotalBase 
   };
 }
 
+function normalizeCoQuotePayload(input = null) {
+  if (!input || typeof input !== 'object') return null;
+  const sections = Object.fromEntries(Object.entries(input.sections || {}).map(([key, rows]) => ([
+    key,
+    Array.isArray(rows) ? rows.map((row) => ({
+      code: String(row?.code || '').trim(),
+      label: String(row?.label || '').trim(),
+      unitLabel: String(row?.unitLabel || '').trim(),
+      qty: Number(row?.qty || 0),
+      unitPrice: Number(row?.unitPrice || 0),
+      total: Number(row?.total || 0),
+    })) : [],
+  ])));
+  const totals = input.totals || {};
+  return {
+    general: {
+      ...input.general,
+      installationDescription: String(input?.general?.installationDescription || '').trim(),
+      pdfLink: String(input?.general?.pdfLink || '').trim(),
+    },
+    sections,
+    totals: {
+      laborTotal: Number(totals.laborTotal || 0),
+      materialsTotal: Number(totals.materialsTotal || 0),
+      subtotalBeforeMargin: Number(totals.subtotalBeforeMargin || 0),
+      marginPercent: Number(totals.marginPercent || 0),
+      subtotalWithMargin: Number(totals.subtotalWithMargin || 0),
+      iva: Number(totals.iva || 0),
+      total: Number(totals.total || 0),
+    },
+  };
+}
+
+function flattenCoQuoteRows(coQuote = null) {
+  if (!coQuote?.sections) return [];
+  return Object.entries(coQuote.sections).flatMap(([sectionKey, rows]) => (rows || []).map((row) => ({
+    code: row.code,
+    description: row.label,
+    section: sectionKey,
+    qty: Number(row.qty || 0),
+    unitPrice: Number(row.unitPrice || 0),
+    total: roundMoney(row.total || 0),
+  })));
+}
+
+function buildCommercialRowsFromCoQuote(coQuote = null) {
+  const rows = flattenCoQuoteRows(coQuote);
+  return rows
+    .filter((row) => row.qty > 0 || row.total > 0)
+    .map((row) => ({
+      code: row.code,
+      label: row.description,
+      qty: row.qty,
+      unit: coQuoteUnitFromSection(row.section, row.description),
+      unitPrice: row.unitPrice,
+      total: row.total,
+      section: row.section,
+    }));
+}
+
+function coQuoteUnitFromSection(section = '', description = '') {
+  const rawSection = String(section || '').trim().toLowerCase();
+  const text = String(description || '').trim().toLowerCase();
+  if (rawSection === 'tubing' || text.includes('metros') || text.includes('tubería') || text.includes('tuberia')) return 'M';
+  if (text.includes('valor')) return 'VAL';
+  return 'UND';
+}
+
 function buildQuote(payload, config, user) {
   const commercialProfile = resolveCommercialProfile(config, payload.commercialProfileId);
   const effectiveConfig = buildQuoteConfigForProfile(config, commercialProfile);
+  const coQuote = payload.countryCode === 'CO' ? normalizeCoQuotePayload(payload.coQuote) : null;
   const distance = Math.max(0, Number(payload.distance || 0));
   const tubeType = String(payload.tubeType || 'EMT').toUpperCase();
   const propertyType = String(payload.propertyType || 'Casa').trim();
@@ -3654,24 +3723,32 @@ function buildQuote(payload, config, user) {
   const civilMaterialsRow = computeCivilMaterialsRow(conditionalRows, effectiveConfig);
   if (civilMaterialsRow) conditionalRows.push(civilMaterialsRow);
 
-  const baseObligatoryNormal = roundMoney(sumTotals(mandatoryRows));
-  const totalConditionals = roundMoney(sumTotals(conditionalRows));
+  const baseObligatoryNormal = coQuote ? roundMoney(Number(coQuote.totals.laborTotal || 0)) : roundMoney(sumTotals(mandatoryRows));
+  const totalConditionals = coQuote ? roundMoney(Number(coQuote.totals.materialsTotal || 0)) : roundMoney(sumTotals(conditionalRows));
   const minimumBase = propertyType.toUpperCase() === 'EDIFICIO' ? effectiveConfig.defaults.minimumEdificio : effectiveConfig.defaults.minimumCasa;
   const includedMeters = propertyType.toUpperCase() === 'EDIFICIO' ? effectiveConfig.defaults.includedMetersEdificio : effectiveConfig.defaults.includedMetersCasa;
   const includedRows = computeMandatoryRows(includedMeters, tubeType, cable, effectiveConfig);
   const includedScope = buildBaseIncludedScope({ propertyType, includedMeters, tubeType, cable, charger });
   const additionalMeterage = roundMoney(Math.max(baseObligatoryNormal - sumTotals(includedRows), 0));
-  const subtotalBeforeCountryAdjustments = roundMoney(minimumBase + additionalMeterage + totalConditionals + charger.pricePen);
+  const subtotalBeforeCountryAdjustments = coQuote
+    ? roundMoney(Number(coQuote.totals.subtotalBeforeMargin || 0))
+    : roundMoney(minimumBase + additionalMeterage + totalConditionals + charger.pricePen);
   const countryAdjustments = computeCountrySpecificAdjustments({
     payload,
     config: effectiveConfig,
     subtotalBase: subtotalBeforeCountryAdjustments,
     distance,
   });
-  const subtotal = roundMoney(subtotalBeforeCountryAdjustments + countryAdjustments.adjustmentsTotal);
-  const igv = roundMoney(subtotal * Number(effectiveConfig.defaults.igv || 0));
-  const total = roundMoney(subtotal + igv);
-  const commercialRows = buildCommercialRows({
+  const subtotal = coQuote
+    ? roundMoney(Number(coQuote.totals.subtotalWithMargin || 0))
+    : roundMoney(subtotalBeforeCountryAdjustments + countryAdjustments.adjustmentsTotal);
+  const igv = coQuote
+    ? roundMoney(Number(coQuote.totals.iva || 0))
+    : roundMoney(subtotal * Number(effectiveConfig.defaults.igv || 0));
+  const total = coQuote
+    ? roundMoney(Number(coQuote.totals.total || 0))
+    : roundMoney(subtotal + igv);
+  const commercialRows = coQuote ? buildCommercialRowsFromCoQuote(coQuote) : buildCommercialRows({
     propertyType,
     minimumBase,
     additionalMeterage,
@@ -3735,13 +3812,13 @@ function buildQuote(payload, config, user) {
     outOfCity: String(payload.outOfCity || '').trim(),
     installationDescription: String(payload.installationDescription || '').trim(),
     requiresReview: countryAdjustments.requiresReview,
-    marginPercent: Number(commercialProfile.marginPercent || 0),
+    marginPercent: coQuote ? Number(coQuote.totals.marginPercent || commercialProfile.marginPercent || 0) : Number(commercialProfile.marginPercent || 0),
     charger,
     technicianNotes: String(payload.technicianNotes || '').trim(),
     photos,
     cable,
     distance,
-    itemRows: [...mandatoryRows, ...conditionalRows],
+    itemRows: coQuote ? flattenCoQuoteRows(coQuote) : [...mandatoryRows, ...conditionalRows],
     commercialRows,
     includedRows,
     includedScope,
@@ -3757,6 +3834,7 @@ function buildQuote(payload, config, user) {
     subtotal,
     igv,
     total,
+    coQuote,
     status: 'cotizada',
     pdfPath: '',
   };
@@ -4668,7 +4746,6 @@ async function createPdf(quote, config, filePath) {
       drawStandardColombiaCoverPage(doc, quote, { headerPath: standardCoHeaderPath, carImagePath: standardCoCarPath });
       doc.addPage();
       drawStandardColombiaPhotoPricingPage(doc, quote, logoPath);
-      renderPhotoReport(doc, quote, logoPath);
     } else {
       drawQuoteHeader(doc, quote, logoPath);
       doc.fontSize(10).font('Helvetica').text(buildGreeting(quote.clientName), 36, 160);
@@ -4722,7 +4799,7 @@ async function createPdf(quote, config, filePath) {
       tailY = writeSignatureBlock(doc, tailY + 10, quote, logoPath);
 
       drawFooter(doc, quote);
-      renderPhotoReport(doc, quote, logoPath);
+      if (quote.countryCode !== 'CO') renderPhotoReport(doc, quote, logoPath);
     }
 
     doc.end();
@@ -5156,11 +5233,10 @@ function buildStandardColombiaObservationLines(quote = {}) {
 
 function drawStandardColombiaPhotoPricingPage(doc, quote = {}, logoPath = '') {
   drawStandardColombiaPhotoReportHeader(doc, quote, logoPath);
-  const photoBottom = drawStandardColombiaPhotoGrid(doc, 24, 90, 547, 210, quote);
-  let y = photoBottom + 18;
+  const photoBottom = drawStandardColombiaPhotoGrid(doc, 24, 90, 547, 168, quote);
+  let y = photoBottom + 10;
   y = drawStandardColombiaPricingSummaryTable(doc, 24, y, 547, quote);
-  y = drawStandardColombiaPricingNotes(doc, 24, y + 14, 547, quote);
-  drawStandardColombiaCompanyFooter(doc, 24, Math.max(y + 8, 734), 547, quote);
+  drawStandardColombiaPricingNotes(doc, 24, y + 4, 547, quote);
 }
 
 function drawStandardColombiaPhotoReportHeader(doc, quote = {}, logoPath = '') {
@@ -5219,77 +5295,157 @@ function drawStandardColombiaPhotoGrid(doc, x, y, width, height, quote = {}) {
 }
 
 function drawStandardColombiaPricingSummaryTable(doc, x, y, width, quote = {}) {
-  const border = '#5a5a5a';
-  const grey = '#d9d9d9';
-  const gold = '#d2a15f';
-  const leftW = 410;
-  const rightW = width - leftW;
-  const laborDescW = 258;
-  const laborUnitW = 134;
-  const laborQtyW = width - laborDescW - laborUnitW;
-  const materialH = 82;
+  const grey = '#d1d1d1';
+  const gold = '#9c6b36';
+  const totalGold = '#c3955f';
+  const descW = 332;
+  const unitW = (width - descW) / 2;
+  const qtyW = width - descW - unitW;
+  const totalLabelW = 430;
+  const totalValueW = width - totalLabelW;
+  const fallbackMaterialH = 62;
 
-  const cell = (cx, cy, w, h, text, { fill = '#fff', bold = false, align = 'left', fontSize = 9.2, color = '#111', paddingX = 10, paddingY = 6, lineWidth = 0.8 } = {}) => {
-    doc.rect(cx, cy, w, h).lineWidth(lineWidth).fillAndStroke(fill, border);
-    doc.font(bold ? 'Helvetica-Bold' : 'Helvetica').fontSize(fontSize).fillColor(color).text(String(text ?? ''), cx + paddingX, cy + paddingY, { width: w - (paddingX * 2), align });
+  const paintCell = (cx, cy, w, h, fill = null) => {
+    if (!fill) return;
+    doc.save();
+    doc.rect(cx, cy, w, h).fill(fill);
+    doc.restore();
   };
 
-  cell(x, y, width, 24, 'CUADRO DE PRECIOS - INSTALACIÓN', { fill: gold, bold: false, align: 'center', fontSize: 9.6, color: '#fff', paddingY: 5 });
-  y += 24;
+  const drawText = (cx, cy, w, h, text, { bold = false, align = 'left', fontSize = 9.2, color = '#111', paddingX = 6, paddingY = 4, lineGap = 0.35, valign = 'center' } = {}) => {
+    const safeText = String(text ?? '');
+    const textWidth = Math.max(0, w - (paddingX * 2));
+    const textHeight = doc
+      .font(bold ? 'Helvetica-Bold' : 'Helvetica')
+      .fontSize(fontSize)
+      .heightOfString(safeText, { width: textWidth, align, lineGap });
+    let textY = cy + paddingY;
+    if (valign === 'center') {
+      textY = cy + Math.max(paddingY, (h - textHeight) / 2);
+    } else if (valign === 'bottom') {
+      textY = cy + Math.max(paddingY, h - textHeight - paddingY);
+    }
+    doc.save();
+    doc.fillColor(color).font(bold ? 'Helvetica-Bold' : 'Helvetica').fontSize(fontSize).text(safeText, cx + paddingX, textY, {
+      width: textWidth,
+      height: Math.max(0, h - ((textY - cy) + paddingY)),
+      align,
+      lineGap,
+    });
+    doc.restore();
+  };
 
-  cell(x, y, laborDescW, 28, 'MANO DE OBRA', { fill: grey, align: 'center', fontSize: 9.3, paddingY: 6 });
-  cell(x + laborDescW, y, laborUnitW, 28, 'UNIDAD', { fill: grey, align: 'center', fontSize: 9.3, paddingY: 6 });
-  cell(x + laborDescW + laborUnitW, y, laborQtyW, 28, 'CANTIDAD', { fill: grey, align: 'center', fontSize: 9.3, paddingY: 6 });
-  y += 28;
+  const bandRow = (cells, cy, h, { fill, fontSize = 9.2, color = '#111' } = {}) => {
+    const widths = [descW, unitW, qtyW];
+    let cx = x;
+    cells.forEach((text, index) => {
+      paintCell(cx, cy, widths[index], h, fill);
+      drawText(cx, cy, widths[index], h, text, { align: 'center', fontSize, color, paddingX: 4, paddingY: 3, valign: 'center' });
+      cx += widths[index];
+    });
+    return cy + h;
+  };
 
-  cell(x, y, laborDescW, 28, 'Técnico electricista certificado', { fontSize: 8.9, paddingY: 7 });
-  cell(x + laborDescW, y, laborUnitW, 28, 'GL', { align: 'center', fontSize: 8.9, paddingY: 7 });
-  cell(x + laborDescW + laborUnitW, y, laborQtyW, 28, '1', { align: 'center', fontSize: 8.9, paddingY: 7 });
-  y += 28;
+  const plainRow = (cells, cy, h = 22, { fontSize = 8.8 } = {}) => {
+    const safeHeight = Math.max(18, h);
+    drawText(x, cy, descW, safeHeight, cells[0], { align: 'left', fontSize, paddingX: 2, paddingY: 2, valign: 'center' });
+    drawText(x + descW, cy, unitW, safeHeight, cells[1], { align: 'center', fontSize, paddingX: 4, paddingY: 2, valign: 'center' });
+    drawText(x + descW + unitW, cy, qtyW, safeHeight, cells[2], { align: 'center', fontSize, paddingX: 4, paddingY: 2, valign: 'center' });
+    return cy + safeHeight;
+  };
 
-  cell(x, y, laborDescW, 28, 'Transporte y herramientas', { fontSize: 8.9, paddingY: 7 });
-  cell(x + laborDescW, y, laborUnitW, 28, 'GL', { align: 'center', fontSize: 8.9, paddingY: 7 });
-  cell(x + laborDescW + laborUnitW, y, laborQtyW, 28, '1', { align: 'center', fontSize: 8.9, paddingY: 7 });
-  y += 28;
+  const compactRows = (rows = [], cy, { fontSize = 8.75 } = {}) => {
+    let nextY = cy;
+    rows.forEach((cells) => {
+      const textHeight = doc
+        .font('Helvetica')
+        .fontSize(fontSize)
+        .heightOfString(String(cells[0] || ''), { width: descW - 4, lineGap: 0.1 });
+      const rowH = Math.max(20, Math.min(34, Math.ceil(textHeight) + 5));
+      nextY = plainRow(cells, nextY, rowH, { fontSize });
+    });
+    return nextY;
+  };
 
-  cell(x, y, laborDescW, 28, 'MATERIAL', { fill: grey, align: 'center', fontSize: 9.3, paddingY: 6 });
-  cell(x + laborDescW, y, laborUnitW, 28, 'UNIDAD', { fill: grey, align: 'center', fontSize: 9.3, paddingY: 6 });
-  cell(x + laborDescW + laborUnitW, y, laborQtyW, 28, 'CANTIDAD', { fill: grey, align: 'center', fontSize: 9.3, paddingY: 6 });
-  y += 28;
+  const totalRow = (label, value, cy, { fill = grey, fontSize = 9.2 } = {}) => {
+    const rowH = 22;
+    paintCell(x, cy, totalLabelW, rowH, fill);
+    paintCell(x + totalLabelW, cy, totalValueW, rowH, fill);
+    drawText(x, cy, totalLabelW, rowH, label, { align: 'center', fontSize, paddingX: 4, paddingY: 3, valign: 'center' });
+    drawText(x + totalLabelW, cy, totalValueW, rowH, `$ ${pdfAmount(quote, value)}`, { align: 'center', fontSize, paddingX: 4, paddingY: 3, valign: 'center' });
+    return cy + 24;
+  };
 
-  const materialText = 'Cable, tubería, protecciones\neléctricas, accesorios y demás\nelementos necesarios para una\ninstalación segura y en correcto\nfuncionamiento.';
-  cell(x, y, laborDescW, materialH, materialText, { fontSize: 8.7, paddingY: 10 });
-  cell(x + laborDescW, y, laborUnitW, materialH, 'GL', { align: 'center', fontSize: 8.9, paddingY: 30 });
-  cell(x + laborDescW + laborUnitW, y, laborQtyW, materialH, '1', { align: 'center', fontSize: 8.9, paddingY: 30 });
-  y += materialH;
+  paintCell(x, y, width, 18, gold);
+  drawText(x, y, width, 18, 'CUADRO DE PRECIOS - INSTALACIÓN', { align: 'center', fontSize: 9.65, color: '#fff', paddingX: 4, paddingY: 2, valign: 'center' });
+  y += 18;
 
-  cell(x, y, leftW, 30, 'SUBTOTAL INSTALACION', { fill: grey, align: 'center', fontSize: 9.3, paddingY: 7 });
-  cell(x + leftW, y, rightW, 30, `$ ${pdfAmount(quote, quote.subtotal)}`, { fill: grey, align: 'right', fontSize: 9.3, paddingY: 7 });
-  y += 30;
+  const coRows = Array.isArray(quote?.commercialRows) && quote.commercialRows.length
+    ? quote.commercialRows.filter((row) => Number(row?.total || 0) > 0)
+    : [];
 
-  cell(x, y, leftW, 30, `IVA ${quote.countryCode === 'CO' ? '19%' : '18%'}`, { align: 'center', fontSize: 9.3, paddingY: 7 });
-  cell(x + leftW, y, rightW, 30, `$ ${pdfAmount(quote, quote.igv)}`, { align: 'right', fontSize: 9.3, paddingY: 7 });
-  y += 30;
+  if (quote?.coQuote && coRows.length) {
+    const laborRows = coRows.filter((row) => String(row?.section || '').trim().toLowerCase() !== 'materials');
+    const materialRows = coRows.filter((row) => String(row?.section || '').trim().toLowerCase() === 'materials');
+    const toCells = (rows = [], fallbackText = '') => {
+      if (!rows.length) return [[fallbackText, 'GL', '1']];
+      const limited = rows.slice(0, 3).map((row) => [String(row.label || '-'), normalizeUnit(row.unit), formatNumber(row.qty)]);
+      if (rows.length > 3) {
+        limited[limited.length - 1] = [`${limited[limited.length - 1][0]} + ${rows.length - 2} rubro(s) más`, limited[limited.length - 1][1], limited[limited.length - 1][2]];
+      }
+      return limited;
+    };
 
-  cell(x, y, leftW, 32, 'TOTAL INSTALACIÓN IVA INCLUIDO', { fill: gold, align: 'center', fontSize: 9.5, paddingY: 8 });
-  cell(x + leftW, y, rightW, 32, `$ ${pdfAmount(quote, quote.total)}`, { fill: gold, align: 'right', fontSize: 9.5, paddingY: 8 });
-  return y + 32;
+    y = bandRow(['MANO DE OBRA', 'UNIDAD', 'CANTIDAD'], y, 22, { fill: grey, fontSize: 9.1 });
+    y = compactRows(toCells(laborRows, 'Servicio técnico EVINKA Colombia'), y, { fontSize: 8.75 });
+
+    y = bandRow(['MATERIAL', 'UNIDAD', 'CANTIDAD'], y, 22, { fill: grey, fontSize: 9.1 });
+    y = compactRows(toCells(materialRows, 'Materiales y componentes seleccionados'), y, { fontSize: 8.75 });
+    y += 4;
+  } else {
+    y = bandRow(['MANO DE OBRA', 'UNIDAD', 'CANTIDAD'], y, 22, { fill: grey, fontSize: 9.1 });
+    y = plainRow(['Técnico electricista certificado', 'GL', '1'], y, 22, { fontSize: 8.95 });
+    y = plainRow(['Transporte y herramientas', 'GL', '1'], y, 22, { fontSize: 8.95 });
+
+    y = bandRow(['MATERIAL', 'UNIDAD', 'CANTIDAD'], y, 22, { fill: grey, fontSize: 9.1 });
+
+    const materialText = 'Cable, tuberia, protecciones\neléctricas, accesorios y demás\nelementos necesarios para una\ninstalación segura y en correcto\nfuncionamiento.';
+    drawText(x, y, descW, fallbackMaterialH, materialText, { align: 'left', fontSize: 8.6, paddingX: 2, paddingY: 1, lineGap: 0.1, valign: 'center' });
+    drawText(x + descW, y, unitW, fallbackMaterialH, 'GL', { align: 'center', fontSize: 8.95, paddingX: 4, paddingY: 3, valign: 'center' });
+    drawText(x + descW + unitW, y, qtyW, fallbackMaterialH, '1', { align: 'center', fontSize: 8.95, paddingX: 4, paddingY: 3, valign: 'center' });
+    y += fallbackMaterialH + 4;
+  }
+
+  y = totalRow('SUBTOTAL INSTALACION', quote.subtotal, y, { fill: grey, fontSize: 9.15 });
+  y = totalRow(`IVA ${quote.countryCode === 'CO' ? '19%' : '18%'}`, quote.igv, y, { fill: '#ffffff', fontSize: 9.15 });
+  y = totalRow('TOTAL INSTALACIÓN IVA INCLUIDO', quote.total, y, { fill: totalGold, fontSize: 9.25 });
+  return y;
 }
 
 function drawStandardColombiaPricingNotes(doc, x, y, width, quote = {}) {
-  doc.font('Helvetica').fontSize(8.9).fillColor('#111').text('Nota: Este valor NO incluye el cargador.', x, y, { width, align: 'center' });
-  y = doc.y + 8;
-  const notes = [
-    'Validez de la cotización: 7 dias',
-    'Duración estimada de la Instalación: 1-2 dias',
-    'Garantia materiales y cargador por defectos de fabricación: 1 año',
+  const notePrefix = 'Nota:';
+  const noteText = ' Este valor NO incluye el cargador.';
+  doc.save();
+  doc.font('Helvetica').fontSize(9.05);
+  const prefixWidth = doc.widthOfString(notePrefix);
+  const textWidth = doc.widthOfString(noteText);
+  const startX = x + ((width - (prefixWidth + textWidth)) / 2);
+  doc.fillColor('#c89a63').text(notePrefix, startX, y, { lineBreak: false });
+  doc.fillColor('#111').text(noteText, startX + prefixWidth, y, { lineBreak: false });
+  doc.restore();
+  y += 12;
+
+  const lines = [
+    { text: 'Validez de la cotización: 7 dias', size: 8.45, color: '#111', align: 'left', gap: 0 },
+    { text: 'Duración estimada de la Instalación: 1-2 dias', size: 8.45, color: '#111', align: 'left', gap: 0 },
+    { text: 'Garantia materiales y cargador por defectos de fabricación: 1 año', size: 8.45, color: '#111', align: 'left', gap: 1 },
+    { text: 'La propuesta incluye autodeclaración de cumplimiento RETIE por parte del constructor. No incluye dictamen de uso final, en caso de requerirse es un adicional.', size: 8.1, color: '#ff2a23', align: 'left', gap: 0, lineGap: 0.08 },
   ];
-  notes.forEach((line) => {
-    doc.font('Helvetica').fontSize(8.3).fillColor('#111').text(line, x, y, { width, align: 'left' });
-    y = doc.y + 1;
+  lines.forEach((line) => {
+    doc.font('Helvetica').fontSize(line.size).fillColor(line.color).text(line.text, x, y, { width, align: line.align, lineGap: line.lineGap || 0 });
+    y = doc.y + line.gap;
   });
-  doc.font('Helvetica').fontSize(8.3).fillColor('#ff1c1c').text('La propuesta incluye autodeclaración de cumplimiento RETIE por parte del constructor. No incluye dictamen de uso final, en caso de requerirse es un adicional.', x, y + 2, { width, align: 'left', lineGap: 0.5 });
-  return doc.y;
+  return y;
 }
 
 function drawStandardColombiaCompanyFooter(doc, x, y, width, quote = {}) {
@@ -6702,9 +6858,15 @@ function pdfCurrencyLabel(quote = {}) {
   return quote?.countryCode === 'CO' ? '$' : 'S/';
 }
 
+function normalizeCopDisplayAmount(value) {
+  const numeric = Number(value || 0);
+  if (!Number.isFinite(numeric)) return 0;
+  return Math.abs(numeric) < 100000 ? Math.round(numeric * 1000) : Math.round(numeric);
+}
+
 function pdfAmount(quote = {}, value) {
   if (quote?.countryCode === 'CO') {
-    return new Intl.NumberFormat('es-CO', { minimumFractionDigits: 0, maximumFractionDigits: 0 }).format(Number(value || 0));
+    return new Intl.NumberFormat('es-CO', { minimumFractionDigits: 0, maximumFractionDigits: 0 }).format(normalizeCopDisplayAmount(value));
   }
   return amount(value);
 }

@@ -21,6 +21,59 @@ const state = {
 
 const TAB_ORDER = ['quote', 'quotes', 'visits', 'ops', 'conformities', 'advisor', 'audit', 'admin'];
 
+const CO_COMPANY_OPTIONS = ['Seleccione', 'BYD', 'Chery', 'Geely', 'Jeep', 'Kia'];
+const CO_DOCUMENT_OPTIONS = ['CC', 'CE', 'NIT', 'PASAPORTE'];
+const CO_CITY_OPTIONS = ['Seleccione', 'Bogotá', 'Medellín', 'Cali', 'Barranquilla', 'Cartagena', 'Bucaramanga', 'Chía', 'Cajicá'];
+const CO_CHARGER_OPTIONS = ['Seleccione', 'Alien X', 'Celsia', 'Kia', 'Minibox', 'Otro'];
+const CO_ACOMETIDA_OPTIONS = ['Seleccione', 'BIFASICO', 'MONOFASICO', 'NA', 'TRIFASICO'];
+
+const CO_RUBRIC_SECTIONS = {
+  metalwork: [
+    { code: 'PDP', label: 'Pedestal interior', unitLabel: 'PDP COSTO X DIA', qty: 0, price: 400000 },
+    { code: 'BPP', label: 'Pedestal exterior', unitLabel: 'BPP COSTO X DIA', qty: 0, price: 550000 },
+    { code: 'PP', label: 'Platina pared protección', unitLabel: 'PP COSTO X DIA', qty: 0, price: 300000 },
+    { code: 'CDP', label: 'Caja de protección metálica con chapa de seguridad', unitLabel: 'CDP COSTO X DIA', qty: 0, price: 80000 },
+    { code: 'CAJA_PASO', label: 'Caja de paso', unitLabel: 'CAJA DE PASO X DIA', qty: 0, price: 30000 },
+    { code: 'DADOS', label: 'Dados', unitLabel: 'DADOS X DIA', qty: 0, price: 50000 },
+    { code: 'PEINE', label: 'Peine', unitLabel: 'PEINE X DIA', qty: 0, price: 65000 },
+  ],
+  civilWorks: [
+    { code: 'OCB', label: 'Obra civil básica interior: regata, resane, pintura o más de 2 pase placa', unitLabel: 'OCB COSTO X DIA', qty: 0, price: 150000 },
+    { code: 'OCI', label: 'Obra civil intermedia interior regata resane pintura', unitLabel: 'OCI COSTO X DIA', qty: 0, price: 250000 },
+    { code: 'OCE', label: 'Obra civil exterior excavación pasto', unitLabel: 'OCE COSTO X DIA', qty: 0, price: 350000 },
+    { code: 'OCEE', label: 'Obra civil exterior adoquín excavación', unitLabel: 'OCEE COSTO X DIA', qty: 0, price: 400000 },
+    { code: 'PAP', label: 'Pase placa', unitLabel: 'PAP COSTO X DIA', qty: 0, price: 135000 },
+    { code: 'MBM', label: 'Medidor bifásico medida interna', unitLabel: 'MBM COSTO X DIA', qty: 0, price: 250000 },
+    { code: 'PINTURA_TUBERIA', label: 'Pintura tubería', unitLabel: 'PINTURA TUBERIA X DIA', qty: 0, price: 200000 },
+    { code: 'FC', label: 'Fuera de la ciudad', unitLabel: 'FC COSTO X DIA', qty: 0, price: 80000 },
+  ],
+  tubing: [
+    { code: 'PVC', label: 'Tubería PVC (Metros)', unitLabel: 'Tubería PVC (Metros) X DIA', qty: 0, price: 11500 },
+    { code: 'EMT', label: 'Tubería Emt 3m 3/4 (Metros)', unitLabel: 'Tubería Emt 3m 3/4 (Metros) X DIA', qty: 0, price: 30582 },
+    { code: 'SCH40', label: 'SCH 40 TUBERIA', unitLabel: 'SCH 40 TUBERIA X MTR', qty: 0, price: 18000 },
+    { code: 'CORAZA', label: 'Coraza Liquid Tight Recubierta En PVC 3/4', unitLabel: 'Coraza Liquid Tight Recubierta En PVC 3/4 X UNIDAD', qty: 0, price: 10000 },
+    { code: 'ACC_CORAZA', label: 'Accesorios coraza', unitLabel: 'Accesorios coraza X Valor', qty: 0, price: 9750 },
+  ],
+  cable: [
+    { code: 'CABLE_ENC', label: 'Cable encauchetado', unitLabel: 'Valor unitario (m)', qty: 0, price: 43950 },
+  ],
+  labor: [
+    { code: 'MO', label: 'Mano de obra técnicos (cuadrilla de 2)', unitLabel: 'MO COSTO X DIA', qty: 1, price: 400000 },
+    { code: 'VTI', label: 'Visita técnica + ingeniería', unitLabel: 'VTI COSTO X DIA', qty: 1, price: 133333 },
+    { code: 'TYH', label: 'Transporte y herramientas', unitLabel: 'TYH COSTO X DIA', qty: 1, price: 300000 },
+    { code: 'POLIZA', label: 'Póliza', unitLabel: 'POLIZA X DIA', qty: 1, price: 50000 },
+  ],
+  materials: [
+    { code: 'TE', label: 'Tablero eléctrico 6P', unitLabel: 'TE COSTO X UN', qty: 1, price: 45600 },
+    { code: 'CBL8', label: 'Cable 8 AWG 7 hilos individual', unitLabel: 'CBL8 COSTO X UN', qty: 0, price: 7546 },
+    { code: 'CBL10', label: 'Cable 10 AWG 7 hilos', unitLabel: 'CBL10 COSTO X UN', qty: 0, price: 4651 },
+    { code: 'TERMOMAGNETICO', label: 'Termomagnético', unitLabel: 'TERMOMAGNETICO X UN', qty: 1, price: 60750 },
+    { code: 'DD', label: 'Disyuntor diferencial 40A 30mA', unitLabel: 'DD COSTO X UN', qty: 1, price: 168750 },
+    { code: 'MOC', label: 'Materiales obra civil', unitLabel: 'MATERIALES OBRA CIVIL X UN', qty: 1, price: 0 },
+    { code: 'AE', label: 'Accesorios EMT', unitLabel: 'AE COSTO X UN', qty: 0, price: 0 },
+  ],
+};
+
 const el = (id) => document.getElementById(id);
 
 init();
@@ -39,14 +92,10 @@ function bindUI() {
   el('themeDarkBtn')?.addEventListener('click', () => setTheme('dark'));
   el('themeLightBtn')?.addEventListener('click', () => setTheme('light'));
   el('quoteForm').addEventListener('submit', onGenerateQuote);
-  el('resetFormBtn').addEventListener('click', () => {
-    el('quoteForm').reset();
-    clearQuotePrefill();
-    if (el('sitePhotos')) el('sitePhotos').value = '';
-    state.quotePhotos = [];
-    renderSelectedPhotosPreview();
-    renderQuoteSelects();
-  });
+  el('quoteForm').addEventListener('input', onQuoteFormInteraction);
+  el('quoteForm').addEventListener('change', onQuoteFormInteraction);
+  el('resetFormBtn').addEventListener('click', resetQuoteForm);
+  el('resetFormBtnCo')?.addEventListener('click', resetQuoteForm);
   el('sitePhotos')?.addEventListener('change', onAddSitePhotos);
   el('commercialProfileSelect')?.addEventListener('change', renderQuoteSelects);
   el('adminForm').addEventListener('submit', onSaveAdmin);
@@ -73,6 +122,18 @@ function bindUI() {
   document.querySelectorAll('.tab').forEach((btn) => btn.addEventListener('click', () => setTab(btn.dataset.tab)));
   initSignaturePad('installer');
   initSignaturePad('client');
+}
+
+function resetQuoteForm() {
+  el('quoteForm').reset();
+  clearQuotePrefill();
+  if (el('sitePhotos')) el('sitePhotos').value = '';
+  [1, 2, 3, 4].forEach((index) => {
+    if (el(`coPhoto${index}`)) el(`coPhoto${index}`).value = '';
+  });
+  state.quotePhotos = [];
+  renderSelectedPhotosPreview();
+  renderQuoteSelects();
 }
 
 function loadThemePreference() {
@@ -282,6 +343,196 @@ function renderQuoteSelects() {
   fillDatalist('primaryBreakerOptions', harCatalogs.primaryBreakers || []);
   fillDatalist('cityOptions', harCatalogs.cities || []);
   renderHarGuide();
+  renderCountrySpecificQuoteLayout();
+}
+
+function renderCountrySpecificQuoteLayout() {
+  const isCO = activeCountryCode() === 'CO';
+  const coLayout = el('coQuoteLayout');
+  const defaultLayout = el('defaultQuoteLayout');
+  if (coLayout) coLayout.classList.toggle('hidden', !isCO);
+  if (defaultLayout) defaultLayout.classList.toggle('hidden', isCO);
+  setSectionDisabled(coLayout, !isCO);
+  setSectionDisabled(defaultLayout, isCO);
+  if (isCO) renderCoQuoteForm();
+}
+
+function setSectionDisabled(container, disabled) {
+  if (!container) return;
+  container.querySelectorAll('input, select, textarea, button').forEach((control) => {
+    if (control.type === 'submit' && !disabled) return;
+    if (control.id === 'resetFormBtn' && !disabled) return;
+    control.disabled = disabled;
+  });
+}
+
+function renderCoQuoteForm() {
+  const profiles = state.catalog?.commercialProfiles || [];
+  const currentCoProfileId = el('coCommercialProfileSelect')?.value || el('commercialProfileSelect')?.value || profiles.find((item) => item.isDefault)?.id || profiles[0]?.id || 'general';
+  fillSelect('coCommercialProfileSelect', profiles.map((item) => ({ value: item.id, label: `${item.name} · margen ${formatPercent(item.marginPercent)}` })), currentCoProfileId);
+  const currentProfile = getCommercialProfileById(currentCoProfileId);
+  if (el('coMargin') && !String(el('coMargin').value || '').trim()) el('coMargin').value = String(currentProfile.marginPercent ?? 15);
+  fillSelect('coCompanyNameSelect', CO_COMPANY_OPTIONS.map((item) => ({ value: item === 'Seleccione' ? '' : item, label: item })), el('coCompanyNameSelect')?.value || '');
+  fillSelect('coDocumentTypeSelect', CO_DOCUMENT_OPTIONS.map((item) => ({ value: item, label: item })), el('coDocumentTypeSelect')?.value || 'CC');
+  fillSelect('coCitySelect', CO_CITY_OPTIONS.map((item) => ({ value: item === 'Seleccione' ? '' : item, label: item })), el('coCitySelect')?.value || '');
+  fillSelect('coChargerReferenceSelect', CO_CHARGER_OPTIONS.map((item) => ({ value: item === 'Seleccione' ? '' : item, label: item })), el('coChargerReferenceSelect')?.value || '');
+  fillSelect('coAcometidaTypeSelect', CO_ACOMETIDA_OPTIONS.map((item) => ({ value: item === 'Seleccione' ? '' : item, label: item })), el('coAcometidaTypeSelect')?.value || '');
+  fillDatalist('coAcometidaCaliberOptions', (state.catalog?.harCatalogs?.acometidaCalibers || []).length ? state.catalog.harCatalogs.acometidaCalibers : ['8 AWG', '10 AWG', '6 AWG', '4 AWG']);
+  fillDatalist('coPrimaryBreakerOptions', (state.catalog?.harCatalogs?.primaryBreakers || []).length ? state.catalog.harCatalogs.primaryBreakers : ['40', '50', '63']);
+  renderCoRubricSection('coMetalworkRows', CO_RUBRIC_SECTIONS.metalwork, 'metalwork');
+  renderCoRubricSection('coCivilWorksRows', CO_RUBRIC_SECTIONS.civilWorks, 'civilWorks');
+  renderCoRubricSection('coTubingRows', CO_RUBRIC_SECTIONS.tubing, 'tubing');
+  renderCoRubricSection('coCableRows', CO_RUBRIC_SECTIONS.cable, 'cable');
+  renderCoRubricSection('coLaborRows', CO_RUBRIC_SECTIONS.labor, 'labor');
+  renderCoRubricSection('coMaterialsRows', CO_RUBRIC_SECTIONS.materials, 'materials');
+  if (el('coVisitDate') && !el('coVisitDate').value) el('coVisitDate').value = todayInputValue();
+  updateCoQuoteTotals();
+}
+
+function renderCoRubricSection(containerId, rows = [], sectionKey = '') {
+  const wrap = el(containerId);
+  if (!wrap || wrap.dataset.ready === '1') return;
+  wrap.innerHTML = rows.map((item) => `
+    <div class="co-rubric-row" data-co-row="${escapeHtml(item.code)}" data-co-section="${escapeHtml(sectionKey)}">
+      <div class="co-rubric-row-title">
+        <span>${escapeHtml(item.label)}</span>
+        <small>${escapeHtml(item.unitLabel)}</small>
+      </div>
+      <label>
+        Cantidad
+        <input type="number" min="0" step="0.01" name="co_${sectionKey}_${item.code}_qty" value="${escapeHtml(String(item.qty ?? 0))}" data-co-rubric-input="qty" />
+      </label>
+      <label>
+        Costo base
+        <input type="number" min="0" step="0.01" name="co_${sectionKey}_${item.code}_price" value="${escapeHtml(String(item.price ?? 0))}" data-co-rubric-input="price" />
+      </label>
+      <div class="co-rubric-total">
+        <span>Total</span>
+        <div class="co-rubric-total-value" data-co-rubric-total="${escapeHtml(sectionKey)}:${escapeHtml(item.code)}">0</div>
+      </div>
+    </div>
+  `).join('');
+  wrap.dataset.ready = '1';
+}
+
+function onQuoteFormInteraction(event) {
+  if (activeCountryCode() !== 'CO') return;
+  const target = event?.target;
+  if (!target) return;
+  if (target.name === 'coCommercialProfileId') {
+    const profile = getCommercialProfileById(target.value);
+    if (el('coMargin') && profile) el('coMargin').value = String(profile.marginPercent ?? 15);
+  }
+  if (target.closest('#coQuoteLayout')) updateCoQuoteTotals();
+}
+
+function updateCoQuoteTotals() {
+  if (activeCountryCode() !== 'CO') return null;
+  const sections = collectCoRubricSections();
+  const laborTotal = round2(sumSectionTotals([
+    sections.metalwork,
+    sections.civilWorks,
+    sections.tubing,
+    sections.cable,
+    sections.labor,
+  ]));
+  const materialsTotal = round2(sumSectionTotals([sections.materials]));
+  const subtotalBeforeMargin = round2(laborTotal + materialsTotal);
+  const marginPercent = Number(el('coMargin')?.value || 0);
+  const subtotalWithMargin = round2(subtotalBeforeMargin * (1 + (marginPercent / 100)));
+  const iva = round2(subtotalWithMargin * 0.19);
+  const total = round2(subtotalWithMargin + iva);
+
+  setInputValue('coTotalLabor', laborTotal);
+  setInputValue('coTotalMaterials', materialsTotal);
+  setInputValue('coSubtotalBeforeMargin', subtotalBeforeMargin);
+  setInputValue('coSubtotalWithMargin', subtotalWithMargin);
+  setInputValue('coTotalFinal', total);
+  setInputValue('coTotalMirror', total);
+
+  return {
+    laborTotal,
+    materialsTotal,
+    subtotalBeforeMargin,
+    marginPercent,
+    subtotalWithMargin,
+    iva,
+    total,
+  };
+}
+
+function collectCoRubricSections() {
+  const sections = {};
+  Object.entries(CO_RUBRIC_SECTIONS).forEach(([sectionKey, rows]) => {
+    sections[sectionKey] = rows.map((item) => {
+      const qty = Number(document.querySelector(`[name="co_${sectionKey}_${item.code}_qty"]`)?.value || 0);
+      const price = Number(document.querySelector(`[name="co_${sectionKey}_${item.code}_price"]`)?.value || 0);
+      const total = round2(qty * price);
+      const totalNode = document.querySelector(`[data-co-rubric-total="${sectionKey}:${item.code}"]`);
+      if (totalNode) totalNode.textContent = money(total, 'CO');
+      return {
+        code: item.code,
+        label: item.label,
+        unitLabel: item.unitLabel,
+        qty,
+        unitPrice: price,
+        total,
+      };
+    });
+  });
+  return sections;
+}
+
+function collectCoQuotePayload(form) {
+  const sections = collectCoRubricSections();
+  const totals = updateCoQuoteTotals() || {};
+  return {
+    general: {
+      sendTemplate: form.coSendTemplate?.value || 'NO',
+      quoteNumber: form.coQuoteNumber?.value || '',
+      commercialProfileId: form.coCommercialProfileId?.value || 'general',
+      companyName: form.coCompanyName?.value || '',
+      documentType: form.coDocumentType?.value || '',
+      documentNumber: form.coDocumentNumber?.value || '',
+      phone: form.coPhone?.value || '',
+      email: form.coEmail?.value || '',
+      clientName: form.coClientName?.value || '',
+      address: form.coAddress?.value || '',
+      city: form.coCity?.value || '',
+      outOfCity: form.coOutOfCity?.value || 'NO',
+      appointmentId: form.coAppointmentId?.value || '',
+      visitDate: form.coVisitDate?.value || '',
+      chargerReference: form.coChargerReference?.value || '',
+      otherReference: form.coOtherReference?.value || '',
+      distance: Number(form.coDistance?.value || 0),
+      acometidaType: form.coAcometidaType?.value || '',
+      voltage: Number(form.coVoltage?.value || 0),
+      current: Number(form.coCurrent?.value || 0),
+      acometidaCaliber: form.coAcometidaCaliber?.value || '',
+      primaryBreaker: form.coPrimaryBreaker?.value || '',
+      grounding: form.coGrounding?.value || 'NO',
+      requiresReview: form.coRequiresReview?.value || 'NO',
+      installationDescription: form.coInstallationDescription?.value || '',
+      pdfLink: form.coPdfLink?.value || '',
+    },
+    sections,
+    totals,
+  };
+}
+
+function sumSectionTotals(groups = []) {
+  return groups.flat().reduce((acc, item) => acc + Number(item?.total || 0), 0);
+}
+
+function setInputValue(id, value) {
+  const input = el(id);
+  if (!input) return;
+  input.value = String(Math.round(Number(value || 0)));
+}
+
+function round2(value) {
+  const numeric = Number(value || 0);
+  return Math.round(numeric * 100) / 100;
 }
 
 function renderHarGuide() {
@@ -990,6 +1241,11 @@ function getSelectedCommercialProfile() {
   return profiles.find((item) => item.id === selectedId) || profiles[0] || { id: 'general', name: 'GENERAL', marginPercent: 25 };
 }
 
+function getCommercialProfileById(profileId = '') {
+  const profiles = state.catalog?.commercialProfiles || [];
+  return profiles.find((item) => item.id === profileId) || profiles[0] || { id: 'general', name: 'GENERAL', marginPercent: 25 };
+}
+
 function buildCablesForProfile(profile) {
   const divisorMargin = Math.max(0.05, 1 - (Number(profile?.marginPercent || 0) / 100));
   const byCode = Object.fromEntries((state.catalog?.catalog?.items || []).map((item) => [item.code, item]));
@@ -1060,6 +1316,32 @@ async function onGenerateQuote(event) {
   }
   const form = new FormData(event.target);
   const body = Object.fromEntries(form.entries());
+  if (activeCountryCode() === 'CO') {
+    body.coQuote = collectCoQuotePayload(event.target);
+    body.commercialProfileId = body.coCommercialProfileId || 'general';
+    body.installationDescription = body.coInstallationDescription || '';
+    body.requiresReview = body.coRequiresReview || 'NO';
+    body.companyName = body.coCompanyName || '';
+    body.documentType = body.coDocumentType || 'CC';
+    body.clientDocument = body.coDocumentNumber || '';
+    body.phone = body.coPhone || '';
+    body.email = body.coEmail || '';
+    body.clientName = body.coClientName || '';
+    body.address = body.coAddress || '';
+    body.city = body.coCity || '';
+    body.outOfCity = body.coOutOfCity || 'NO';
+    body.visitDate = body.coVisitDate || '';
+    body.chargerReference = body.coChargerReference || '';
+    body.otherReference = body.coOtherReference || '';
+    body.distance = Number(body.coDistance || 0);
+    body.acometidaType = body.coAcometidaType || '';
+    body.voltage = Number(body.coVoltage || 0);
+    body.current = Number(body.coCurrent || 0);
+    body.acometidaCaliber = body.coAcometidaCaliber || '';
+    body.primaryBreaker = body.coPrimaryBreaker || '';
+    body.grounding = body.coGrounding || 'NO';
+    body.technicianNotes = body.coInstallationDescription || '';
+  }
   if (event.target.dataset.visitId) body.visitId = event.target.dataset.visitId;
   if (event.target.dataset.reference) body.reference = event.target.dataset.reference;
   body.conditionals = (state.catalog.catalog?.conditionals || []).map((item) => ({
@@ -1084,9 +1366,13 @@ async function onGenerateQuote(event) {
   renderQuoteResult(quote);
   clearQuotePrefill();
   await Promise.allSettled([loadClients(), loadQuotes(), loadTechVisits(), loadInstallationOrders(), loadConformities()]);
-  el('sitePhotos').value = '';
+  if (el('sitePhotos')) el('sitePhotos').value = '';
+  [1, 2, 3, 4].forEach((index) => {
+    if (el(`coPhoto${index}`)) el(`coPhoto${index}`).value = '';
+  });
   state.quotePhotos = [];
   renderSelectedPhotosPreview();
+  updateCoQuoteTotals();
   setTab('quotes');
 }
 
@@ -2176,6 +2462,19 @@ function displayQuoteLabel(quote) {
 }
 
 async function collectQuotePhotos() {
+  if (activeCountryCode() === 'CO') {
+    const files = [1, 2, 3, 4]
+      .map((index) => ({ index, file: el(`coPhoto${index}`)?.files?.[0] || null }))
+      .filter((item) => item.file && /^image\/(jpeg|jpg|png|webp)$/i.test(item.file.type || ''));
+    return Promise.all(files.map(async ({ index, file }) => ({
+      name: file.name || `imagen-${index}.jpg`,
+      contentType: 'image/jpeg',
+      title: `IMAGEN${index}`,
+      comment: '',
+      frame: normalizePhotoFrame({ zoom: 1, focusX: 0.5, focusY: 0.5 }),
+      dataUrl: await resizeImageFile(file, 1600, 0.82),
+    })));
+  }
   const photos = [];
   for (const [index, photo] of (state.quotePhotos || []).slice(0, 6).entries()) {
     if (!/^image\/(jpeg|jpg|png|webp)$/i.test(photo.file?.type || '')) continue;

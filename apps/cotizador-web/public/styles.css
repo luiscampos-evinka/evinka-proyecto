@@ -366,6 +366,7 @@ body[data-theme="light"] .advisor-frame-shell {
 }
 .grid-2 { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
 .grid-3 { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px; }
+.grid-4 { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 14px; }
 label { display: grid; gap: 6px; font-size: 14px; font-weight: 600; color: #f0e6d7; }
 body[data-theme="light"] label { color: #6b4c28; }
 input, textarea, select {
@@ -413,6 +414,58 @@ body[data-theme="light"] select {
   padding: 16px;
 }
 .extras-box legend { padding: 0 10px; color: var(--gold-soft); }
+.grid-span-2 { grid-column: span 2; }
+.co-create-grid { align-items: start; }
+.co-cta-card {
+  display: grid;
+  gap: 10px;
+  padding: 16px;
+  border-radius: 18px;
+  border: 1px solid rgba(199,160,106,0.18);
+  background: linear-gradient(180deg, rgba(199,160,106,0.12), rgba(255,255,255,0.03));
+}
+.co-rubric-rows { display: grid; gap: 10px; }
+.co-rubric-row {
+  display: grid;
+  grid-template-columns: minmax(220px, 1.8fr) minmax(110px, 0.7fr) minmax(140px, 0.9fr) minmax(140px, 0.9fr);
+  gap: 10px;
+  align-items: end;
+  padding: 14px;
+  border-radius: 16px;
+  border: 1px solid rgba(255,255,255,0.08);
+  background: rgba(255,255,255,0.025);
+}
+.co-rubric-row-title {
+  display: grid;
+  gap: 4px;
+  font-weight: 700;
+}
+.co-rubric-row-title small {
+  color: var(--muted);
+  font-weight: 500;
+}
+.co-rubric-total {
+  display: grid;
+  gap: 6px;
+}
+.co-rubric-total-value {
+  min-height: 47px;
+  display: flex;
+  align-items: center;
+  padding: 12px 13px;
+  border-radius: 14px;
+  border: 1px solid rgba(199,160,106,0.22);
+  background: rgba(255,255,255,0.03);
+  color: var(--text);
+  font-weight: 700;
+}
+.co-totals-grid input[readonly] {
+  background: rgba(255,255,255,0.03);
+  font-weight: 700;
+}
+.co-photo-grid label input[type="file"] {
+  padding: 10px;
+}
 .extras-list { display: grid; grid-template-columns: 1fr; gap: 10px; }
 .visually-hidden-file {
   position: absolute;
@@ -822,9 +875,11 @@ body[data-theme="light"] select {
 
 @media (max-width: 920px) {
   .grid-2, .grid-3, .grid-4, .result-grid, .signature-grid, .conformity-check-grid { grid-template-columns: 1fr; }
+  .grid-span-2 { grid-column: span 1; }
   .hero-card { grid-template-columns: 1fr; }
   .hero-visual { min-height: 140px; }
   .extras-item { grid-template-columns: 1fr; }
+  .co-rubric-row { grid-template-columns: 1fr; }
   .photo-upload-shell { grid-template-columns: 1fr; }
   .photo-upload-status { width: 100%; }
   .modal-header { flex-direction: column; }

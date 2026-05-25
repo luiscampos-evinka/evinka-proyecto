@@ -42,19 +42,19 @@ await run('agenda_max_5_days', async () => {
   assert.equal(days.length, 5);
 });
 
-await run('agenda_ignores_other_zone_occupancy', async () => {
+await run('agenda_pe_country_still_blocks_slot_even_other_zone', async () => {
   const engine = new ChatbotEngine({ sb: null, calendar: new FakeCalendar({
-    '2026-04-28': [fakeEvent({ id:'1', createdDateTime:'2026-04-24T10:00:00Z', start:'2026-04-28T10:00:00-05:00', end:'2026-04-28T10:45:00-05:00', zone:'LIMA NORTE', country:'PE' })],
+    '2026-06-02': [fakeEvent({ id:'1', createdDateTime:'2026-05-29T10:00:00Z', start:'2026-06-02T10:00:00-05:00', end:'2026-06-02T10:45:00-05:00', zone:'LIMA NORTE', country:'PE' })],
   }) });
-  const hours = await engine.availableHoursForDate('2026-04-28', { clientZone: 'LIMA CENTRO' });
-  assert.ok(hours.some((h) => h.time === '10:00:00'));
+  const hours = await engine.availableHoursForDate('2026-06-02', { clientZone: 'LIMA CENTRO' });
+  assert.ok(!hours.some((h) => h.time === '10:00:00'));
 });
 
 await run('agenda_allows_same_zone_except_busy_slot', async () => {
   const engine = new ChatbotEngine({ sb: null, calendar: new FakeCalendar({
-    '2026-04-28': [fakeEvent({ id:'1', createdDateTime:'2026-04-24T10:00:00Z', start:'2026-04-28T10:00:00-05:00', end:'2026-04-28T10:45:00-05:00', zone:'LIMA CENTRO', country:'PE' })],
+    '2026-06-02': [fakeEvent({ id:'1', createdDateTime:'2026-05-29T10:00:00Z', start:'2026-06-02T10:00:00-05:00', end:'2026-06-02T10:45:00-05:00', zone:'LIMA CENTRO', country:'PE' })],
   }) });
-  const hours = await engine.availableHoursForDate('2026-04-28', { clientZone: 'LIMA CENTRO' });
+  const hours = await engine.availableHoursForDate('2026-06-02', { clientZone: 'LIMA CENTRO' });
   assert.ok(hours.length >= 1);
   assert.ok(!hours.some((h) => h.time === '10:00:00'));
 });
@@ -70,25 +70,25 @@ await run('agenda_hides_full_day', async () => {
     ['10:00:00','10:45:00'],['11:30:00','12:15:00'],['14:00:00','14:45:00'],['15:30:00','16:15:00'],
   ];
   const engine = new ChatbotEngine({ sb: null, calendar: new FakeCalendar({
-    '2026-04-27': slots.map((s, i) => fakeEvent({ id:String(i+1), createdDateTime:`2026-04-24T10:0${i}:00Z`, start:`2026-04-27T${s[0]}-05:00`, end:`2026-04-27T${s[1]}-05:00`, zone:'LIMA CENTRO' })),
+    '2026-06-01': slots.map((s, i) => fakeEvent({ id:String(i+1), createdDateTime:`2026-05-29T10:0${i}:00Z`, start:`2026-06-01T${s[0]}-05:00`, end:`2026-06-01T${s[1]}-05:00`, zone:'LIMA CENTRO' })),
   }) });
   const days = await engine.availableDaysForZone('LIMA CENTRO');
-  assert.ok(!days.some((d) => d.date === '2026-04-27'));
+  assert.ok(!days.some((d) => d.date === '2026-06-01'));
 });
 
 await run('agenda_reprogram_ignores_own_event', async () => {
   const engine = new ChatbotEngine({ sb: null, calendar: new FakeCalendar({
-    '2026-04-29': [fakeEvent({ id:'same', createdDateTime:'2026-04-24T09:00:00Z', start:'2026-04-29T10:00:00-05:00', end:'2026-04-29T10:45:00-05:00', zone:'LIMA CENTRO', country:'PE' })],
+    '2026-06-03': [fakeEvent({ id:'same', createdDateTime:'2026-05-29T09:00:00Z', start:'2026-06-03T10:00:00-05:00', end:'2026-06-03T10:45:00-05:00', zone:'LIMA CENTRO', country:'PE' })],
   }) });
-  const hours = await engine.availableHoursForDate('2026-04-29', { clientZone: 'LIMA CENTRO', excludeEventId: 'same' });
+  const hours = await engine.availableHoursForDate('2026-06-03', { clientZone: 'LIMA CENTRO', excludeEventId: 'same' });
   assert.ok(hours.some((h) => h.time === '10:00:00'));
 });
 
 await run('agenda_country_prevents_cross_country_block', async () => {
   const engine = new ChatbotEngine({ sb: null, calendar: new FakeCalendar({
-    '2026-04-30': [fakeEvent({ id:'co-1', createdDateTime:'2026-04-24T09:00:00Z', start:'2026-04-30T10:00:00-05:00', end:'2026-04-30T10:45:00-05:00', zone:'ÁREA 1 — SUBA–USAQUÉN', country:'CO' })],
+    '2026-06-04': [fakeEvent({ id:'co-1', createdDateTime:'2026-05-29T09:00:00Z', start:'2026-06-04T10:00:00-05:00', end:'2026-06-04T10:45:00-05:00', zone:'ÁREA 1 — SUBA–USAQUÉN', country:'CO' })],
   }) });
-  const hours = await engine.availableHoursForDate('2026-04-30', { clientZone: 'LIMA CENTRO' });
+  const hours = await engine.availableHoursForDate('2026-06-04', { clientZone: 'LIMA CENTRO' });
   assert.ok(hours.some((h) => h.time === '10:00:00'));
 });
 

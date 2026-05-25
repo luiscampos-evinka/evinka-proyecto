@@ -95,6 +95,146 @@
           </div>
           <div id="quoteScopeNotice" class="scope-notice hidden">Estás en vista <strong>Global</strong>. Para crear una cotización primero cambia el país activo a <strong>Perú</strong> o <strong>Colombia</strong>.</div>
           <form id="quoteForm" class="grid-form">
+            <div id="coQuoteLayout" class="hidden">
+              <fieldset class="extras-box">
+                <legend>Crear cotización</legend>
+                <div class="grid-2 co-create-grid">
+                  <div class="stack">
+                    <label>Descripción de la instalación<textarea name="coInstallationDescription" rows="5" placeholder="Cable de fase, cable de tierra, recorrido, punto de conexión y observaciones técnicas."></textarea></label>
+                    <label>¿Requiere revisión?
+                      <select name="coRequiresReview">
+                        <option value="">Seleccione</option>
+                        <option value="NO">NO</option>
+                        <option value="SI">SI</option>
+                      </select>
+                    </label>
+                  </div>
+                  <div class="stack">
+                    <div class="co-cta-card">
+                      <strong>Crear cotización Colombia</strong>
+                      <span class="muted">Formulario operativo basado en la estructura real del cotizador CO.</span>
+                      <button class="primary full-width" type="submit">Crear cotización</button>
+                      <button class="secondary full-width" type="button" id="resetFormBtnCo">Limpiar</button>
+                    </div>
+                    <label>Link PDF<input name="coPdfLink" placeholder="Se llenará o ajustará si lo necesitas" /></label>
+                  </div>
+                </div>
+              </fieldset>
+
+              <fieldset class="extras-box">
+                <legend>Datos generales</legend>
+                <div class="grid-4">
+                  <label>Enviar plantilla a cliente
+                    <select name="coSendTemplate">
+                      <option value="NO">No</option>
+                      <option value="SI">Sí</option>
+                    </select>
+                  </label>
+                  <label>ID Cotización<input name="coQuoteNumber" placeholder="1440" /></label>
+                  <label>Perfil comercial / PDF
+                    <select name="coCommercialProfileId" id="coCommercialProfileSelect"></select>
+                  </label>
+                  <label>Empresa
+                    <select name="coCompanyName" id="coCompanyNameSelect"></select>
+                  </label>
+                  <label>Tipo de documento
+                    <select name="coDocumentType" id="coDocumentTypeSelect"></select>
+                  </label>
+                  <label>Número de documento<input name="coDocumentNumber" placeholder="Número de documento" /></label>
+                  <label>Celular<input name="coPhone" placeholder="3001234567" /></label>
+                  <label>Correo<input name="coEmail" type="email" placeholder="cliente@correo.com" /></label>
+                  <label>Nombre del cliente<input name="coClientName" placeholder="Nombre del cliente" /></label>
+                  <label class="grid-span-2">Dirección<input name="coAddress" placeholder="Dirección" /></label>
+                  <label>Ciudad
+                    <select name="coCity" id="coCitySelect"></select>
+                  </label>
+                  <label>Es fuera de la ciudad
+                    <select name="coOutOfCity">
+                      <option value="NO">NO</option>
+                      <option value="SI">SI</option>
+                    </select>
+                  </label>
+                  <label>ID Cita<input name="coAppointmentId" placeholder="ID Cita" /></label>
+                  <label>Fecha visita<input name="coVisitDate" type="date" /></label>
+                  <label>Referencia cargador
+                    <select name="coChargerReference" id="coChargerReferenceSelect"></select>
+                  </label>
+                  <label>Otra referencia<input name="coOtherReference" placeholder="Otra referencia" /></label>
+                  <label>Distancia acometida proyectada para cargador<input name="coDistance" type="number" min="0" step="1" value="0" /></label>
+                  <label>Tipo de acometida existente
+                    <select name="coAcometidaType" id="coAcometidaTypeSelect"></select>
+                  </label>
+                  <label>Voltaje (v)<input name="coVoltage" type="number" min="0" step="1" value="0" /></label>
+                  <label>Corriente (A)<input name="coCurrent" type="number" min="0" step="1" value="0" /></label>
+                  <label>Calibre de la acometida existente (AWG)<input name="coAcometidaCaliber" list="coAcometidaCaliberOptions" placeholder="AWG" /></label>
+                  <label>Interruptor protección principal (A)<input name="coPrimaryBreaker" list="coPrimaryBreakerOptions" placeholder="A" /></label>
+                  <label>Cuenta con puesta a tierra real
+                    <select name="coGrounding">
+                      <option value="NO">NO</option>
+                      <option value="SI">SI</option>
+                    </select>
+                  </label>
+                </div>
+                <datalist id="coAcometidaCaliberOptions"></datalist>
+                <datalist id="coPrimaryBreakerOptions"></datalist>
+              </fieldset>
+
+              <fieldset class="extras-box">
+                <legend>Adicionales carpintería metálica</legend>
+                <div id="coMetalworkRows" class="co-rubric-rows"></div>
+              </fieldset>
+
+              <fieldset class="extras-box">
+                <legend>Obra civil</legend>
+                <div id="coCivilWorksRows" class="co-rubric-rows"></div>
+              </fieldset>
+
+              <fieldset class="extras-box">
+                <legend>Tubería</legend>
+                <div id="coTubingRows" class="co-rubric-rows"></div>
+              </fieldset>
+
+              <fieldset class="extras-box">
+                <legend>Cable</legend>
+                <div id="coCableRows" class="co-rubric-rows"></div>
+              </fieldset>
+
+              <fieldset class="extras-box">
+                <legend>Mano de obra</legend>
+                <div id="coLaborRows" class="co-rubric-rows"></div>
+              </fieldset>
+
+              <fieldset class="extras-box">
+                <legend>Materiales</legend>
+                <div id="coMaterialsRows" class="co-rubric-rows"></div>
+              </fieldset>
+
+              <fieldset class="extras-box">
+                <legend>Totales</legend>
+                <div class="grid-4 co-totals-grid">
+                  <label>TOTAL MANO DE OBRA<input id="coTotalLabor" name="coTotalLaborMirror" readonly /></label>
+                  <label>TOTAL MATERIALES<input id="coTotalMaterials" name="coTotalMaterialsMirror" readonly /></label>
+                  <label>PRECIO FINAL SIN IVA SIN MARGEN<input id="coSubtotalBeforeMargin" name="coSubtotalBeforeMarginMirror" readonly /></label>
+                  <label>MARGEN<input id="coMargin" name="coMargin" type="number" min="0" step="0.01" value="15" /></label>
+                  <label>PRECIO FINAL SIN IVA CON MARGEN<input id="coSubtotalWithMargin" name="coSubtotalWithMarginMirror" readonly /></label>
+                  <label>PRECIO FINAL (CON IVA)<input id="coTotalFinal" name="coTotalFinalMirror" readonly /></label>
+                  <label>Campo espejo del Total<input id="coTotalMirror" name="coTotalMirror" readonly /></label>
+                </div>
+              </fieldset>
+
+              <fieldset class="extras-box">
+                <legend>Registro fotográfico</legend>
+                <div class="grid-2 co-photo-grid">
+                  <label>IMAGEN1<input id="coPhoto1" type="file" accept="image/png,image/jpeg,image/webp" /></label>
+                  <label>IMAGEN2<input id="coPhoto2" type="file" accept="image/png,image/jpeg,image/webp" /></label>
+                  <label>IMAGEN3<input id="coPhoto3" type="file" accept="image/png,image/jpeg,image/webp" /></label>
+                  <label>IMAGEN4<input id="coPhoto4" type="file" accept="image/png,image/jpeg,image/webp" /></label>
+                </div>
+                <p class="muted">Peso máximo visible en el flujo histórico: 9 MB por archivo.</p>
+              </fieldset>
+            </div>
+
+            <div id="defaultQuoteLayout">
             <fieldset class="extras-box">
               <legend>Ficha cliente</legend>
               <div class="grid-3">
@@ -225,6 +365,7 @@
             <div class="actions-row">
               <button class="primary" type="submit">Generar cotización</button>
               <button class="secondary" type="button" id="resetFormBtn">Limpiar</button>
+            </div>
             </div>
           </form>
 
